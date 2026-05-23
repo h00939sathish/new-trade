@@ -1,0 +1,121 @@
+import asyncio
+import logging
+import os
+import signal
+
+from src.config.settings import settings
+from src.monitoring.dashboard import CliDashboard
+from src.monitoring.metrics import system_metrics
+from src.system import TradingSystem
+
+logging.basicConfig(
+    level=getattr(logging, settings.log_level.upper(), logging.INFO),
+    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger("main")
+
+system_metrics.start()
+
+
+async def metrics_http_server(
+    health_fn=None,
+    host: str = "0.0.0.0",
+    port: int = 8080,
+):
+    handler = await asyncio.start_server(
+        lambda r, w: _handle_metrics_request(r, w, health_fn), host, port,
+    )
+    logger.info("Metrics server listening on %s:%d", host, port)
+    async with handler:
+        await handler.serve_forever()
+
+
+async def _handle_metrics_request(
+    reader: asyncio.StreamReader,
+    writer: asyncio.StreamWriter,
+    health_fn=None,
+) -> None:
+    data = await reader.read(1024)
+    request_line = data.decode("utf-8", errors="ignore").split("\r\n")[0]
+    path = request_line.split(" ")[1] if len(request_line.split(" ")) > 1 else "/"
+
+    if path == "/metrics":
+        body_str = system_metrics.prometheus_text()
+        body = body_str.encode()
+        response = (
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: text/plain; charset=utf-8\r\n"
+            f"Content-Length: {len(body)}\r\n"
+            "\r\n"
+        ).encode() + body
+    elif path == "/health":
+        if health_fn:
+            import json
+            health_data = await health_fn()
+            body = json.dumps(health_data, default=str).encode()
+        else:
+            body = b'{"status": "ok"}'
+        response = (
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: application/json\r\n"
+            f"Content-Length: {len(body)}\r\n"
+            "\r\n"
+        ).encode() + body
+    else:
+        body = b"Not Found"
+        response = (
+            "HTTP/1.1 404 Not Found\r\n"
+            f"Content-Length: {len(body)}\r\n"
+            "\r\n"
+        ).encode() + body
+    writer.write(response)
+    await writer.drain()
+    writer.close()
+
+
+async def main():
+    system = TradingSystem()
+    await system.start()
+
+    watchlist = os.getenv("TRA_WATCHLIST", "RELIANCE,TCS,INFY,HDFCBANK").split(",")
+    system.set_watchlist(watchlist)
+    logger.info("Watchlist: %s", watchlist)
+
+    metrics_port = int(os.getenv("PORT") or os.getenv("TRA_METRICS_PORT", "8080"))
+    metrics_task = asyncio.create_task(
+        metrics_http_server(health_fn=system.health, port=metrics_port),
+    )
+
+    use_dashboard = os.getenv("TRA_DASHBOARD", "1") == "1"
+    if use_dashboard:
+        dashboard = CliDashboard(system.health, refresh_interval=2.0)
+        dashboard_task = asyncio.create_task(dashboard.run())
+    else:
+        dashboard = None
+        dashboard_task = None
+
+    loop = asyncio.get_event_loop()
+    stop_event = asyncio.Event()
+
+    for sig_id in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig_id, stop_event.set)
+        except NotImplementedError:
+            pass
+
+    try:
+        await stop_event.wait()
+    except asyncio.CancelledError:
+        pass
+    finally:
+        metrics_task.cancel()
+        if dashboard_task:
+            dashboard_task.cancel()
+        await asyncio.gather(metrics_task, dashboard_task or asyncio.sleep(0), return_exceptions=True)
+        await system.stop()
+        logger.info("System shutdown complete")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
