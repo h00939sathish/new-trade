@@ -5,6 +5,7 @@ import signal
 
 from src.config.settings import settings
 from src.monitoring.dashboard import CliDashboard
+from src.monitoring.http_dashboard import HTML as DASHBOARD_HTML
 from src.monitoring.metrics import system_metrics
 from src.system import TradingSystem
 
@@ -40,35 +41,45 @@ async def _handle_metrics_request(
     request_line = data.decode("utf-8", errors="ignore").split("\r\n")[0]
     path = request_line.split(" ")[1] if len(request_line.split(" ")) > 1 else "/"
 
+    import json
+
     if path == "/metrics":
         body_str = system_metrics.prometheus_text()
         body = body_str.encode()
-        response = (
-            "HTTP/1.1 200 OK\r\n"
-            "Content-Type: text/plain; charset=utf-8\r\n"
-            f"Content-Length: {len(body)}\r\n"
-            "\r\n"
-        ).encode() + body
+        ct = "text/plain; charset=utf-8"
+        status = "200 OK"
     elif path == "/health":
         if health_fn:
-            import json
             health_data = await health_fn()
             body = json.dumps(health_data, default=str).encode()
         else:
             body = b'{"status": "ok"}'
-        response = (
-            "HTTP/1.1 200 OK\r\n"
-            "Content-Type: application/json\r\n"
-            f"Content-Length: {len(body)}\r\n"
-            "\r\n"
-        ).encode() + body
+        ct = "application/json"
+        status = "200 OK"
+    elif path == "/api/health":
+        health_data = await health_fn() if health_fn else {"status": "ok"}
+        body = json.dumps(health_data, default=str).encode()
+        ct = "application/json"
+        status = "200 OK"
+    elif path == "/api/metrics":
+        body = system_metrics.prometheus_text().encode()
+        ct = "text/plain; charset=utf-8"
+        status = "200 OK"
+    elif path == "/":
+        body = DASHBOARD_HTML.encode()
+        ct = "text/html"
+        status = "200 OK"
     else:
         body = b"Not Found"
-        response = (
-            "HTTP/1.1 404 Not Found\r\n"
-            f"Content-Length: {len(body)}\r\n"
-            "\r\n"
-        ).encode() + body
+        ct = "text/plain"
+        status = "404 Not Found"
+    response = (
+        f"HTTP/1.1 {status}\r\n"
+        f"Content-Type: {ct}\r\n"
+        f"Content-Length: {len(body)}\r\n"
+        "Access-Control-Allow-Origin: *\r\n"
+        "\r\n"
+    ).encode() + body
     writer.write(response)
     await writer.drain()
     writer.close()
