@@ -27,7 +27,12 @@ class KiteClient:
             import kiteconnect
             self._kite = kiteconnect.KiteConnect(api_key=self.api_key)
             self._kite.set_access_token(self.access_token)
-            profile = self._kite.profile()
+            from src.utils.retry import with_retry
+            profile = await with_retry(
+                lambda: self._kite.profile(),
+                max_retries=3,
+                exceptions=(Exception,)
+            )
             self._connected = True
             logger.info("Connected to Kite: %s", profile.get("user_id", "unknown"))
         except ImportError:

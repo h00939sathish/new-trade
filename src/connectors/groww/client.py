@@ -66,7 +66,9 @@ class GrowwClient:
     ) -> dict:
         client = await self._get_client()
         url = f"{self.base_url}{path}"
-        try:
+        from src.utils.retry import with_retry
+
+        async def make_call():
             response = await client.request(
                 method=method.upper(),
                 url=url,
@@ -85,10 +87,11 @@ class GrowwClient:
                     f"Groww API error on {path} ({response.status_code}): {response.text[:400]}"
                 )
             return response.json()
-        except httpx.TimeoutException as exc:
-            raise GrowwAPIError(f"Timeout reaching Groww API at {path}: {exc}") from exc
-        except httpx.RequestError as exc:
-            raise GrowwAPIError(f"Failed to reach Groww API at {path}: {exc}") from exc
+
+        try:
+            return await with_retry(make_call, exceptions=(httpx.HTTPError, httpx.TimeoutException, httpx.RequestError))
+        except Exception as exc:
+            raise GrowwAPIError(f"Failed to execute Groww request at {path} after retries: {exc}") from exc
 
     async def _refresh_token(self) -> bool:
         import pyotp

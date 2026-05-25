@@ -89,6 +89,8 @@ class TradingSystem:
             self.alert,
             self.reflection,
         ]
+        for agent in self._agents:
+            agent.system = self
 
     async def start(self) -> None:
         if self._kite_client is not None:
@@ -117,11 +119,24 @@ class TradingSystem:
             self.market_intel.add_instrument(inst)
 
     async def stop(self) -> None:
+        _logger = logging.getLogger("system")
+        _logger.info("Stopping trading system gracefully...")
+
+        # 1. Stop execution agent first to cancel open orders and close positions
+        if hasattr(self, "execution") and self.execution in self._agents:
+            _logger.info("Stopping Execution Agent and running cleanup...")
+            await self.execution.stop()
+
+        # 2. Stop all other agents in reverse order
         for agent in reversed(self._agents):
-            await agent.stop()
+            if agent.name != "execution":
+                await agent.stop()
+
+        # 3. Disconnect event store and clients
         await self._event_store.disconnect()
         if self._kite_client is not None:
             await self._kite_client.disconnect()
+        _logger.info("Trading system stopped.")
 
     async def run_forever(self) -> None:
         loop = asyncio.get_event_loop()

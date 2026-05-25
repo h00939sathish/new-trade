@@ -45,6 +45,12 @@ class AngelClient:
         self._symbol_map: dict[str, dict[str, Any]] = {}
         self._lock = asyncio.Lock()
 
+    async def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
+        from src.utils.retry import with_retry
+        async def make_call():
+            return await self._http.request(method, url, **kwargs)
+        return await with_retry(make_call, exceptions=(httpx.HTTPError, httpx.TimeoutException, ConnectionError, OSError))
+
     @property
     def is_connected(self) -> bool:
         return self._jwt_token is not None
@@ -88,7 +94,8 @@ class AngelClient:
             "password": self._password,
             "totp": totp_code,
         }
-        resp = await self._http.post(
+        resp = await self._request(
+            "POST",
             f"{BASE_URL}/rest/auth/angelbroking/user/v1/loginByPassword",
             json=body,
             headers=self._default_headers(auth=False),
@@ -119,7 +126,8 @@ class AngelClient:
             "clientcode": self._client_id,
             "refreshtoken": self._refresh_token,
         }
-        resp = await self._http.post(
+        resp = await self._request(
+            "POST",
             f"{BASE_URL}/rest/auth/angelbroking/user/v1/refreshToken",
             json=body,
             headers=self._default_headers(auth=False),
@@ -152,7 +160,8 @@ class AngelClient:
             if not token:
                 continue
             body = {"exchange": exchange, "tradingsymbol": symbol, "symboltoken": token}
-            resp = await self._http.post(
+            resp = await self._request(
+                "POST",
                 f"{BASE_URL}/rest/secure/angelbroking/quote/v1/ltp",
                 json=body,
                 headers=self._auth_headers(),
@@ -171,7 +180,8 @@ class AngelClient:
         if not token:
             return {}
         body = {"exchange": exchange, "tradingsymbol": instrument, "symboltoken": token}
-        resp = await self._http.post(
+        resp = await self._request(
+            "POST",
             f"{BASE_URL}/rest/secure/angelbroking/quote/v1/ltp",
             json=body,
             headers=self._auth_headers(),
@@ -203,7 +213,8 @@ class AngelClient:
             "fromdate": from_date,
             "todate": to_date,
         }
-        resp = await self._http.post(
+        resp = await self._request(
+            "POST",
             f"{BASE_URL}/rest/secure/angelbroking/historical/v1/getCandleData",
             json=body,
             headers=self._auth_headers(),
@@ -245,7 +256,8 @@ class AngelClient:
         if not self._api_key:
             return
         try:
-            resp = await self._http.get(
+            resp = await self._request(
+                "GET",
                 "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json",
                 timeout=30.0,
             )

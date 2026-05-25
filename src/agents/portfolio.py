@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any
 
 from src.agents.base import BaseAgent
@@ -25,6 +26,21 @@ class PortfolioOptimizationAgent(BaseAgent):
         self.subscribe(EventType.FILL)
         self.subscribe(EventType.SIGNAL)
         self.subscribe(EventType.PORTFOLIO_UPDATE)
+
+        task = asyncio.create_task(self._reconciliation_loop(), name="portfolio_opt.reconciliation")
+        self._tasks.append(task)
+
+    async def _reconciliation_loop(self) -> None:
+        await asyncio.sleep(5.0)
+        from src.risk.reconciliation import reconcile_positions
+        while self._running:
+            try:
+                system_ref = getattr(self, "system", None)
+                if system_ref:
+                    await reconcile_positions(system_ref)
+            except Exception as e:
+                self.logger.error("Reconciliation loop error: %s", e, exc_info=True)
+            await asyncio.sleep(300.0)
 
     async def on_event(self, event: Event) -> None:
         match event.event_type:
@@ -97,9 +113,10 @@ class PortfolioOptimizationAgent(BaseAgent):
         )
 
     def _on_portfolio_update(self, event: Event) -> None:
-        self._capital = event.data.get("total_value", self._capital)
-        if self._capital > self._peak_capital:
-            self._peak_capital = self._capital
+        self._capital = event.data.get("cash", self._capital)
+        total_value = event.data.get("total_value", self._capital + self.get_total_exposure())
+        if total_value > self._peak_capital:
+            self._peak_capital = total_value
 
     def get_position(self, instrument: str) -> dict[str, Any]:
         return self._positions.get(instrument, {"quantity": 0, "avg_cost": 0.0})
@@ -120,6 +137,26 @@ class PortfolioOptimizationAgent(BaseAgent):
 
     async def _emit_portfolio_update(self, instrument: str, side: str) -> None:
         total_value = self._capital + self.get_total_exposure()
+        if total_value > self._peak_capital:
+            self._peak_capital = total_value
+
+        # Check KillSwitch limits before emitting
+        from src.risk.kill_switch import KillSwitch
+        from src.config.settings import settings
+        ks = KillSwitch()
+        ks.setup(
+            max_daily_loss=getattr(settings, "risk_max_daily_loss", 5000.0),
+            max_drawdown_pct=getattr(settings, "risk_max_drawdown_pct", 0.05),
+            initial_capital=self._peak_capital
+        )
+        system_ref = getattr(self, "system", None)
+        await ks.check_limits(
+            current_capital=total_value,
+            current_pnl=self._pnl,
+            peak_capital=self._peak_capital,
+            system=system_ref
+        )
+
         event = PortfolioEvent.create(
             total_value=total_value,
             cash=self._capital,

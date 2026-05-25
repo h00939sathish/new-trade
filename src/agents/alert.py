@@ -1,4 +1,5 @@
 import logging
+import time
 from typing import Any
 
 import httpx
@@ -99,6 +100,8 @@ class AlertAgent(BaseAgent):
     ):
         super().__init__(name="alert", event_store=event_store)
         self._notifier = notifier or create_notifier()
+        self._last_alert_times: dict[EventType, float] = {}
+        self._rate_limit_seconds = 60.0
 
     async def on_start(self) -> None:
         self.logger.info("Alert Agent initializing")
@@ -111,18 +114,27 @@ class AlertAgent(BaseAgent):
         self.logger.info("Alert Agent stopping")
 
     async def on_event(self, event: Event) -> None:
+        now = time.time()
+        last_sent = self._last_alert_times.get(event.event_type, 0.0)
+        if now - last_sent < self._rate_limit_seconds:
+            self.logger.debug("Rate limiting alert for event %s", event.event_type.value)
+            return
+
         match event.event_type:
             case EventType.RISK_BREACH:
+                self._last_alert_times[event.event_type] = now
                 await self._notifier.send(
                     "RISK BREACH",
                     self._format(event.data),
                 )
             case EventType.SYSTEM_ERROR:
+                self._last_alert_times[event.event_type] = now
                 await self._notifier.send(
                     "SYSTEM ERROR",
                     self._format(event.data),
                 )
             case EventType.FILL:
+                self._last_alert_times[event.event_type] = now
                 await self._notifier.send(
                     "ORDER FILL",
                     self._format(event.data),

@@ -1,3 +1,4 @@
+import asyncio
 import time
 from typing import Any
 
@@ -58,6 +59,11 @@ class ExecutionAgent(BaseAgent):
         direction = signal.get("direction")
         confidence = signal.get("confidence", 0.0)
         
+        from src.risk.kill_switch import KillSwitch
+        if KillSwitch().active and direction != "neutral":
+            self.logger.warning("Signal blocked: Kill Switch is active (%s)", KillSwitch().reason)
+            return
+        
         # Handle position closing immediately (neutral signals bypass pre-trade risk checks)
         if direction == "neutral":
             qty = self._get_position_qty(instrument)
@@ -84,7 +90,19 @@ class ExecutionAgent(BaseAgent):
             except Exception:
                 pass
                 
+            tag = order_event.event_id
             if self._broker is not None:
+                existing_id = await self._is_order_placed(tag)
+                if existing_id:
+                    self.logger.warning("Duplicate exit order detected! Tag %s has order_id %s", tag, existing_id)
+                    order_event.data["broker_order_id"] = existing_id
+                    order_event.data["status"] = "accepted"
+                    await self.emit(order_event)
+                    self._open_orders[order_event.event_id] = order_event
+                    if self._paper_trading:
+                        await self._simulate_fill(order_event)
+                    return
+
                 exchange = Exchange(signal.get("exchange", "NSE"))
                 broker_id = await self._broker.place_order(
                     tradingsymbol=instrument,
@@ -94,6 +112,7 @@ class ExecutionAgent(BaseAgent):
                     quantity=close_qty,
                     product=ProductType.MIS,
                     price=signal.get("price"),
+                    tag=tag,
                 )
                 order_event.data["broker_order_id"] = broker_id
                 
@@ -165,6 +184,11 @@ class ExecutionAgent(BaseAgent):
 
     async def _execute_approved_signal(self, signal: dict[str, Any]) -> None:
         """Create and execute an order for a risk-approved signal."""
+        from src.risk.kill_switch import KillSwitch
+        if KillSwitch().active:
+            self.logger.warning("Order blocked: Kill Switch is active (%s)", KillSwitch().reason)
+            return
+
         instrument = signal.get("instrument", "")
         direction = signal.get("direction")
         confidence = signal.get("confidence", 0.0)
@@ -195,7 +219,20 @@ class ExecutionAgent(BaseAgent):
             system_metrics.count_order(order_event.status.value)
         except Exception:
             pass
+
+        tag = order_event.event_id
         if self._broker is not None:
+            existing_id = await self._is_order_placed(tag)
+            if existing_id:
+                self.logger.warning("Duplicate entry order detected! Tag %s has order_id %s", tag, existing_id)
+                order_event.data["broker_order_id"] = existing_id
+                order_event.data["status"] = "accepted"
+                await self.emit(order_event)
+                self._open_orders[order_event.event_id] = order_event
+                if self._paper_trading:
+                    await self._simulate_fill(order_event)
+                return
+
             exchange = Exchange(signal.get("exchange", "NSE"))
             broker_id = await self._broker.place_order(
                 tradingsymbol=instrument,
@@ -205,6 +242,7 @@ class ExecutionAgent(BaseAgent):
                 quantity=quantity,
                 product=ProductType.MIS,
                 price=price,
+                tag=tag,
             )
             order_event.data["broker_order_id"] = broker_id
             self.logger.info("Broker order: %s (id=%s)", instrument, broker_id)
@@ -260,7 +298,20 @@ class ExecutionAgent(BaseAgent):
             system_metrics.count_order(order_event.status.value)
         except Exception:
             pass
+
+        tag = order_event.event_id
         if self._broker is not None:
+            existing_id = await self._is_order_placed(tag)
+            if existing_id:
+                self.logger.warning("Duplicate placed order detected! Tag %s has order_id %s", tag, existing_id)
+                order_event.data["broker_order_id"] = existing_id
+                order_event.data["status"] = "accepted"
+                await self.emit(order_event)
+                self._open_orders[order_event.event_id] = order_event
+                if self._paper_trading:
+                    await self._simulate_fill(order_event)
+                return order_event
+
             broker_id = await self._broker.place_order(
                 tradingsymbol=instrument,
                 exchange=exchange,
@@ -270,6 +321,7 @@ class ExecutionAgent(BaseAgent):
                 product=product,
                 price=price,
                 trigger_price=trigger_price,
+                tag=tag,
             )
             order_event.data["broker_order_id"] = broker_id
         await self.emit(order_event)
@@ -282,6 +334,12 @@ class ExecutionAgent(BaseAgent):
         if order_id in self._open_orders:
             order = self._open_orders.pop(order_id)
             order.data["status"] = OrderStatus.CANCELLED.value
+            broker_order_id = order.data.get("broker_order_id")
+            if broker_order_id and self._broker is not None:
+                try:
+                    await self._broker.cancel_order(broker_order_id)
+                except Exception as e:
+                    self.logger.error("Failed to cancel order %s on broker: %s", broker_order_id, e)
             try:
                 from src.monitoring.metrics import system_metrics
                 system_metrics.count_order("cancelled")
@@ -355,6 +413,18 @@ class ExecutionAgent(BaseAgent):
                         qty -= f.fill_quantity
         return qty
 
+    async def _is_order_placed(self, tag: str) -> str | None:
+        if self._broker is None:
+            return None
+        try:
+            orders = await self._broker.get_orders()
+            for o in orders:
+                if o.get("tag") == tag:
+                    return o.get("order_id")
+        except Exception as e:
+            self.logger.error("Failed to check duplicate orders: %s", e)
+        return None
+
     async def on_stop(self) -> None:
         # Log any signals that were still pending approval at shutdown
         if self._pending_signals:
@@ -362,7 +432,48 @@ class ExecutionAgent(BaseAgent):
                 "Shutting down with %d pending signals unapproved",
                 len(self._pending_signals),
             )
-        self.logger.info("Execution Agent stopping")
+        self.logger.info("Execution Agent stopping: Cancelling open orders...")
+        # 1. Cancel all open/pending orders
+        if self._open_orders:
+            self.logger.info("Cancelling %d open orders on shutdown...", len(self._open_orders))
+            for order_id in list(self._open_orders.keys()):
+                try:
+                    await self.cancel_order(order_id)
+                except Exception as e:
+                    self.logger.error("Failed to cancel order %s on shutdown: %s", order_id, e)
+
+        # 2. Close open positions (ProductType.MIS)
+        system_ref = getattr(self, "system", None)
+        if system_ref:
+            portfolio_agent = getattr(system_ref, "portfolio_opt", None)
+            if portfolio_agent:
+                open_positions = {inst: data for inst, data in portfolio_agent._positions.items() if data.get("quantity", 0) != 0}
+                if open_positions:
+                    self.logger.warning("Graceful Shutdown: Closing %d open positions...", len(open_positions))
+                    for inst, data in open_positions.items():
+                        qty = data.get("quantity", 0)
+                        side = OrderSide.SELL if qty > 0 else OrderSide.BUY
+                        self.logger.warning("Graceful Shutdown: Market closing position for %s (qty=%d, side=%s)", inst, qty, side.value)
+                        try:
+                            await self.place_order(
+                                instrument=inst,
+                                side=side,
+                                order_type=OrderType.MARKET,
+                                quantity=abs(qty),
+                                product=ProductType.MIS,
+                            )
+                        except Exception as e:
+                            self.logger.error("Graceful Shutdown: Failed to place close order for %s: %s", inst, e)
+
+                    # Wait for fill confirmations (with a 5-second timeout)
+                    for _ in range(50):
+                        if all(p.get("quantity", 0) == 0 for p in portfolio_agent._positions.values()):
+                            self.logger.info("Graceful Shutdown: All positions closed successfully.")
+                            break
+                        await asyncio.sleep(0.1)
+                    else:
+                        self.logger.warning("Graceful Shutdown: Timeout waiting for position close confirmations.")
+        self.logger.info("Execution Agent stopped")
 
     async def health(self) -> dict[str, Any]:
         base = await super().health()
