@@ -27,6 +27,9 @@ class PortfolioOptimizationAgent(BaseAgent):
         self.subscribe(EventType.SIGNAL)
         self.subscribe(EventType.PORTFOLIO_UPDATE)
 
+        from src.monitoring.decay_detector import PerformanceDecayDetector
+        self.decay_detector = PerformanceDecayDetector(system=getattr(self, "system", None))
+
         task = asyncio.create_task(self._reconciliation_loop(), name="portfolio_opt.reconciliation")
         self._tasks.append(task)
 
@@ -93,6 +96,15 @@ class PortfolioOptimizationAgent(BaseAgent):
                 "realized_pnl": realized_pnl,
                 "avg_cost": pos["avg_cost"],
             })
+
+            strategy_name = "unknown"
+            system_ref = getattr(self, "system", None)
+            if system_ref and hasattr(system_ref, "execution"):
+                order_id = event.data.get("order_id", "")
+                strategy_name = system_ref.execution._order_strategies.get(order_id, "unknown")
+
+            if hasattr(self, "decay_detector"):
+                self.decay_detector.record_trade(strategy_name, realized_pnl)
 
         self.logger.info(
             "Position %s: qty=%d avg_cost=%.2f",

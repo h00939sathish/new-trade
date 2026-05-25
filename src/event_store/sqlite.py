@@ -14,39 +14,47 @@ class SqliteEventStore(EventStore):
     def __init__(self, db_path: str | Path = "trading_events.db"):
         self.db_path = Path(db_path)
         self._conn: sqlite3.Connection | None = None
+        self._write_lock = asyncio.Lock()
 
     async def connect(self) -> None:
-        def _conn_setup():
-            self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
-            self._conn.row_factory = sqlite3.Row
-            self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.execute("PRAGMA synchronous=NORMAL")
-            self._conn.execute("""
-                CREATE TABLE IF NOT EXISTS events (
-                    position INTEGER PRIMARY KEY AUTOINCREMENT,
-                    event_id TEXT NOT NULL UNIQUE,
-                    event_type TEXT NOT NULL,
-                    stream TEXT NOT NULL,
-                    timestamp TEXT NOT NULL,
-                    data TEXT NOT NULL,
-                    metadata TEXT NOT NULL
-                )
-            """)
-            self._conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_events_stream
-                ON events(stream, position)
-            """)
-            self._conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_events_timestamp
-                ON events(timestamp)
-            """)
-            self._conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_events_type
-                ON events(event_type)
-            """)
-            self._conn.commit()
+        if self._conn is not None:
+            return
 
-        await asyncio.to_thread(_conn_setup)
+        async with self._write_lock:
+            if self._conn is not None:
+                return
+
+            def _conn_setup():
+                self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
+                self._conn.row_factory = sqlite3.Row
+                self._conn.execute("PRAGMA journal_mode=WAL")
+                self._conn.execute("PRAGMA synchronous=NORMAL")
+                self._conn.execute("""
+                    CREATE TABLE IF NOT EXISTS events (
+                        position INTEGER PRIMARY KEY AUTOINCREMENT,
+                        event_id TEXT NOT NULL UNIQUE,
+                        event_type TEXT NOT NULL,
+                        stream TEXT NOT NULL,
+                        timestamp TEXT NOT NULL,
+                        data TEXT NOT NULL,
+                        metadata TEXT NOT NULL
+                    )
+                """)
+                self._conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_events_stream
+                    ON events(stream, position)
+                """)
+                self._conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_events_timestamp
+                    ON events(timestamp)
+                """)
+                self._conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_events_type
+                    ON events(event_type)
+                """)
+                self._conn.commit()
+
+            await asyncio.to_thread(_conn_setup)
 
     async def disconnect(self) -> None:
         if self._conn:
@@ -80,7 +88,8 @@ class SqliteEventStore(EventStore):
             conn.commit()
             return cursor.lastrowid
 
-        position = await asyncio.to_thread(_db_append)
+        async with self._write_lock:
+            position = await asyncio.to_thread(_db_append)
         if position is not None:
             event.position = position
         return position or 0
@@ -112,7 +121,8 @@ class SqliteEventStore(EventStore):
             conn.commit()
             return positions
 
-        return await asyncio.to_thread(_db_append_batch)
+        async with self._write_lock:
+            return await asyncio.to_thread(_db_append_batch)
 
     async def read(
         self,
@@ -212,7 +222,8 @@ class SqliteEventStore(EventStore):
             conn.execute("DELETE FROM events WHERE stream = ?", (stream,))
             conn.commit()
 
-        await asyncio.to_thread(_db_delete_stream)
+        async with self._write_lock:
+            await asyncio.to_thread(_db_delete_stream)
 
     async def health_check(self) -> dict[str, Any]:
         try:

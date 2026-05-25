@@ -48,8 +48,29 @@ class StrategyGenAgent(BaseAgent):
                 await self._process_ohlcv(event)
             case EventType.FILL:
                 await self._process_fill(event)
+            case EventType.SYSTEM_STATE:
+                self._handle_system_state(event)
             case EventType.SYSTEM_HEALTH:
                 pass
+
+    def _handle_system_state(self, event: Event) -> None:
+        regime = event.data.get("regime")
+        if not regime:
+            return
+        self.logger.info("Regime change detected in strategy_gen: %s", regime)
+        for name in list(self._strategy_weights.keys()):
+            if regime in ("trending_up", "trending_down"):
+                if "momentum" in name or "breakout" in name:
+                    self._strategy_weights[name] = 0.5
+                elif "reversion" in name or "rsi" in name or "bollinger" in name:
+                    self._strategy_weights[name] = 0.05
+            elif regime == "mean_reverting":
+                if "momentum" in name or "breakout" in name:
+                    self._strategy_weights[name] = 0.05
+                elif "reversion" in name or "rsi" in name or "bollinger" in name:
+                    self._strategy_weights[name] = 0.5
+            elif regime == "high_volatility":
+                self._strategy_weights[name] = 0.02
 
     async def _process_fill(self, event: Event) -> None:
         data = event.data

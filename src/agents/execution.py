@@ -30,6 +30,7 @@ class ExecutionAgent(BaseAgent):
         # Signals waiting for risk approval, keyed by signal event_id
         self._pending_signals: dict[str, dict[str, Any]] = {}
         self._available_capital = 1_000_000.0
+        self._order_strategies: dict[str, str] = {}
 
     async def on_start(self) -> None:
         self.logger.info("Execution Agent initializing (paper=%s)", self._paper_trading)
@@ -84,6 +85,7 @@ class ExecutionAgent(BaseAgent):
                 producer=self.name,
                 status=OrderStatus.PENDING,
             )
+            self._order_strategies[order_event.event_id] = signal.get("strategy", "unknown")
             try:
                 from src.monitoring.metrics import system_metrics
                 system_metrics.count_order(order_event.status.value)
@@ -214,6 +216,7 @@ class ExecutionAgent(BaseAgent):
             price=price,
             producer=self.name,
         )
+        self._order_strategies[order_event.event_id] = signal.get("strategy", "unknown")
         try:
             from src.monitoring.metrics import system_metrics
             system_metrics.count_order(order_event.status.value)
@@ -280,6 +283,7 @@ class ExecutionAgent(BaseAgent):
         price: float | None = None,
         trigger_price: float | None = None,
         exchange: Exchange = Exchange.NSE,
+        strategy: str = "unknown",
     ) -> OrderEvent:
         order_event = OrderEvent.create(
             instrument=instrument,
@@ -293,6 +297,7 @@ class ExecutionAgent(BaseAgent):
             producer=self.name,
             status=OrderStatus.PENDING,
         )
+        self._order_strategies[order_event.event_id] = strategy
         try:
             from src.monitoring.metrics import system_metrics
             system_metrics.count_order(order_event.status.value)

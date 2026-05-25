@@ -6,6 +6,7 @@ from src.agents.portfolio import PortfolioOptimizationAgent
 from src.agents.reflection_engine import ReflectionEngineAgent
 from src.agents.risk_mgmt import RiskManagementAgent
 from src.agents.strategy_gen import StrategyGenAgent
+from src.agents.regime import RegimeDetectionAgent
 
 __all__ = [
     "Agent",
@@ -20,4 +21,5 @@ __all__ = [
     "ReflectionEngineAgent",
     "RiskManagementAgent",
     "StrategyGenAgent",
+    "RegimeDetectionAgent",
 ]

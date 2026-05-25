@@ -96,36 +96,110 @@ class ReflectionEngineAgent(BaseAgent):
             current_result.sharpe_ratio,
         )
 
-        hypothesis = await self._llm_client.generate_hypothesis(
-            current_result=current_result,
-            mutation_history=self._mutation_history,
-        )
+        hypothesis = await self._find_best_mutation(current_result)
         if not hypothesis:
-            self.logger.info("No hypothesis generated — skipping mutation")
+            self.logger.info("No parameter improvement found during sweep — skipping mutation")
             return
 
         rationale = hypothesis.get("rationale", "")[:100]
         self.logger.info(
-            "Hypothesis: %s -> %s",
+            "Best Parameter Set found: %s -> %s",
             hypothesis.get("strategy"), rationale,
         )
 
-        mutated_result = await self._evaluate_mutation(hypothesis)
-        if mutated_result and self._is_improvement(current_result, mutated_result):
-            await self._apply_mutation(hypothesis, mutated_result)
-        else:
-            self.logger.info("Hypothesis rejected — no improvement detected")
+        mutated_result = hypothesis.pop("result")
+        # Since _find_best_mutation only returns if it's a verified improvement, we apply it directly
+        await self._apply_mutation(hypothesis, mutated_result)
 
         self._mutation_history.append({
             "hypothesis": hypothesis,
             "baseline": self._result_to_dict(current_result),
-            "mutated": self._result_to_dict(mutated_result) if mutated_result else None,
-            "applied": (
-                mutated_result is not None
-                and self._is_improvement(current_result, mutated_result)
-            ),
+            "mutated": self._result_to_dict(mutated_result),
+            "applied": True,
         })
         self._last_baseline_result = current_result
+
+    async def _find_best_mutation(self, baseline_result: Any) -> dict[str, Any] | None:
+        from src.config.strategy_config import load_strategy_config
+        cfg = load_strategy_config(str(self._strategy_config_path))
+        
+        best_strategy = None
+        best_params = None
+        best_sharpe = baseline_result.sharpe_ratio
+        best_result = baseline_result
+        
+        # Grid search bounds
+        search_spaces = {
+            "momentum": {
+                "short_window": [3, 5, 8],
+                "long_window": [15, 20, 25],
+                "threshold": [0.01, 0.02, 0.03],
+            },
+            "mean_reversion": {
+                "window": [15, 20, 25],
+                "entry_z": [1.5, 2.0, 2.5],
+                "exit_z": [0.3, 0.5, 0.7],
+            },
+            "bollinger": {
+                "window": [15, 20, 25],
+                "num_std": [1.5, 2.0, 2.5],
+            },
+            "rsi": {
+                "window": [10, 14, 18],
+                "oversold": [25.0, 30.0, 35.0],
+                "overbought": [65.0, 70.0, 75.0],
+            },
+            "macd": {
+                "fast": [10, 12, 14],
+                "slow": [24, 26, 28],
+                "signal": [7, 9, 11],
+            },
+            "atr_breakout": {
+                "window": [10, 14, 18],
+                "multiplier": [1.5, 2.0, 2.5],
+                "threshold": [0.005, 0.01, 0.015],
+            }
+        }
+        
+        import itertools
+        for strat_name, strat_cfg in cfg.get("strategies", {}).items():
+            if not strat_cfg.get("enabled", True):
+                continue
+            
+            space = search_spaces.get(strat_name)
+            if not space:
+                continue
+                
+            # Get keys and list of possible values
+            keys, values = zip(*space.items())
+            # Generate Cartesian product
+            for val_combination in itertools.product(*values):
+                params = dict(zip(keys, val_combination))
+                
+                # Check if these params are different from current config params
+                current_params = strat_cfg.get("params", {})
+                if all(current_params.get(k) == v for k, v in params.items()):
+                    continue
+                
+                # Run backtest
+                override = {strat_name: {"params": params, "enabled": True}}
+                res = await self._run_backtest(strategy_config_override=override)
+                if res:
+                    # We want to find the parameter set with the highest Sharpe ratio
+                    if res.sharpe_ratio > best_sharpe:
+                        best_sharpe = res.sharpe_ratio
+                        best_strategy = strat_name
+                        best_params = params
+                        best_result = res
+                        
+        if best_strategy and best_sharpe > baseline_result.sharpe_ratio * 1.05:
+            return {
+                "strategy": best_strategy,
+                "params": best_params,
+                "rationale": f"Grid search parameter optimization: Sharpe improved from {baseline_result.sharpe_ratio:.3f} to {best_sharpe:.3f}",
+                "result": best_result,
+            }
+        return None
 
     async def _run_backtest(
         self, strategy_config_override: dict[str, Any] | None = None,

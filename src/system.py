@@ -11,6 +11,7 @@ from src.agents import (
     ReflectionEngineAgent,
     RiskManagementAgent,
     StrategyGenAgent,
+    RegimeDetectionAgent,
 )
 from src.config.settings import settings
 from src.event_store import create_event_store
@@ -64,6 +65,9 @@ class TradingSystem:
         self.portfolio_opt = PortfolioOptimizationAgent(
             event_store=self._event_store,
         )
+        self.regime_detection = RegimeDetectionAgent(
+            event_store=self._event_store,
+        )
         self.alert = AlertAgent(event_store=self._event_store)
 
         if market_data_provider is not None:
@@ -86,6 +90,7 @@ class TradingSystem:
             self.risk_mgmt,
             self.execution,
             self.portfolio_opt,
+            self.regime_detection,
             self.alert,
             self.reflection,
         ]

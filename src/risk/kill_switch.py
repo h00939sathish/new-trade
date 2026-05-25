@@ -70,11 +70,12 @@ class KillSwitch:
                     logger.info("Strategy generator disabled by Kill Switch")
 
                 # 2. Emit fatal SYSTEM_ERROR event
-                err_event = SystemEvent.create(
+                from src.schemas.events import Event, EventMetadata
+                err_event = Event(
                     event_type=EventType.SYSTEM_ERROR,
                     stream="system.errors",
                     data={"fatal": True, "reason": reason},
-                    producer="kill_switch"
+                    metadata=EventMetadata(producer="kill_switch"),
                 )
                 await system.market_intel.emit(err_event)
 
