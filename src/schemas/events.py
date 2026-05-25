@@ -212,6 +212,8 @@ class SignalEvent(Event):
     confidence: float
     price: float | None = None
     exchange: Exchange = Exchange.NSE
+    stop_loss_pct: float | None = None
+    take_profit_pct: float | None = None
 
     @classmethod
     def create(
@@ -225,6 +227,8 @@ class SignalEvent(Event):
         exchange: Exchange = Exchange.NSE,
         producer: str = "strategy_gen",
         timestamp: datetime | None = None,
+        stop_loss_pct: float | None = None,
+        take_profit_pct: float | None = None,
     ) -> "SignalEvent":
         data = {
             "instrument": instrument,
@@ -234,6 +238,8 @@ class SignalEvent(Event):
             "price": price,
             "exchange": exchange.value,
             "features": features or {},
+            "stop_loss_pct": stop_loss_pct,
+            "take_profit_pct": take_profit_pct,
         }
         kwargs = {}
         if timestamp is not None:
@@ -247,6 +253,8 @@ class SignalEvent(Event):
             confidence=confidence,
             price=price,
             exchange=exchange,
+            stop_loss_pct=stop_loss_pct,
+            take_profit_pct=take_profit_pct,
             data=data,
             metadata=EventMetadata(producer=producer),
             **kwargs,

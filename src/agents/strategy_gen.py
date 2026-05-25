@@ -14,12 +14,25 @@ class StrategyGenAgent(BaseAgent):
         self._strategy_weights: dict[str, float] = {}
         self._tick_prices: dict[str, deque[float]] = {}
         self._candle_prices: dict[str, dict[str, deque[float]]] = {}
+        self._candle_volumes: dict[str, dict[str, deque[float]]] = {}
         self._config_path = config_path
+        self._positions: dict[str, dict[str, Any]] = {}
+        self._pending_signal_levels: dict[str, dict[str, float]] = {}
+        self._last_tick_time: dict[str, datetime] = {}
+        self.threshold = 0.1
+        if self._config_path:
+            try:
+                from src.config.strategy_config import load_strategy_config
+                cfg = load_strategy_config(self._config_path)
+                self.threshold = cfg.get("consensus_threshold", 0.1)
+            except Exception:
+                pass
 
     async def on_start(self) -> None:
         self.logger.info("Strategy Generation Agent initializing")
         self.subscribe_market_data()
         self.subscribe_system()
+        self.subscribe(EventType.FILL)
         self._register_default_strategies()
 
     def register_strategy(self, strategy: "Strategy", weight: float = 1.0) -> None:
@@ -33,8 +46,122 @@ class StrategyGenAgent(BaseAgent):
                 await self._process_tick(event)
             case EventType.OHLCV:
                 await self._process_ohlcv(event)
+            case EventType.FILL:
+                await self._process_fill(event)
             case EventType.SYSTEM_HEALTH:
                 pass
+
+    async def _process_fill(self, event: Event) -> None:
+        data = event.data
+        instrument = data.get("instrument", "")
+        side = data.get("side", "")
+        fill_qty = data.get("fill_quantity", 0)
+        fill_price = data.get("fill_price", 0.0)
+        if not instrument:
+            return
+
+        if instrument not in self._positions:
+            self._positions[instrument] = {
+                "quantity": 0,
+                "avg_price": 0.0,
+                "stop_loss": 0.0,
+                "take_profit": 0.0,
+                "stop_loss_pct": 0.0,
+                "take_profit_pct": 0.0,
+                "side": None
+            }
+
+        pos = self._positions[instrument]
+        qty_change = fill_qty if side == "buy" else -fill_qty
+        new_qty = pos["quantity"] + qty_change
+
+        if new_qty == 0:
+            self._positions[instrument] = {
+                "quantity": 0,
+                "avg_price": 0.0,
+                "stop_loss": 0.0,
+                "take_profit": 0.0,
+                "stop_loss_pct": 0.0,
+                "take_profit_pct": 0.0,
+                "side": None
+            }
+            self.logger.info("Position closed for %s", instrument)
+        else:
+            current_side = "long" if new_qty > 0 else "short"
+            if pos["quantity"] == 0 or (pos["quantity"] > 0 and qty_change > 0) or (pos["quantity"] < 0 and qty_change < 0):
+                total_cost = (pos["avg_price"] * abs(pos["quantity"])) + (fill_price * fill_qty)
+                pos["avg_price"] = total_cost / abs(new_qty)
+                pos["side"] = current_side
+
+                pending = self._pending_signal_levels.get(instrument, {})
+                sl_pct = pending.get("stop_loss_pct", 0.02)
+                tp_pct = pending.get("take_profit_pct", 0.05)
+                pos["stop_loss_pct"] = sl_pct
+                pos["take_profit_pct"] = tp_pct
+
+                if current_side == "long":
+                    pos["stop_loss"] = pos["avg_price"] * (1.0 - sl_pct)
+                    pos["take_profit"] = pos["avg_price"] * (1.0 + tp_pct)
+                else:
+                    pos["stop_loss"] = pos["avg_price"] * (1.0 + sl_pct)
+                    pos["take_profit"] = pos["avg_price"] * (1.0 - tp_pct)
+            pos["quantity"] = new_qty
+            self.logger.info("Position updated for %s: qty=%d, avg_price=%.2f, SL=%.2f, TP=%.2f",
+                             instrument, new_qty, pos["avg_price"], pos["stop_loss"], pos["take_profit"])
+
+    async def _check_sl_tp(self, instrument: str, current_price: float, timestamp: datetime, exchange: Exchange) -> None:
+        if instrument not in self._positions:
+            return
+        pos = self._positions[instrument]
+        if pos["quantity"] == 0:
+            return
+
+        is_trailing = True
+        if pos["side"] == "long":
+            if is_trailing:
+                new_sl = current_price * (1.0 - pos["stop_loss_pct"])
+                if new_sl > pos["stop_loss"]:
+                    pos["stop_loss"] = new_sl
+                    self.logger.debug("Trailing SL updated for %s: %.2f", instrument, new_sl)
+            if current_price <= pos["stop_loss"]:
+                self.logger.warning("Stop Loss hit for %s long position at %.2f (SL: %.2f)", instrument, current_price, pos["stop_loss"])
+                await self._emit_exit_signal(instrument, current_price, "stop_loss", exchange, timestamp)
+            elif current_price >= pos["take_profit"]:
+                self.logger.warning("Take Profit hit for %s long position at %.2f (TP: %.2f)", instrument, current_price, pos["take_profit"])
+                await self._emit_exit_signal(instrument, current_price, "take_profit", exchange, timestamp)
+        elif pos["side"] == "short":
+            if is_trailing:
+                new_sl = current_price * (1.0 + pos["stop_loss_pct"])
+                if new_sl < pos["stop_loss"] or pos["stop_loss"] == 0.0:
+                    pos["stop_loss"] = new_sl
+                    self.logger.debug("Trailing SL updated for %s: %.2f", instrument, new_sl)
+            if current_price >= pos["stop_loss"]:
+                self.logger.warning("Stop Loss hit for %s short position at %.2f (SL: %.2f)", instrument, current_price, pos["stop_loss"])
+                await self._emit_exit_signal(instrument, current_price, "stop_loss", exchange, timestamp)
+            elif current_price <= pos["take_profit"]:
+                self.logger.warning("Take Profit hit for %s short position at %.2f (TP: %.2f)", instrument, current_price, pos["take_profit"])
+                await self._emit_exit_signal(instrument, current_price, "take_profit", exchange, timestamp)
+
+    async def _emit_exit_signal(self, instrument: str, price: float, reason: str, exchange: Exchange, timestamp: datetime) -> None:
+        self._positions[instrument] = {
+            "quantity": 0,
+            "avg_price": 0.0,
+            "stop_loss": 0.0,
+            "take_profit": 0.0,
+            "stop_loss_pct": 0.0,
+            "take_profit_pct": 0.0,
+            "side": None
+        }
+        signal = {
+            "direction": "neutral",
+            "confidence": 1.0,
+            "price": price,
+            "features": {"exit_reason": reason}
+        }
+        strategy_name = "consensus_ensemble"
+        if len(self._strategies) == 1:
+            strategy_name = list(self._strategies.keys())[0]
+        await self._emit_signal(instrument, strategy_name, signal, exchange=exchange, timestamp=timestamp)
 
     async def _process_tick(self, event: Event) -> None:
         instrument = event.data.get("instrument", "")
@@ -43,20 +170,63 @@ class StrategyGenAgent(BaseAgent):
         if price is None:
             return
         if instrument not in self._tick_prices:
-            self._tick_prices[instrument] = deque(maxlen=100)
+            self._tick_prices[instrument] = deque(maxlen=500)
         self._tick_prices[instrument].append(float(price))
-        
+
+        await self._check_sl_tp(instrument, float(price), event.timestamp, exchange)
+
+        votes = []
+        features_all = {}
         for strategy in self._strategies.values():
             if getattr(strategy, "data_type", "any") in ("tick", "any"):
                 prices_list = list(self._tick_prices[instrument])
                 signal = await strategy.evaluate(instrument, prices_list)
                 if signal is not None:
-                    await self._emit_signal(instrument, strategy.name, signal, exchange=exchange, timestamp=event.timestamp)
+                    direction = signal["direction"]
+                    confidence = signal["confidence"]
+                    dir_val = 1.0 if direction == "long" else -1.0 if direction == "short" else 0.0
+                    weight = self._strategy_weights.get(strategy.name, 1.0)
+                    vote = weight * dir_val * confidence
+                    votes.append(vote)
+                    features_all[strategy.name] = {
+                        "direction": direction,
+                        "confidence": confidence,
+                        "vote": vote,
+                        "features": signal.get("features", {})
+                    }
+
+        if votes:
+            net_signal = sum(votes)
+            abs_net = abs(net_signal)
+            if abs_net >= self.threshold:
+                direction = "long" if net_signal > 0 else "short"
+                confidence = min(abs_net, 0.95)
+                sl_pct = 0.02
+                tp_pct = 0.05
+                self._pending_signal_levels[instrument] = {
+                    "stop_loss_pct": sl_pct,
+                    "take_profit_pct": tp_pct
+                }
+                consolidated = {
+                    "direction": direction,
+                    "confidence": confidence,
+                    "price": float(price),
+                    "features": {
+                        "net_signal": net_signal,
+                        "votes": features_all
+                    }
+                }
+                strategy_name = "consensus_ensemble"
+                if len(self._strategies) == 1:
+                    strategy_name = list(self._strategies.keys())[0]
+                await self._emit_signal(instrument, strategy_name, consolidated, exchange=exchange, timestamp=event.timestamp,
+                                        stop_loss_pct=sl_pct, take_profit_pct=tp_pct)
 
     async def _process_ohlcv(self, event: Event) -> None:
         instrument = event.data.get("instrument", "")
         exchange = Exchange(event.data.get("exchange", "NSE"))
         close = event.data.get("close")
+        volume = event.data.get("volume", 0.0)
         interval = event.data.get("interval", "minute")
         if close is None:
             return
@@ -65,19 +235,68 @@ class StrategyGenAgent(BaseAgent):
         if interval not in self._candle_prices[instrument]:
             self._candle_prices[instrument][interval] = deque(maxlen=500)
         self._candle_prices[instrument][interval].append(float(close))
-        
+
+        if instrument not in self._candle_volumes:
+            self._candle_volumes[instrument] = {}
+        if interval not in self._candle_volumes[instrument]:
+            self._candle_volumes[instrument][interval] = deque(maxlen=500)
+        self._candle_volumes[instrument][interval].append(float(volume))
+
+        await self._check_sl_tp(instrument, float(close), event.timestamp, exchange)
+
+        votes = []
+        features_all = {}
         for strategy in self._strategies.values():
             strategy_data_type = getattr(strategy, "data_type", "any")
             strategy_timeframe = getattr(strategy, "timeframe", "minute")
-            
+
             norm_strat = strategy_timeframe.replace("minute", "m").replace("1m", "minute")
             norm_event = interval.replace("minute", "m").replace("1m", "minute")
-            
+
             if strategy_data_type in ("candle", "any") and (norm_strat == norm_event or strategy_timeframe == interval):
                 prices_list = list(self._candle_prices[instrument][interval])
-                signal = await strategy.evaluate(instrument, prices_list)
+                volumes_list = list(self._candle_volumes[instrument][interval])
+                signal = await strategy.evaluate(instrument, prices_list, volumes=volumes_list)
                 if signal is not None:
-                    await self._emit_signal(instrument, strategy.name, signal, exchange=exchange, timestamp=event.timestamp)
+                    direction = signal["direction"]
+                    confidence = signal["confidence"]
+                    dir_val = 1.0 if direction == "long" else -1.0 if direction == "short" else 0.0
+                    weight = self._strategy_weights.get(strategy.name, 1.0)
+                    vote = weight * dir_val * confidence
+                    votes.append(vote)
+                    features_all[strategy.name] = {
+                        "direction": direction,
+                        "confidence": confidence,
+                        "vote": vote,
+                        "features": signal.get("features", {})
+                    }
+
+        if votes:
+            net_signal = sum(votes)
+            abs_net = abs(net_signal)
+            if abs_net >= self.threshold:
+                direction = "long" if net_signal > 0 else "short"
+                confidence = min(abs_net, 0.95)
+                sl_pct = 0.02
+                tp_pct = 0.05
+                self._pending_signal_levels[instrument] = {
+                    "stop_loss_pct": sl_pct,
+                    "take_profit_pct": tp_pct
+                }
+                consolidated = {
+                    "direction": direction,
+                    "confidence": confidence,
+                    "price": float(close),
+                    "features": {
+                        "net_signal": net_signal,
+                        "votes": features_all
+                    }
+                }
+                strategy_name = "consensus_ensemble"
+                if len(self._strategies) == 1:
+                    strategy_name = list(self._strategies.keys())[0]
+                await self._emit_signal(instrument, strategy_name, consolidated, exchange=exchange, timestamp=event.timestamp,
+                                        stop_loss_pct=sl_pct, take_profit_pct=tp_pct)
 
     async def _emit_signal(
         self,
@@ -86,6 +305,8 @@ class StrategyGenAgent(BaseAgent):
         signal: dict[str, Any],
         exchange: Exchange = Exchange.NSE,
         timestamp: datetime | None = None,
+        stop_loss_pct: float | None = None,
+        take_profit_pct: float | None = None,
     ) -> None:
         event = SignalEvent.create(
             instrument=instrument,
@@ -97,6 +318,8 @@ class StrategyGenAgent(BaseAgent):
             exchange=exchange,
             producer=self.name,
             timestamp=timestamp,
+            stop_loss_pct=stop_loss_pct,
+            take_profit_pct=take_profit_pct,
         )
         self.logger.info(
             "Signal: %s %s %.2f%% from %s",
@@ -125,6 +348,7 @@ class StrategyGenAgent(BaseAgent):
         base.update({
             "strategies": list(self._strategies.keys()),
             "instruments_tracked": len(self._tick_prices) + len(self._candle_prices),
+            "positions_tracked": len(self._positions),
         })
         return base
 
@@ -138,6 +362,7 @@ class Strategy:
         self,
         instrument: str,
         prices: list[float],
+        volumes: list[float] | None = None,
     ) -> dict[str, Any] | None: ...
 
 
@@ -154,6 +379,7 @@ class MomentumStrategy(Strategy):
         self,
         instrument: str,
         prices: list[float],
+        volumes: list[float] | None = None,
     ) -> dict[str, Any] | None:
         if len(prices) < self.long_window:
             return None
@@ -189,6 +415,7 @@ class MeanReversionStrategy(Strategy):
         self,
         instrument: str,
         prices: list[float],
+        volumes: list[float] | None = None,
     ) -> dict[str, Any] | None:
         if len(prices) < self.window:
             return None
@@ -227,6 +454,7 @@ class ATRStrategy(Strategy):
         self,
         instrument: str,
         prices: list[float],
+        volumes: list[float] | None = None,
     ) -> dict[str, Any] | None:
         if len(prices) < self.window + 1:
             return None
@@ -271,6 +499,7 @@ class BollingerBandsStrategy(Strategy):
         self,
         instrument: str,
         prices: list[float],
+        volumes: list[float] | None = None,
     ) -> dict[str, Any] | None:
         if len(prices) < self.window:
             return None
@@ -313,6 +542,7 @@ class RSIStrategy(Strategy):
         self,
         instrument: str,
         prices: list[float],
+        volumes: list[float] | None = None,
     ) -> dict[str, Any] | None:
         if len(prices) < self.window + 1:
             return None
@@ -360,6 +590,7 @@ class MACDStrategy(Strategy):
         self,
         instrument: str,
         prices: list[float],
+        volumes: list[float] | None = None,
     ) -> dict[str, Any] | None:
         if len(prices) < self.slow + self.signal + 1:
             return None
@@ -421,9 +652,11 @@ class VolumeStrategy(Strategy):
         self,
         instrument: str,
         prices: list[float],
+        volumes: list[float] | None = None,
     ) -> dict[str, Any] | None:
-        # TODO: Volume data not available in current evaluate() interface
-        return None
+        if volumes is None:
+            return None
+        return await self.evaluate_with_volume(instrument, prices, volumes)
 
     async def evaluate_with_volume(
         self,
@@ -470,6 +703,7 @@ class IchimokuStrategy(Strategy):
         self,
         instrument: str,
         prices: list[float],
+        volumes: list[float] | None = None,
     ) -> dict[str, Any] | None:
         if len(prices) < self.lagging + self.displacement:
             return None

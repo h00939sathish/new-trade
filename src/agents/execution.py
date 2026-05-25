@@ -28,11 +28,13 @@ class ExecutionAgent(BaseAgent):
         self._broker: Any = broker
         # Signals waiting for risk approval, keyed by signal event_id
         self._pending_signals: dict[str, dict[str, Any]] = {}
+        self._available_capital = 1_000_000.0
 
     async def on_start(self) -> None:
         self.logger.info("Execution Agent initializing (paper=%s)", self._paper_trading)
         self.subscribe_signals()
         self.subscribe_risk()
+        self.subscribe(EventType.PORTFOLIO_UPDATE)
 
     async def on_event(self, event: Event) -> None:
         match event.event_type:
@@ -42,18 +44,66 @@ class ExecutionAgent(BaseAgent):
                 await self._handle_risk_check(event)
             case EventType.RISK_BREACH:
                 self.logger.warning("Risk breach in execution: %s", event.data)
+            case EventType.PORTFOLIO_UPDATE:
+                self._available_capital = event.data.get("cash", self._available_capital)
 
     async def _handle_signal(self, event: Event) -> None:
         """Store the signal in a pending map and wait for risk approval.
 
-        The order is NOT placed with the broker here. It is placed only
-        when a matching RISK_CHECK event with passed=True is received.
+        The order is NOT placed with the broker here (unless it is a neutral/exit signal).
+        It is placed only when a matching RISK_CHECK event with passed=True is received.
         """
         signal = event.data
         instrument = signal.get("instrument", "")
         direction = signal.get("direction")
         confidence = signal.get("confidence", 0.0)
-        if direction == "neutral" or confidence < 0.3:
+        
+        # Handle position closing immediately (neutral signals bypass pre-trade risk checks)
+        if direction == "neutral":
+            qty = self._get_position_qty(instrument)
+            if qty == 0:
+                self.logger.info("Neutral signal received for %s, but no open position found.", instrument)
+                return
+            side = OrderSide.SELL if qty > 0 else OrderSide.BUY
+            close_qty = abs(qty)
+            
+            order_event = OrderEvent.create(
+                instrument=instrument,
+                exchange=Exchange(signal.get("exchange", "NSE")),
+                side=side,
+                order_type=OrderType.MARKET,
+                quantity=close_qty,
+                product=ProductType.MIS,
+                price=signal.get("price"),
+                producer=self.name,
+                status=OrderStatus.PENDING,
+            )
+            try:
+                from src.monitoring.metrics import system_metrics
+                system_metrics.count_order(order_event.status.value)
+            except Exception:
+                pass
+                
+            if self._broker is not None:
+                exchange = Exchange(signal.get("exchange", "NSE"))
+                broker_id = await self._broker.place_order(
+                    tradingsymbol=instrument,
+                    exchange=exchange,
+                    side=side,
+                    order_type=OrderType.MARKET,
+                    quantity=close_qty,
+                    product=ProductType.MIS,
+                    price=signal.get("price"),
+                )
+                order_event.data["broker_order_id"] = broker_id
+                
+            await self.emit(order_event)
+            self._open_orders[order_event.event_id] = order_event
+            if self._paper_trading:
+                await self._simulate_fill(order_event)
+            return
+
+        if confidence < 0.3:
             return
 
         # Store signal for later execution after risk approval
@@ -120,7 +170,14 @@ class ExecutionAgent(BaseAgent):
         confidence = signal.get("confidence", 0.0)
         price = signal.get("price")
         side = OrderSide.BUY if direction == "long" else OrderSide.SELL
-        quantity = self._calculate_quantity(confidence, price)
+        
+        # Calculate quantity using features volatility if available (Bug 3.2)
+        features = signal.get("features", {})
+        volatility = features.get("atr") or features.get("std")
+        if volatility is None:
+            volatility = price * 0.02 if price else 2.0
+            
+        quantity = self._calculate_quantity(confidence, price, self._available_capital, volatility)
         if quantity <= 0:
             return
         order_event = OrderEvent.create(
@@ -240,12 +297,17 @@ class ExecutionAgent(BaseAgent):
     async def _simulate_fill(self, order: OrderEvent) -> None:
         import asyncio
         price = order.price or 100.0
+        
+        from src.risk.costs import TransactionCostModel
+        cost_model = TransactionCostModel()
+        fill_price = cost_model.effective_fill_price(order.side.value, price)
+        
         fill_event = FillEvent.create(
             order_id=order.event_id,
             instrument=order.instrument,
             exchange=order.exchange,
             side=order.side,
-            fill_price=price,
+            fill_price=fill_price,
             fill_quantity=order.quantity,
         )
         try:
@@ -261,13 +323,37 @@ class ExecutionAgent(BaseAgent):
             self._filled_orders[order.event_id] = []
         self._filled_orders[order.event_id].append(fill_event)
         self.logger.info(
-            "Fill simulated: %s %d @ %.2f",
-            order.instrument, order.quantity, price,
+            "Fill simulated: %s %d @ %.2f (base=%.2f)",
+            order.instrument, order.quantity, fill_price, price,
         )
 
-    def _calculate_quantity(self, confidence: float, price: float | None = None) -> int:
-        base = int(confidence * 100)
-        return max(base, 1)
+    def _calculate_quantity(
+        self, confidence: float, price: float | None, available_capital: float, volatility: float
+    ) -> int:
+        if price is None or price <= 0 or available_capital <= 0 or volatility <= 0:
+            return 0
+        # Risk per trade: 1% of capital
+        risk_per_trade = available_capital * 0.01
+        # ATR-based stop distance (2x ATR or volatility)
+        stop_distance = volatility * 2.0  
+        if stop_distance <= 0:
+            return 0
+        # Position size = risk / stop distance
+        raw_qty = risk_per_trade / stop_distance
+        # Cap at max 5% of capital per position
+        max_qty = (available_capital * 0.05) / price
+        return max(1, int(min(raw_qty, max_qty)))
+
+    def _get_position_qty(self, instrument: str) -> int:
+        qty = 0
+        for fid, fills in self._filled_orders.items():
+            for f in fills:
+                if f.instrument == instrument:
+                    if f.side == OrderSide.BUY:
+                        qty += f.fill_quantity
+                    else:
+                        qty -= f.fill_quantity
+        return qty
 
     async def on_stop(self) -> None:
         # Log any signals that were still pending approval at shutdown

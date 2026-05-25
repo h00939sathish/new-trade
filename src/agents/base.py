@@ -63,6 +63,9 @@ class BaseAgent(Agent):
         self.logger.info("Agent starting...")
         try:
             await self.event_store.connect()
+            from src.event_store.async_bus import event_bus
+            event_bus.set_event_store(self.event_store)
+            
             await self.on_start()
             self.status = AgentStatus.RUNNING
             self._running = True
@@ -133,7 +136,8 @@ class BaseAgent(Agent):
         self.subscribe(EventType.SYSTEM_STATE)
 
     async def emit(self, event: Event) -> None:
-        await self.event_store.append(SYSTEM_BUS, event)
+        from src.event_store.async_bus import event_bus
+        await event_bus.publish(event)
         try:
             from src.monitoring.metrics import system_metrics
             system_metrics.count_event(event.event_type.value)
@@ -149,35 +153,31 @@ class BaseAgent(Agent):
             [e.value for e in self._subscribed_event_types],
         )
         import time
-        last_pos = -1
+        from src.event_store.async_bus import event_bus
+        self._queue = event_bus.subscribe(self.name, self._subscribed_event_types)
+        
         while self._running:
             try:
-                events = await self.event_store.read(
-                    SYSTEM_BUS, offset=last_pos, limit=50
-                )
-                for event in events:
-                    if event.position is not None:
-                        last_pos = event.position
-                    # Skip events produced by this agent itself to avoid feedback loops (Bug 2.5)
-                    if event.metadata and event.metadata.producer == self.name:
-                        continue
-                    if self.interested_in(event.event_type):
+                event = await self._queue.get()  # Blocks until event arrives (Bug 3.3)
+                
+                # Skip events produced by this agent itself to avoid feedback loops (Bug 2.5)
+                if event.metadata and event.metadata.producer == self.name:
+                    continue
+                if self.interested_in(event.event_type):
+                    try:
+                        start_time = time.monotonic()
+                        await self.on_event(event)
+                        latency = time.monotonic() - start_time
                         try:
-                            start_time = time.monotonic()
-                            await self.on_event(event)
-                            latency = time.monotonic() - start_time
-                            try:
-                                from src.monitoring.metrics import system_metrics
-                                system_metrics.record_latency(latency)
-                            except Exception:
-                                pass
-                        except Exception as e:
-                            self.logger.error(
-                                "Error handling event %s: %s",
-                                event.event_id, e, exc_info=True,
-                            )
-                if not events:
-                    await asyncio.sleep(0.05)
+                            from src.monitoring.metrics import system_metrics
+                            system_metrics.record_latency(latency)
+                        except Exception:
+                            pass
+                    except Exception as e:
+                        self.logger.error(
+                            "Error handling event %s: %s",
+                            event.event_id, e, exc_info=True,
+                        )
             except asyncio.CancelledError:
                 break
             except Exception as e:

@@ -138,13 +138,10 @@ class BacktestEngine:
         order = OrderEvent(**event.model_dump())
         price = order.price or 100.0
         
-        # Apply commission and slippage (Bug 4)
-        slippage = price * (self._slippage_bps / 10000.0)
-        commission = price * self._commission_pct
-        if order.side == OrderSide.BUY:
-            fill_price = price + slippage + commission
-        else:
-            fill_price = price - slippage - commission
+        from src.risk.costs import TransactionCostModel
+        cost_model = TransactionCostModel(slippage_bps=self._slippage_bps)
+        # Apply slippage to fill price
+        fill_price = cost_model.effective_fill_price(order.side.value, price)
 
         fill = FillEvent.create(
             order_id=order.event_id,
@@ -163,25 +160,28 @@ class BacktestEngine:
         quantity = order.quantity
         side = order.side
         cost = fill_price * quantity
+        
+        from src.risk.costs import TransactionCostModel
+        cost_model = TransactionCostModel(brokerage_pct=self._commission_pct, slippage_bps=self._slippage_bps)
+        txn_fee = cost_model.total_cost(side.value, quantity, fill_price, product=order.product.value)
+
         if side == OrderSide.BUY:
             if instrument not in self._positions:
                 self._positions[instrument] = {"quantity": 0, "cost": 0.0}
             pos = self._positions[instrument]
-            total_cost = pos["cost"] + cost
+            total_cost = pos["cost"] + cost + txn_fee
             total_qty = pos["quantity"] + quantity
             pos["avg_cost"] = total_cost / total_qty if total_qty > 0 else 0.0
             pos["quantity"] = total_qty
             pos["cost"] = total_cost
-            self._capital -= cost
+            self._capital -= (cost + txn_fee)
         else:
             pos = self._positions.get(instrument, {"quantity": 0, "avg_cost": 0.0, "cost": 0.0})
-            pnl = (fill_price - pos["avg_cost"]) * quantity if pos["quantity"] > 0 else 0.0
-            # Fix Bug 2: Double Cash on Sells (remove self._capital += pnl)
-            self._capital += cost
+            pnl = (fill_price - pos["avg_cost"]) * quantity - txn_fee if pos["quantity"] > 0 else -txn_fee
+            self._capital += (cost - txn_fee)
             if instrument in self._positions:
                 self._positions[instrument]["quantity"] -= quantity
                 self._positions[instrument]["cost"] -= pos["avg_cost"] * quantity
-                # Fix Bug 3: Clear position cost and avg_cost when quantity hits 0
                 if self._positions[instrument]["quantity"] == 0:
                     self._positions[instrument]["cost"] = 0.0
                     self._positions[instrument]["avg_cost"] = 0.0

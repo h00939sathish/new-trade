@@ -50,18 +50,23 @@ class PortfolioOptimizationAgent(BaseAgent):
                 "total_sold": 0,
             }
         pos = self._positions[instrument]
+        from src.risk.costs import TransactionCostModel
+        cost_model = TransactionCostModel()
+        product = event.data.get("product", "mis")
+        txn_fee = cost_model.total_cost(side, quantity, price, product=product)
+
         if side == "buy":
             total_cost = pos["avg_cost"] * pos["quantity"] + cost
             pos["quantity"] += quantity
             pos["avg_cost"] = total_cost / pos["quantity"] if pos["quantity"] > 0 else 0.0
             pos["total_bought"] += quantity
-            self._capital -= cost  # Deduct cash on buy (Bug 2.2)
+            self._capital -= (cost + txn_fee)  # Deduct cash and entry fees (Bug 2.2 + 3.1)
         else:
             pos["quantity"] -= quantity
             pos["total_sold"] += quantity
             realized_pnl = (price - pos["avg_cost"]) * quantity
             self._pnl += realized_pnl
-            self._capital += cost  # Credit cash on sell (Bug 2.2)
+            self._capital += (cost - txn_fee)  # Credit cash and deduct exit fees (Bug 2.2 + 3.1)
             if pos["quantity"] == 0:
                 pos["avg_cost"] = 0.0  # Clear position cost when quantity is 0
             self._trade_history.append({
