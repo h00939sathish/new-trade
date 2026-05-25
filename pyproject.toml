@@ -10,6 +10,7 @@ dependencies = [
     "aiokafka>=0.10",
     "redis[hiredis]>=5.0",
     "httpx>=0.27",
+    "websocket-client>=1.8",
     "pandas>=2.0",
     "numpy>=1.26",
     "pyyaml>=6.0",
@@ -40,6 +41,10 @@ ml = [
 ]
 streaming = [
     "apache-flink>=1.19",
+]
+dashboard = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
 ]
 
 [tool.ruff]

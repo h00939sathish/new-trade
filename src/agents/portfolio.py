@@ -40,6 +40,7 @@ class PortfolioOptimizationAgent(BaseAgent):
         side = event.data.get("side", "buy")
         quantity = event.data.get("fill_quantity", 0)
         price = event.data.get("fill_price", 0.0)
+        cost = price * quantity
 
         if instrument not in self._positions:
             self._positions[instrument] = {
@@ -50,15 +51,19 @@ class PortfolioOptimizationAgent(BaseAgent):
             }
         pos = self._positions[instrument]
         if side == "buy":
-            total_cost = pos["avg_cost"] * pos["quantity"] + price * quantity
+            total_cost = pos["avg_cost"] * pos["quantity"] + cost
             pos["quantity"] += quantity
-            pos["avg_cost"] = total_cost / pos["quantity"] if pos["quantity"] > 0 else 0
+            pos["avg_cost"] = total_cost / pos["quantity"] if pos["quantity"] > 0 else 0.0
             pos["total_bought"] += quantity
+            self._capital -= cost  # Deduct cash on buy (Bug 2.2)
         else:
             pos["quantity"] -= quantity
             pos["total_sold"] += quantity
             realized_pnl = (price - pos["avg_cost"]) * quantity
             self._pnl += realized_pnl
+            self._capital += cost  # Credit cash on sell (Bug 2.2)
+            if pos["quantity"] == 0:
+                pos["avg_cost"] = 0.0  # Clear position cost when quantity is 0
             self._trade_history.append({
                 "instrument": instrument,
                 "side": "sell",

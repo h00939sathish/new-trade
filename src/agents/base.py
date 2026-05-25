@@ -58,7 +58,7 @@ class BaseAgent(Agent):
             )
             self.logger.addHandler(handler)
 
-    async def start(self) -> None:
+    async def start(self, run_background_loop: bool = True) -> None:
         self.status = AgentStatus.STARTING
         self.logger.info("Agent starting...")
         try:
@@ -66,10 +66,11 @@ class BaseAgent(Agent):
             await self.on_start()
             self.status = AgentStatus.RUNNING
             self._running = True
-            task = asyncio.create_task(
-                self._subscribe_bus_loop(), name=f"{self.name}.bus"
-            )
-            self._tasks.append(task)
+            if run_background_loop:
+                task = asyncio.create_task(
+                    self._subscribe_bus_loop(), name=f"{self.name}.bus"
+                )
+                self._tasks.append(task)
             self.logger.info("Agent started successfully")
             await self._emit_health()
         except Exception as e:
@@ -133,6 +134,11 @@ class BaseAgent(Agent):
 
     async def emit(self, event: Event) -> None:
         await self.event_store.append(SYSTEM_BUS, event)
+        try:
+            from src.monitoring.metrics import system_metrics
+            system_metrics.count_event(event.event_type.value)
+        except Exception:
+            pass
 
     def interested_in(self, event_type: EventType) -> bool:
         return event_type in self._subscribed_event_types
@@ -142,6 +148,7 @@ class BaseAgent(Agent):
             "Listening on event bus for types: %s",
             [e.value for e in self._subscribed_event_types],
         )
+        import time
         last_pos = -1
         while self._running:
             try:
@@ -151,9 +158,19 @@ class BaseAgent(Agent):
                 for event in events:
                     if event.position is not None:
                         last_pos = event.position
+                    # Skip events produced by this agent itself to avoid feedback loops (Bug 2.5)
+                    if event.metadata and event.metadata.producer == self.name:
+                        continue
                     if self.interested_in(event.event_type):
                         try:
+                            start_time = time.monotonic()
                             await self.on_event(event)
+                            latency = time.monotonic() - start_time
+                            try:
+                                from src.monitoring.metrics import system_metrics
+                                system_metrics.record_latency(latency)
+                            except Exception:
+                                pass
                         except Exception as e:
                             self.logger.error(
                                 "Error handling event %s: %s",

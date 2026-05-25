@@ -107,19 +107,22 @@ class MarketIntelAgent(BaseAgent):
         key = f"{instrument}.{interval}"
         self._latest_ohlcv[key] = event
         await self.emit(event)
-        buf_key = f"{instrument}.{interval}"
-        buf = self._candle_buffer[buf_key]
-        buf.append({
-            "timestamp": event.timestamp,
-            "open": open,
-            "high": high,
-            "low": low,
-            "close": close,
-            "volume": volume,
-        })
-        if len(buf) > self._max_buffer_size:
-            buf.pop(0)
-        await self._aggregate_from_buffer(instrument, exchange, interval)
+        
+        # Only buffer and aggregate from base timeframe to prevent recursive aggregation cascade
+        if interval in ("minute", "1minute"):
+            buf_key = f"{instrument}.{interval}"
+            buf = self._candle_buffer[buf_key]
+            buf.append({
+                "timestamp": event.timestamp,
+                "open": open,
+                "high": high,
+                "low": low,
+                "close": close,
+                "volume": volume,
+            })
+            if len(buf) > self._max_buffer_size:
+                buf.pop(0)
+            await self._aggregate_from_buffer(instrument, exchange, interval)
 
     async def _aggregate_from_buffer(
         self,
@@ -135,7 +138,8 @@ class MarketIntelAgent(BaseAgent):
             if tf_min <= source_min:
                 continue
             n_candles = tf_min // source_min
-            if len(buf) < n_candles:
+            # Fix: Aggregate only when the timeframe boundary closes
+            if len(buf) % n_candles != 0:
                 continue
             recent = buf[-n_candles:]
             result = aggregate_candles(interval, recent)
@@ -143,7 +147,11 @@ class MarketIntelAgent(BaseAgent):
             if not tf_candles:
                 continue
             agg = tf_candles[-1]
-            await self.ingest_ohlcv(
+            
+            # Emit aggregated candles directly instead of calling ingest_ohlcv recursively
+            from datetime import UTC, datetime
+            dt = datetime.fromtimestamp(agg["timestamp"], UTC)
+            agg_event = OHLCVEvent.create(
                 instrument=instrument,
                 exchange=exchange,
                 interval=tf,
@@ -152,7 +160,15 @@ class MarketIntelAgent(BaseAgent):
                 low=agg["low"],
                 close=agg["close"],
                 volume=agg["volume"],
+                producer=self.name,
             )
+            # Override event timestamp with rounded timeframe timestamp
+            agg_event.timestamp = dt
+            agg_event.data["timestamp"] = dt.isoformat()
+            
+            key = f"{instrument}.{tf}"
+            self._latest_ohlcv[key] = agg_event
+            await self.emit(agg_event)
 
     async def on_stop(self) -> None:
         if self._market_data_provider is not None:

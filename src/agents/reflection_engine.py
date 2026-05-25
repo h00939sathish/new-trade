@@ -2,7 +2,7 @@ import json
 import logging
 import os
 import re
-import subprocess
+
 from pathlib import Path
 from typing import Any
 
@@ -213,7 +213,10 @@ class ReflectionEngineAgent(BaseAgent):
             cfg["strategies"][strategy_name]["params"].update(param_changes)
             save_yaml_config(self._strategy_config_path, cfg)
 
-            git_commit_mutation(strategy_name, param_changes, result)
+            logger.info(
+                "Mutation applied: strategy=%s params=%s sharpe=%.3f pnl=%.2f",
+                strategy_name, param_changes, result.sharpe_ratio, result.total_pnl,
+            )
 
             await self.emit(SystemEvent.health(
                 component=self.name,
@@ -387,24 +390,5 @@ def save_yaml_config(path: Path, cfg: dict[str, Any]) -> None:
         yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
     tmp.rename(path)
     logger.info("Config saved to %s", path)
-
-
-def git_commit_mutation(
-    strategy: str, params: dict[str, Any], result: Any,
-) -> None:
-    try:
-        msg = f"reflection: mutate {strategy} params={params}"
-        subprocess.run(
-            ["git", "add", str(STRATEGIES_PATH)],
-            capture_output=True, timeout=10,
-        )
-        subprocess.run(
-            ["git", "commit", "-m", msg, "--no-verify"],
-            capture_output=True, timeout=10,
-        )
-        logger.info("Git committed mutation: %s", msg)
-    except Exception as e:
-        logger.warning("Git commit failed: %s", e)
-
 
 

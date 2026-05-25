@@ -15,57 +15,322 @@ HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Trading Dashboard</title>
 <style>
+  :root {
+    --navy: #0a0e17;
+    --navy-light: #111827;
+    --navy-lighter: #1e293b;
+    --teal: #14b8a6;
+    --teal-dim: #0d9488;
+    --green: #22c55e;
+    --red: #ef4444;
+    --amber: #f59e0b;
+    --slate: #64748b;
+    --slate-light: #94a3b8;
+    --text: #e2e8f0;
+    --text-dim: #64748b;
+    --radius: 6px;
+  }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0d1117; color: #c9d1d9; padding: 20px; }
-  h1 { font-size: 1.5rem; margin-bottom: 16px; color: #58a6ff; }
-  h2 { font-size: 1.1rem; margin-bottom: 8px; color: #8b949e; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
-  .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
-  .card h3 { font-size: 0.9rem; color: #8b949e; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
-  .status-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 0.85rem; }
-  .label { color: #8b949e; }
-  .value { color: #c9d1d9; font-weight: 500; }
-  .running { color: #3fb950; }
-  .stopped { color: #f85149; }
-  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
-  .badge-ok { background: #3fb95022; color: #3fb950; border: 1px solid #3fb95044; }
-  .badge-err { background: #f8514922; color: #f85149; border: 1px solid #f8514944; }
-  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-  th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid #21262d; }
-  th { color: #8b949e; font-weight: 600; }
-  .right { text-align: right; }
-  .mt-16 { margin-top: 16px; }
+  body {
+    font-family: 'SF Mono', 'Cascadia Code', 'Segoe UI', system-ui, monospace;
+    background: var(--navy); color: var(--text); padding: 0; min-height: 100vh;
+  }
+
+  /* Header */
+  .header {
+    background: linear-gradient(180deg, #111827 0%, #0f172a 100%);
+    border-bottom: 1px solid var(--navy-lighter);
+    padding: 16px 24px;
+    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;
+  }
+  .header-left { display: flex; align-items: center; gap: 16px; }
+  .header-logo {
+    width: 36px; height: 36px; border-radius: var(--radius);
+    background: linear-gradient(135deg, var(--teal), var(--teal-dim));
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; font-weight: 700; color: #fff; flex-shrink: 0;
+  }
+  .header-title { font-size: 1.15rem; font-weight: 600; letter-spacing: -0.3px; }
+  .header-title span { color: var(--teal); }
+  .header-right { display: flex; align-items: center; gap: 20px; font-size: 0.8rem; color: var(--slate-light); }
+  .header-stat { display: flex; align-items: center; gap: 6px; }
+  .header-stat .val { color: var(--text); font-weight: 500; }
+
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .status-dot.ok { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .status-dot.err { background: var(--red); box-shadow: 0 0 6px var(--red); }
+  .status-dot.warn { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
+
+  /* Layout */
+  .container { max-width: 1440px; margin: 0 auto; padding: 20px 24px; }
+
+  .section-title {
+    font-size: 0.7rem; text-transform: uppercase; letter-spacing: 1px;
+    color: var(--text-dim); margin-bottom: 12px; font-weight: 600;
+  }
+
+  /* Stats Bar */
+  .stats-bar {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px; margin-bottom: 24px;
+  }
+  .stat-card {
+    background: var(--navy-light); border: 1px solid var(--navy-lighter);
+    border-radius: var(--radius); padding: 14px 16px; transition: border-color .2s;
+  }
+  .stat-card:hover { border-color: var(--teal); }
+  .stat-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); }
+  .stat-value { font-size: 1.5rem; font-weight: 700; margin-top: 4px; line-height: 1.2; }
+  .stat-value.green { color: var(--green); }
+  .stat-value.teal { color: var(--teal); }
+  .stat-value.amber { color: var(--amber); }
+  .stat-value.red { color: var(--red); }
+  .stat-sub { font-size: 0.7rem; color: var(--text-dim); margin-top: 2px; }
+
+  /* Agent Grid */
+  .agent-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 12px; margin-bottom: 24px;
+  }
+  .agent-card {
+    background: var(--navy-light); border: 1px solid var(--navy-lighter);
+    border-radius: var(--radius); padding: 16px; transition: border-color .2s, box-shadow .2s;
+  }
+  .agent-card:hover { border-color: #334155; }
+  .agent-card.running { border-left: 3px solid var(--green); }
+  .agent-card.stopped { border-left: 3px solid var(--red); }
+  .agent-card.error { border-left: 3px solid var(--amber); }
+  .agent-header {
+    display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;
+  }
+  .agent-name { font-size: 0.85rem; font-weight: 600; }
+  .agent-status {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.5px;
+    padding: 3px 10px; border-radius: 10px; font-weight: 600;
+  }
+  .agent-status.running { color: var(--green); background: #22c55e15; }
+  .agent-status.stopped { color: var(--red); background: #ef444415; }
+  .agent-status.error { color: var(--amber); background: #f59e0b15; }
+  .agent-status.created,
+  .agent-status.starting,
+  .agent-status.stopping { color: var(--slate-light); background: #64748b15; }
+  .agent-details { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; }
+  .agent-detail { display: flex; justify-content: space-between; font-size: 0.78rem; padding: 3px 0; border-bottom: 1px solid #1e293b40; }
+  .agent-detail:last-child { border-bottom: none; }
+  .agent-detail .lbl { color: var(--text-dim); }
+  .agent-detail .val { color: var(--text); font-weight: 500; }
+
+  /* Prometheus Section */
+  .metrics-section { margin-bottom: 24px; }
+  .metrics-toggle {
+    background: var(--navy-light); border: 1px solid var(--navy-lighter);
+    border-radius: var(--radius); padding: 12px 16px; cursor: pointer;
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 0.8rem; color: var(--text); transition: border-color .2s;
+    width: 100%; text-align: left;
+  }
+  .metrics-toggle:hover { border-color: #334155; }
+  .metrics-toggle .arrow { transition: transform .2s; font-size: 0.7rem; color: var(--text-dim); }
+  .metrics-toggle.open .arrow { transform: rotate(90deg); }
+  .metrics-body {
+    background: var(--navy-light); border: 1px solid var(--navy-lighter); border-top: none;
+    border-radius: 0 0 var(--radius) var(--radius); padding: 0 16px; max-height: 0;
+    overflow: hidden; transition: max-height .3s, padding .3s;
+  }
+  .metrics-body.open { max-height: 400px; padding: 16px; }
+  .metrics-body pre {
+    font-size: 0.72rem; line-height: 1.5; color: var(--slate-light);
+    max-height: 320px; overflow: auto;
+  }
+  .metrics-body pre::-webkit-scrollbar { width: 4px; }
+  .metrics-body pre::-webkit-scrollbar-thumb { background: var(--navy-lighter); border-radius: 2px; }
+
+  /* Error/Warning states */
+  .error-state {
+    background: var(--navy-light); border: 1px solid #ef444430;
+    border-radius: var(--radius); padding: 24px; text-align: center;
+  }
+  .error-state .icon { font-size: 2rem; margin-bottom: 8px; }
+  .error-state .msg { color: var(--red); font-size: 0.85rem; }
+
+  /* Footer */
+  .footer {
+    text-align: center; padding: 20px; font-size: 0.72rem; color: var(--text-dim);
+    border-top: 1px solid var(--navy-lighter); margin-top: 12px;
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--navy); }
+  ::-webkit-scrollbar-thumb { background: var(--navy-lighter); border-radius: 3px; }
+
+  @media (max-width: 640px) {
+    .header { padding: 12px 16px; }
+    .container { padding: 12px 16px; }
+    .agent-grid { grid-template-columns: 1fr; }
+    .stats-bar { grid-template-columns: repeat(2, 1fr); }
+    .stat-value { font-size: 1.2rem; }
+    .agent-details { grid-template-columns: 1fr; }
+  }
 </style>
 </head>
 <body>
-<h1>&#x1F4C8; Trading Dashboard</h1>
-<div id="content"></div>
+<div class="header">
+  <div class="header-left">
+    <div class="header-logo">&#8747;</div>
+    <div class="header-title"><span>Trade</span> System</div>
+  </div>
+  <div class="header-right" id="headerRight">
+    <div class="header-stat"><span class="status-dot" id="systemDot"></span><span id="systemStatus">Loading...</span></div>
+    <div class="header-stat">Uptime <span class="val" id="uptime">-</span></div>
+    <div class="header-stat">Updated <span class="val" id="lastRefresh">-</span></div>
+  </div>
+</div>
+
+<div class="container">
+  <div class="stats-bar" id="statsBar">
+    <div class="stat-card"><div class="stat-label">Events Total</div><div class="stat-value teal" id="statEvents">-</div></div>
+    <div class="stat-card"><div class="stat-label">Event Rate</div><div class="stat-value" id="statRate" style="color:var(--text)">-</div><div class="stat-sub">events/sec</div></div>
+    <div class="stat-card"><div class="stat-label">Avg Latency</div><div class="stat-value" id="statLatency" style="color:var(--text)">-</div><div class="stat-sub">ms</div></div>
+    <div class="stat-card"><div class="stat-label">Signals</div><div class="stat-value amber" id="statSignals">-</div></div>
+    <div class="stat-card"><div class="stat-label">Errors</div><div class="stat-value red" id="statErrors">-</div></div>
+  </div>
+
+  <div class="section-title">Agent Status</div>
+  <div class="agent-grid" id="agentGrid"></div>
+
+  <div class="metrics-section">
+    <button class="metrics-toggle" id="metricsToggle" onclick="toggleMetrics()">
+      <span>&#x2699; Prometheus Metrics</span>
+      <span class="arrow">&#x25B6;</span>
+    </button>
+    <div class="metrics-body" id="metricsBody">
+      <pre id="metricsPre">Loading...</pre>
+    </div>
+  </div>
+</div>
+
+<div class="footer">Trading System v1 &middot; Press Ctrl+C in terminal to stop</div>
+
 <script>
+function fmtTime(ts) {
+  return ts.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function fmtUptime(s) {
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = Math.floor(s % 60);
+  if (d > 0) return d + 'd ' + h + 'h ' + m + 'm';
+  if (h > 0) return h + 'h ' + m + 'm ' + sec + 's';
+  if (m > 0) return m + 'm ' + sec + 's';
+  return sec + 's';
+}
+
+function esc(s) {
+  if (s === null || s === undefined) return '-';
+  const t = typeof s;
+  if (t === 'boolean') return s ? 'true' : 'false';
+  return String(s);
+}
+
+function agentDetailKey(k) {
+  return k
+    .replace(/_/g, ' ')
+    .replace(/\\b\\w/g, c => c.toUpperCase());
+}
+
+function runningCount(health) {
+  let n = 0;
+  for (const st of Object.values(health)) {
+    if (st.status === 'running') n++;
+  }
+  return n;
+}
+
+function toggleMetrics() {
+  const btn = document.getElementById('metricsToggle');
+  const body = document.getElementById('metricsBody');
+  const open = body.classList.toggle('open');
+  btn.classList.toggle('open', open);
+}
+
 async function refresh() {
   try {
-    const [health, metrics] = await Promise.all([
+    const [health, metricsJson, metricsText] = await Promise.all([
       fetch('/api/health').then(r => r.json()),
+      fetch('/api/metrics/json').then(r => r.json()),
       fetch('/api/metrics').then(r => r.text())
     ]);
-    let html = '<div class="grid">';
-    for (const [name, status] of Object.entries(health)) {
-      const st = status.status || '?';
-      const cls = st === 'running' ? 'running' : 'stopped';
-      html += '<div class="card"><h3>' + name + '</h3>';
-      html += '<div class="status-row"><span class="label">Status</span><span class="value ' + cls + '">' + st + '</span></div>';
-      for (const [k, v] of Object.entries(status)) {
-        if (['agent','status','event_store','subscribed_types'].includes(k)) continue;
-        html += '<div class="status-row"><span class="label">' + k + '</span><span class="value">' + v + '</span></div>';
-      }
-      html += '</div>';
+
+    const now = new Date();
+    document.getElementById('lastRefresh').textContent = fmtTime(now);
+
+    /* System status dot */
+    const allOk = Object.values(health).every(s => s.status === 'running');
+    const dot = document.getElementById('systemDot');
+    const statusLabel = document.getElementById('systemStatus');
+    if (allOk) {
+      dot.className = 'status-dot ok';
+      statusLabel.textContent = 'All Systems Nominal';
+    } else {
+      dot.className = 'status-dot err';
+      statusLabel.textContent = 'Degraded';
     }
-    html += '</div>';
-    html += '<div class="card mt-16"><h3>Prometheus Metrics</h3><pre style="font-size:0.75rem;max-height:300px;overflow:auto;margin-top:8px">' + metrics.slice(0, 2000) + '</pre></div>';
-    document.getElementById('content').innerHTML = html;
+
+    /* Uptime */
+    if (metricsJson.uptime_seconds) {
+      document.getElementById('uptime').textContent = fmtUptime(metricsJson.uptime_seconds);
+    }
+
+    /* Stats bar */
+    document.getElementById('statEvents').textContent = (metricsJson.total_events || 0).toLocaleString();
+    document.getElementById('statRate').textContent = (metricsJson.event_rate || 0).toFixed(1);
+    document.getElementById('statLatency').textContent = (metricsJson.avg_latency_ms || 0).toFixed(1);
+
+    const signals = metricsJson.signals_by_strategy || {};
+    const totalSignals = Object.values(signals).reduce((a, b) => a + b, 0);
+    document.getElementById('statSignals').textContent = totalSignals;
+
+    const errors = metricsJson.errors_by_component || {};
+    const totalErrors = Object.values(errors).reduce((a, b) => a + b, 0);
+    document.getElementById('statErrors').textContent = totalErrors;
+
+    /* Agent cards */
+    const agents = Object.entries(health);
+    const totalAgents = agents.length;
+    const running = runningCount(health);
+    let gridHtml = '';
+    for (const [name, st] of agents) {
+      const status = st.status || 'unknown';
+      const statusClass = status === 'running' ? 'running' : (status === 'error' ? 'error' : 'stopped');
+      gridHtml += '<div class="agent-card ' + statusClass + '">';
+      gridHtml += '<div class="agent-header">';
+      gridHtml += '<div class="agent-name">' + name + '</div>';
+      gridHtml += '<div class="agent-status ' + statusClass + '"><span class="status-dot ' + (status === 'running' ? 'ok' : 'err') + '"></span>' + status + '</div>';
+      gridHtml += '</div>';
+      gridHtml += '<div class="agent-details">';
+      for (const [k, v] of Object.entries(st)) {
+        if (['agent', 'status', 'event_store', 'subscribed_types'].includes(k)) continue;
+        let val = esc(v);
+        const valClass = k === 'paper_trading' && v ? 'teal' : '';
+        gridHtml += '<div class="agent-detail"><span class="lbl">' + agentDetailKey(k) + '</span><span class="val' + (valClass ? ' ' + valClass : '') + '">' + val + '</span></div>';
+      }
+      gridHtml += '</div></div>';
+    }
+    document.getElementById('agentGrid').innerHTML = gridHtml;
+
+    /* Metrics text */
+    document.getElementById('metricsPre').textContent = metricsText;
+
   } catch (e) {
-    document.getElementById('content').innerHTML = '<div class="card"><span class="badge badge-err">Connection Error</span><p style="margin-top:8px">' + e.message + '</p></div>';
+    document.getElementById('agentGrid').innerHTML =
+      '<div class="error-state"><div class="icon">&#9888;</div><div class="msg">Connection Error: ' + e.message + '</div></div>';
   }
 }
+
 refresh();
 setInterval(refresh, 3000);
 </script>
@@ -118,6 +383,10 @@ class HttpDashboard:
             elif method == "GET" and path == "/api/metrics":
                 body = system_metrics.prometheus_text().encode()
                 ct = "text/plain; charset=utf-8"
+                status = "200 OK"
+            elif method == "GET" and path == "/api/metrics/json":
+                body = json.dumps(system_metrics.snapshot()).encode()
+                ct = "application/json"
                 status = "200 OK"
             else:
                 body = b"Not Found"

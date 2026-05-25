@@ -1,5 +1,6 @@
 import math
 from collections import deque
+from datetime import datetime
 from typing import Any, Literal
 
 from src.agents.base import BaseAgent
@@ -11,7 +12,8 @@ class StrategyGenAgent(BaseAgent):
         super().__init__("strategy_gen", event_store=event_store)
         self._strategies: dict[str, Strategy] = {}
         self._strategy_weights: dict[str, float] = {}
-        self._price_history: dict[str, deque[float]] = {}
+        self._tick_prices: dict[str, deque[float]] = {}
+        self._candle_prices: dict[str, dict[str, deque[float]]] = {}
         self._config_path = config_path
 
     async def on_start(self) -> None:
@@ -40,28 +42,42 @@ class StrategyGenAgent(BaseAgent):
         price = event.data.get("last_price")
         if price is None:
             return
-        if instrument not in self._price_history:
-            self._price_history[instrument] = deque(maxlen=100)
-        self._price_history[instrument].append(float(price))
-        hist_len = len(self._price_history[instrument])
-        if hist_len >= 20:
-            for strategy in self._strategies.values():
-                signal = await strategy.evaluate(instrument, list(self._price_history[instrument]))
+        if instrument not in self._tick_prices:
+            self._tick_prices[instrument] = deque(maxlen=100)
+        self._tick_prices[instrument].append(float(price))
+        
+        for strategy in self._strategies.values():
+            if getattr(strategy, "data_type", "any") in ("tick", "any"):
+                prices_list = list(self._tick_prices[instrument])
+                signal = await strategy.evaluate(instrument, prices_list)
                 if signal is not None:
-                    await self._emit_signal(instrument, strategy.name, signal, exchange=exchange)
+                    await self._emit_signal(instrument, strategy.name, signal, exchange=exchange, timestamp=event.timestamp)
 
     async def _process_ohlcv(self, event: Event) -> None:
         instrument = event.data.get("instrument", "")
         exchange = Exchange(event.data.get("exchange", "NSE"))
         close = event.data.get("close")
-        if close is not None:
-            if instrument not in self._price_history:
-                self._price_history[instrument] = deque(maxlen=100)
-            self._price_history[instrument].append(float(close))
-            for strategy in self._strategies.values():
-                signal = await strategy.evaluate(instrument, list(self._price_history[instrument]))
+        interval = event.data.get("interval", "minute")
+        if close is None:
+            return
+        if instrument not in self._candle_prices:
+            self._candle_prices[instrument] = {}
+        if interval not in self._candle_prices[instrument]:
+            self._candle_prices[instrument][interval] = deque(maxlen=500)
+        self._candle_prices[instrument][interval].append(float(close))
+        
+        for strategy in self._strategies.values():
+            strategy_data_type = getattr(strategy, "data_type", "any")
+            strategy_timeframe = getattr(strategy, "timeframe", "minute")
+            
+            norm_strat = strategy_timeframe.replace("minute", "m").replace("1m", "minute")
+            norm_event = interval.replace("minute", "m").replace("1m", "minute")
+            
+            if strategy_data_type in ("candle", "any") and (norm_strat == norm_event or strategy_timeframe == interval):
+                prices_list = list(self._candle_prices[instrument][interval])
+                signal = await strategy.evaluate(instrument, prices_list)
                 if signal is not None:
-                    await self._emit_signal(instrument, strategy.name, signal, exchange=exchange)
+                    await self._emit_signal(instrument, strategy.name, signal, exchange=exchange, timestamp=event.timestamp)
 
     async def _emit_signal(
         self,
@@ -69,6 +85,7 @@ class StrategyGenAgent(BaseAgent):
         strategy: str,
         signal: dict[str, Any],
         exchange: Exchange = Exchange.NSE,
+        timestamp: datetime | None = None,
     ) -> None:
         event = SignalEvent.create(
             instrument=instrument,
@@ -79,11 +96,17 @@ class StrategyGenAgent(BaseAgent):
             features=signal.get("features"),
             exchange=exchange,
             producer=self.name,
+            timestamp=timestamp,
         )
         self.logger.info(
             "Signal: %s %s %.2f%% from %s",
             instrument, signal["direction"], signal["confidence"] * 100, strategy,
         )
+        try:
+            from src.monitoring.metrics import system_metrics
+            system_metrics.count_signal(strategy, signal["direction"])
+        except Exception:
+            pass
         await self.emit(event)
 
     def _register_default_strategies(self) -> None:
@@ -101,13 +124,15 @@ class StrategyGenAgent(BaseAgent):
         base = await super().health()
         base.update({
             "strategies": list(self._strategies.keys()),
-            "instruments_tracked": len(self._price_history),
+            "instruments_tracked": len(self._tick_prices) + len(self._candle_prices),
         })
         return base
 
 
 class Strategy:
     name: str
+    data_type: str = "any"  # "tick", "candle", or "any"
+    timeframe: str = "minute"
 
     async def evaluate(
         self,
@@ -119,6 +144,8 @@ class Strategy:
 class MomentumStrategy(Strategy):
     def __init__(self, short_window: int = 5, long_window: int = 20, threshold: float = 0.02):
         self.name = "momentum"
+        self.data_type = "any"
+        self.timeframe = "minute"
         self.short_window = short_window
         self.long_window = long_window
         self.threshold = threshold
@@ -152,6 +179,8 @@ class MomentumStrategy(Strategy):
 class MeanReversionStrategy(Strategy):
     def __init__(self, window: int = 20, entry_z: float = 2.0, exit_z: float = 0.5):
         self.name = "mean_reversion"
+        self.data_type = "any"
+        self.timeframe = "minute"
         self.window = window
         self.entry_z = entry_z
         self.exit_z = exit_z
@@ -188,6 +217,8 @@ class MeanReversionStrategy(Strategy):
 class ATRStrategy(Strategy):
     def __init__(self, window: int = 14, multiplier: float = 2.0, threshold: float = 0.01):
         self.name = "atr_breakout"
+        self.data_type = "candle"
+        self.timeframe = "minute"
         self.window = window
         self.multiplier = multiplier
         self.threshold = threshold
@@ -231,6 +262,8 @@ class ATRStrategy(Strategy):
 class BollingerBandsStrategy(Strategy):
     def __init__(self, window: int = 20, num_std: float = 2.0):
         self.name = "bollinger"
+        self.data_type = "candle"
+        self.timeframe = "minute"
         self.window = window
         self.num_std = num_std
 
@@ -270,6 +303,8 @@ class BollingerBandsStrategy(Strategy):
 class RSIStrategy(Strategy):
     def __init__(self, window: int = 14, oversold: float = 30.0, overbought: float = 70.0):
         self.name = "rsi"
+        self.data_type = "candle"
+        self.timeframe = "minute"
         self.window = window
         self.oversold = oversold
         self.overbought = overbought
@@ -314,6 +349,8 @@ class RSIStrategy(Strategy):
 class MACDStrategy(Strategy):
     def __init__(self, fast: int = 12, slow: int = 26, signal: int = 9, threshold: float = 0.0):
         self.name = "macd"
+        self.data_type = "candle"
+        self.timeframe = "minute"
         self.fast = fast
         self.slow = slow
         self.signal = signal
@@ -374,6 +411,8 @@ class MACDStrategy(Strategy):
 class VolumeStrategy(Strategy):
     def __init__(self, volume_window: int = 20, price_window: int = 10, volume_mult: float = 1.5):
         self.name = "volume"
+        self.data_type = "candle"
+        self.timeframe = "minute"
         self.volume_window = volume_window
         self.price_window = price_window
         self.volume_mult = volume_mult
@@ -383,6 +422,7 @@ class VolumeStrategy(Strategy):
         instrument: str,
         prices: list[float],
     ) -> dict[str, Any] | None:
+        # TODO: Volume data not available in current evaluate() interface
         return None
 
     async def evaluate_with_volume(
@@ -419,6 +459,8 @@ class VolumeStrategy(Strategy):
 class IchimokuStrategy(Strategy):
     def __init__(self, conversion: int = 9, base: int = 26, lagging: int = 52, displacement: int = 26):
         self.name = "ichimoku"
+        self.data_type = "candle"
+        self.timeframe = "minute"
         self.conversion = conversion
         self.base = base
         self.lagging = lagging

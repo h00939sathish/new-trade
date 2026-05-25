@@ -93,18 +93,31 @@ async def main():
     system.set_watchlist(watchlist)
     logger.info("Watchlist: %s", watchlist)
 
+    dashboard_type = os.getenv("TRA_DASHBOARD_TYPE", "http")
     metrics_port = int(os.getenv("PORT") or os.getenv("TRA_METRICS_PORT", "8080"))
-    metrics_task = asyncio.create_task(
-        metrics_http_server(health_fn=system.health, port=metrics_port),
-    )
 
-    use_dashboard = os.getenv("TRA_DASHBOARD", "1") == "1"
-    if use_dashboard:
-        dashboard = CliDashboard(system.health, refresh_interval=2.0)
-        dashboard_task = asyncio.create_task(dashboard.run())
+    if dashboard_type == "fastapi":
+        from dashboard.server import run_dashboard
+
+        dashboard_port = int(os.getenv("TRA_DASHBOARD_PORT", "8081"))
+        dashboard_task = asyncio.create_task(
+            asyncio.to_thread(run_dashboard, system, system_metrics, port=dashboard_port),
+        )
+        logger.info("FastAPI dashboard starting on port %d", dashboard_port)
+
+        metrics_task = None
     else:
-        dashboard = None
-        dashboard_task = None
+        metrics_task = asyncio.create_task(
+            metrics_http_server(health_fn=system.health, port=metrics_port),
+        )
+
+    use_cli = os.getenv("TRA_DASHBOARD", "1") == "1"
+    if use_cli:
+        cli_dashboard = CliDashboard(system.health, refresh_interval=2.0)
+        cli_task = asyncio.create_task(cli_dashboard.run())
+    else:
+        cli_dashboard = None
+        cli_task = None
 
     loop = asyncio.get_event_loop()
     stop_event = asyncio.Event()
@@ -120,10 +133,18 @@ async def main():
     except asyncio.CancelledError:
         pass
     finally:
-        metrics_task.cancel()
-        if dashboard_task:
-            dashboard_task.cancel()
-        await asyncio.gather(metrics_task, dashboard_task or asyncio.sleep(0), return_exceptions=True)
+        all_tasks = []
+        if dashboard_type == "fastapi":
+            all_tasks.append(dashboard_task)
+        else:
+            if metrics_task:
+                metrics_task.cancel()
+                all_tasks.append(metrics_task)
+        if cli_task:
+            cli_task.cancel()
+            all_tasks.append(cli_task)
+        if all_tasks:
+            await asyncio.gather(*all_tasks, return_exceptions=True)
         await system.stop()
         logger.info("System shutdown complete")
 

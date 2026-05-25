@@ -178,7 +178,11 @@ class TickEvent(Event):
         bid: float | None = None,
         ask: float | None = None,
         producer: str = "market_intel",
+        timestamp: datetime | None = None,
     ) -> "TickEvent":
+        kwargs = {}
+        if timestamp is not None:
+            kwargs["timestamp"] = timestamp
         return cls(
             event_type=EventType.TICK,
             stream=f"tick.{exchange.value}.{instrument}",
@@ -197,6 +201,7 @@ class TickEvent(Event):
                 "ask": ask,
             },
             metadata=EventMetadata(producer=producer),
+            **kwargs,
         )
 
 
@@ -219,6 +224,7 @@ class SignalEvent(Event):
         features: dict[str, Any] | None = None,
         exchange: Exchange = Exchange.NSE,
         producer: str = "strategy_gen",
+        timestamp: datetime | None = None,
     ) -> "SignalEvent":
         data = {
             "instrument": instrument,
@@ -229,6 +235,9 @@ class SignalEvent(Event):
             "exchange": exchange.value,
             "features": features or {},
         }
+        kwargs = {}
+        if timestamp is not None:
+            kwargs["timestamp"] = timestamp
         return cls(
             event_type=EventType.SIGNAL,
             stream=f"signal.{strategy}.{instrument}",
@@ -240,6 +249,7 @@ class SignalEvent(Event):
             exchange=exchange,
             data=data,
             metadata=EventMetadata(producer=producer),
+            **kwargs,
         )
 
 
@@ -327,6 +337,7 @@ class FillEvent(Event):
         trade_id: str | None = None,
         producer: str = "execution",
     ) -> "FillEvent":
+        ts = fill_timestamp or datetime.now(UTC)
         return cls(
             event_type=EventType.FILL,
             stream=f"fill.{instrument}",
@@ -336,8 +347,9 @@ class FillEvent(Event):
             side=side,
             fill_price=fill_price,
             fill_quantity=fill_quantity,
-            fill_timestamp=fill_timestamp or datetime.now(UTC),
+            fill_timestamp=ts,
             trade_id=trade_id,
+            timestamp=ts,
             data={
                 "order_id": order_id,
                 "instrument": instrument,
@@ -345,7 +357,7 @@ class FillEvent(Event):
                 "side": side.value,
                 "fill_price": fill_price,
                 "fill_quantity": fill_quantity,
-                "fill_timestamp": (fill_timestamp or datetime.now(UTC)).isoformat(),
+                "fill_timestamp": ts.isoformat(),
                 "trade_id": trade_id,
             },
             metadata=EventMetadata(producer=producer),

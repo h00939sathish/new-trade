@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import signal
 from typing import Any
 
@@ -91,7 +92,20 @@ class TradingSystem:
 
     async def start(self) -> None:
         if self._kite_client is not None:
-            await self._kite_client.connect()
+            try:
+                await self._kite_client.connect()
+                if not self._kite_client.is_connected:
+                    raise ConnectionError(
+                        self._kite_client.connection_error or "Kite connection failed"
+                    )
+            except Exception as e:
+                _logger = logging.getLogger("system")
+                _logger.warning(
+                    "Broker connection failed, falling back to paper trading: %s", e,
+                )
+                self._kite_broker = None
+                self.execution._paper_trading = True
+                self.execution._broker = None
         for agent in self._agents:
             await agent.start()
 

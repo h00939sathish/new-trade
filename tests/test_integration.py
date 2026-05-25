@@ -23,7 +23,7 @@ def clean_db():
 
 @pytest.fixture
 def system():
-    return TradingSystem()
+    return TradingSystem(providers={'kite_client': None, 'kite_broker': None})
 
 
 @pytest.mark.asyncio

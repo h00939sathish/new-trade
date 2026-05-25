@@ -12,6 +12,7 @@ class KiteClient:
         self.access_token = access_token or settings.kite_access_token
         self._kite: Any = None
         self._connected = False
+        self.connection_error: str | None = None
 
     @property
     def is_connected(self) -> bool:
@@ -33,8 +34,9 @@ class KiteClient:
             logger.warning("kiteconnect not installed; using placeholder mode")
             self._connected = True
         except Exception as e:
-            logger.error("Kite connection failed: %s", e)
-            raise
+            self._connected = False
+            self.connection_error = str(e)
+            logger.warning("Kite connection failed (will use paper mode): %s", e)
 
     async def disconnect(self) -> None:
         self._kite = None

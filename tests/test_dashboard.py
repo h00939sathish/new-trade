@@ -80,11 +80,28 @@ async def test_dashboard_returns_html(system: TradingSystem):
 
 
 @pytest.mark.asyncio
-async def test_dashboard_404(system: TradingSystem):
+async def test_dashboard_metrics_json_endpoint(system: TradingSystem):
     dash = HttpDashboard(system, port=18185)
     await dash.start()
 
     reader, writer = await asyncio.open_connection("127.0.0.1", 18185)
+    writer.write(b"GET /api/metrics/json HTTP/1.1\r\nHost: localhost\r\n\r\n")
+    await writer.drain()
+    response = (await reader.read(4096)).decode("utf-8", errors="replace")
+    writer.close()
+
+    assert "200 OK" in response
+    assert "total_events" in response
+    assert "uptime_seconds" in response
+    await dash.stop()
+
+
+@pytest.mark.asyncio
+async def test_dashboard_404(system: TradingSystem):
+    dash = HttpDashboard(system, port=18186)
+    await dash.start()
+
+    reader, writer = await asyncio.open_connection("127.0.0.1", 18186)
     writer.write(b"GET /nonexistent HTTP/1.1\r\nHost: localhost\r\n\r\n")
     await writer.drain()
     response = (await reader.read(4096)).decode("utf-8", errors="replace")

@@ -4,7 +4,6 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
-import pyotp
 
 logger = logging.getLogger("connector.angel.client")
 
@@ -50,6 +49,22 @@ class AngelClient:
     def is_connected(self) -> bool:
         return self._jwt_token is not None
 
+    @property
+    def api_key(self) -> str:
+        return self._api_key or ""
+
+    @property
+    def client_id(self) -> str:
+        return self._client_id or ""
+
+    @property
+    def jwt_token(self) -> str | None:
+        return self._jwt_token
+
+    @property
+    def feed_token(self) -> str | None:
+        return self._feed_token
+
     async def connect(self) -> None:
         if self.is_connected:
             return
@@ -62,6 +77,8 @@ class AngelClient:
         totp_code = self._totp
         if self._totp and len(self._totp) > 6:
             try:
+                import pyotp
+
                 totp_code = pyotp.TOTP(self._totp).now()
                 logger.debug("Auto-generated TOTP code")
             except Exception:
@@ -93,6 +110,9 @@ class AngelClient:
                 await self._refresh_login()
             else:
                 await self._login()
+
+    async def ensure_token(self) -> None:
+        await self._ensure_token()
 
     async def _refresh_login(self) -> None:
         body = {
@@ -217,6 +237,9 @@ class AngelClient:
             if name == up_symbol and exch == up_exchange:
                 return token
         return None
+
+    async def resolve_token(self, tradingsymbol: str, exchange: str) -> str | None:
+        return await self._resolve_token(tradingsymbol, exchange)
 
     async def _load_symbol_map(self) -> None:
         if not self._api_key:

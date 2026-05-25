@@ -48,6 +48,8 @@ class BacktestEngine:
         self,
         strategies: list[Any] | None = None,
         initial_capital: float = 1_000_000.0,
+        commission_pct: float = 0.0003,
+        slippage_bps: float = 5.0,
     ):
         self._event_store = InMemoryEventStore()
         self._strategy_gen = StrategyGenAgent(event_store=self._event_store)
@@ -55,9 +57,13 @@ class BacktestEngine:
         self._execution = ExecutionAgent(event_store=self._event_store)
         self._initial_capital = initial_capital
         self._capital = initial_capital
+        self._peak_value = initial_capital
         self._positions: dict[str, dict[str, Any]] = {}
         self._trade_log: list[dict[str, Any]] = []
         self._equity_curve: list[float] = []
+        self._commission_pct = commission_pct
+        self._slippage_bps = slippage_bps
+        self._current_time = None
 
         if strategies:
             for s in strategies:
@@ -65,24 +71,49 @@ class BacktestEngine:
 
     async def run(self, ticks: list[dict[str, Any]]) -> BacktestResult:
         await self._event_store.connect()
-        await self._strategy_gen.start()
-        await self._risk_mgmt.start()
-        await self._execution.start()
+        # Prevent starting the background loop inside backtest engine (uses manual feed instead)
+        await self._strategy_gen.start(run_background_loop=False)
+        await self._risk_mgmt.start(run_background_loop=False)
+        await self._execution.start(run_background_loop=False)
 
         self._capital = self._initial_capital
         self._peak_value = self._initial_capital
+        self._positions.clear()
+        self._trade_log.clear()
+        self._equity_curve.clear()
 
-        for tick_data in ticks:
+        from datetime import UTC, datetime, timedelta
+        base_time = datetime(2026, 5, 25, 9, 15, 0, tzinfo=UTC)
+        self._current_time = base_time
+
+        last_event_offset = 0
+        last_order_offset = 0
+
+        for i, tick_data in enumerate(ticks):
+            # Parse or generate synthetic timestamp (Bug 5)
+            tick_timestamp = tick_data.get("timestamp")
+            if not tick_timestamp:
+                tick_timestamp = base_time + timedelta(seconds=i)
+            elif isinstance(tick_timestamp, str):
+                tick_timestamp = datetime.fromisoformat(tick_timestamp)
+            elif isinstance(tick_timestamp, (int, float)):
+                tick_timestamp = datetime.fromtimestamp(tick_timestamp, UTC)
+            
+            self._current_time = tick_timestamp
+
             tick = TickEvent.create(
                 instrument=tick_data.get("instrument", "TEST"),
                 exchange=Exchange(tick_data.get("exchange", "NSE")),
                 last_price=tick_data.get("price", 100.0),
                 volume=tick_data.get("volume", 1000),
+                timestamp=tick_timestamp,
             )
             await self._event_store.append("events.bus", tick)
 
-            events = await self._event_store.read("events.bus", offset=0, limit=100)
+            events = await self._event_store.read("events.bus", offset=last_event_offset, limit=1000)
             for event in events:
+                if event.position is not None:
+                    last_event_offset = max(last_event_offset, event.position)
                 if event.event_type == EventType.TICK:
                     await self._strategy_gen.on_event(event)
                 elif event.event_type == EventType.SIGNAL:
@@ -90,8 +121,10 @@ class BacktestEngine:
                 elif event.event_type == EventType.RISK_CHECK:
                     await self._execution.on_event(event)
 
-            orders = await self._event_store.read("events.bus", offset=0, limit=200)
+            orders = await self._event_store.read("events.bus", offset=last_order_offset, limit=1000)
             for event in orders:
+                if event.position is not None:
+                    last_order_offset = max(last_order_offset, event.position)
                 if event.event_type == EventType.ORDER_CREATED:
                     await self._simulate_fill(event)
 
@@ -104,16 +137,26 @@ class BacktestEngine:
     async def _simulate_fill(self, event: Event) -> None:
         order = OrderEvent(**event.model_dump())
         price = order.price or 100.0
+        
+        # Apply commission and slippage (Bug 4)
+        slippage = price * (self._slippage_bps / 10000.0)
+        commission = price * self._commission_pct
+        if order.side == OrderSide.BUY:
+            fill_price = price + slippage + commission
+        else:
+            fill_price = price - slippage - commission
+
         fill = FillEvent.create(
             order_id=order.event_id,
             instrument=order.instrument,
             exchange=order.exchange,
             side=order.side,
-            fill_price=price,
+            fill_price=fill_price,
             fill_quantity=order.quantity,
+            fill_timestamp=self._current_time,
         )
         await self._event_store.append("events.bus", fill)
-        self._record_trade(order, price)
+        self._record_trade(order, fill_price)
 
     def _record_trade(self, order: OrderEvent, fill_price: float) -> None:
         instrument = order.instrument
@@ -126,17 +169,22 @@ class BacktestEngine:
             pos = self._positions[instrument]
             total_cost = pos["cost"] + cost
             total_qty = pos["quantity"] + quantity
-            pos["avg_cost"] = total_cost / total_qty if total_qty > 0 else 0
+            pos["avg_cost"] = total_cost / total_qty if total_qty > 0 else 0.0
             pos["quantity"] = total_qty
             pos["cost"] = total_cost
             self._capital -= cost
         else:
-            pos = self._positions.get(instrument, {"quantity": 0, "avg_cost": 0.0})
+            pos = self._positions.get(instrument, {"quantity": 0, "avg_cost": 0.0, "cost": 0.0})
             pnl = (fill_price - pos["avg_cost"]) * quantity if pos["quantity"] > 0 else 0.0
+            # Fix Bug 2: Double Cash on Sells (remove self._capital += pnl)
             self._capital += cost
-            self._capital += pnl
             if instrument in self._positions:
                 self._positions[instrument]["quantity"] -= quantity
+                self._positions[instrument]["cost"] -= pos["avg_cost"] * quantity
+                # Fix Bug 3: Clear position cost and avg_cost when quantity hits 0
+                if self._positions[instrument]["quantity"] == 0:
+                    self._positions[instrument]["cost"] = 0.0
+                    self._positions[instrument]["avg_cost"] = 0.0
             self._trade_log.append({
                 "instrument": instrument,
                 "side": "sell",

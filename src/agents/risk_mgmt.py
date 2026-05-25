@@ -41,6 +41,9 @@ class RiskManagementAgent(BaseAgent):
         )
 
     async def on_event(self, event: Event) -> None:
+        # Auto-reset daily limits on date change
+        self._maybe_reset_daily_limits()
+
         match event.event_type:
             case EventType.TICK:
                 self._track_price(event)
@@ -60,18 +63,33 @@ class RiskManagementAgent(BaseAgent):
         instrument = signal.get("instrument", "")
         direction = signal.get("direction", "neutral")
         confidence = signal.get("confidence", 0.0)
+
+        # Direction-aware exposure check: sell orders reducing positions
+        # should bypass the exposure limit (fix 1.2)
+        is_reducing = (
+            direction == "short"
+            and self._positions.get(instrument, 0) > 0
+        )
+
         checks = [
             await self._check_instrument_risk(instrument, direction, confidence),
-            await self._check_exposure_risk(instrument),
             await self._check_drawdown_risk(),
             await self._check_var_risk(instrument),
         ]
+        # Only check exposure for orders that INCREASE position
+        if not is_reducing:
+            checks.append(await self._check_exposure_risk(instrument))
+
         all_passed = all(c["passed"] for c in checks)
+
+        # Inject signal_event_id for correlation with ExecutionAgent (fix 1.1)
+        signal_with_id = {**signal, "_signal_event_id": event.event_id}
+
         risk_event = RiskCheckEvent.create(
             check_name="signal_validation",
             passed=all_passed,
             instrument=instrument,
-            details={"signal": signal, "checks": checks},
+            details={"signal": signal_with_id, "checks": checks},
             producer=self.name,
         )
         await self.emit(risk_event)
@@ -83,12 +101,27 @@ class RiskManagementAgent(BaseAgent):
             for check in checks:
                 if not check["passed"]:
                     self.logger.warning("  Failed check: %s", check["name"])
+        else:
+            self.logger.info(
+                "Signal APPROVED: %s %s (confidence=%.2f, reducing=%s)",
+                instrument, direction, confidence, is_reducing,
+            )
 
     async def _validate_order(self, event: Event) -> None:
         order_data = event.data
         quantity = order_data.get("quantity", 0)
         price = order_data.get("price", 0) or 0
+        side = order_data.get("side", "buy")
         order_value = quantity * price
+
+        # Sell orders that reduce existing positions should not be blocked
+        # by exposure limits (fix 1.2)
+        instrument = order_data.get("instrument", "")
+        is_reducing = (
+            side in ("sell", "SELL")
+            and self._positions.get(instrument, 0) > 0
+        )
+
         checks: list[dict[str, Any]] = [
             self._check("order_size", order_value <= self._max_order_value, {
                 "order_value": order_value, "max": self._max_order_value,
@@ -96,15 +129,18 @@ class RiskManagementAgent(BaseAgent):
             self._check("daily_order_value", self._order_value_today + order_value <= self._max_position_size * 3, {
                 "daily_total": self._order_value_today + order_value, "limit": self._max_position_size * 3,
             }),
-            self._check("exposure", self._get_total_exposure() + order_value <= self._max_position_size, {
-                "total_exposure": self._get_total_exposure() + order_value, "max": self._max_position_size,
-            }),
         ]
+        # Only check exposure for orders that INCREASE position
+        if not is_reducing:
+            checks.append(self._check("exposure", self._get_total_exposure() + order_value <= self._max_position_size, {
+                "total_exposure": self._get_total_exposure() + order_value, "max": self._max_position_size,
+            }))
+
         all_passed = all(c["passed"] for c in checks)
         risk_event = RiskCheckEvent.create(
             check_name="order_validation",
             passed=all_passed,
-            instrument=order_data.get("instrument"),
+            instrument=instrument,
             details={"order": order_data, "checks": checks},
             producer=self.name,
         )
@@ -212,11 +248,21 @@ class RiskManagementAgent(BaseAgent):
                 self._price_history[instrument] = deque(maxlen=100)
             self._price_history[instrument].append(float(price))
 
+    def _maybe_reset_daily_limits(self) -> None:
+        """Auto-reset daily limits if the date has changed since last reset."""
+        now = datetime.now(UTC)
+        if self._last_reset is None or self._last_reset.date() != now.date():
+            self._orders_today = 0
+            self._order_value_today = 0.0
+            self._last_reset = now
+            self.logger.info("Daily risk limits auto-reset for %s", now.date())
+
     async def reset_daily_limits(self) -> None:
+        """Manual reset (kept for API compatibility)."""
         self._orders_today = 0
         self._order_value_today = 0.0
         self._last_reset = datetime.now(UTC)
-        self.logger.info("Daily risk limits reset")
+        self.logger.info("Daily risk limits reset (manual)")
 
     async def on_stop(self) -> None:
         self.logger.info("Risk Management Agent stopping")
