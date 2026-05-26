@@ -1,5 +1,5 @@
 # Stage 1: Build the React Frontend
-FROM node:20-slim AS frontend-builder
+FROM node:20 AS frontend-builder
 WORKDIR /app/dashboard
 COPY dashboard/package.json dashboard/package-lock.json* ./
 RUN npm install
