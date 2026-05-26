@@ -13,6 +13,7 @@ dependencies = [
     "websocket-client>=1.8",
     "pandas>=2.0",
     "numpy>=1.26",
+    "scipy>=1.13",
     "pyyaml>=6.0",
     "pyotp>=2.9",
     "jugaad-data>=0.3",
