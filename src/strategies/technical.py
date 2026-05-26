@@ -1,6 +1,8 @@
-from typing import Any, Literal
 import math
+from typing import Any, Literal
+
 from src.strategies.base import Strategy
+
 
 class MomentumStrategy(Strategy):
     def __init__(self, short_window: int = 5, long_window: int = 20, threshold: float = 0.02):

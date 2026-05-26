@@ -1,8 +1,10 @@
+
 import pytest
-from datetime import datetime, UTC
+
 from src.agents.regime import RegimeDetectionAgent
 from src.agents.strategy_gen import StrategyGenAgent
-from src.schemas.events import Event, EventType, Exchange, SystemEvent
+from src.schemas.events import Event, EventType, Exchange
+
 
 @pytest.mark.asyncio
 async def test_regime_detection_and_reweighting():
@@ -12,11 +14,11 @@ async def test_regime_detection_and_reweighting():
 
     regime_agent = RegimeDetectionAgent(event_store=es, window=5)
     strat_agent = StrategyGenAgent(event_store=es)
-    
+
     # Wire them up
     regime_agent.system = None
     strat_agent.system = None
-    
+
     await regime_agent.start(run_background_loop=False)
     await strat_agent.start(run_background_loop=False)
 
@@ -52,15 +54,15 @@ async def test_regime_detection_and_reweighting():
         data={"regime": "trending_up"},
         metadata=EventMetadata(producer="regime_detection")
     )
-    
+
     # Seed weights first
     strat_agent._strategy_weights = {
         "momentum": 0.2,
         "mean_reversion": 0.2,
     }
-    
+
     await strat_agent.on_event(event_change)
-    
+
     # Momentum weight should scale up, mean_reversion should scale down
     assert strat_agent._strategy_weights["momentum"] == 0.5
     assert strat_agent._strategy_weights["mean_reversion"] == 0.05

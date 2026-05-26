@@ -4,11 +4,12 @@ import logging
 import os
 import re
 from typing import Any
+
 import httpx
 
 from src.agents.base import BaseAgent
 from src.config.settings import settings
-from src.schemas.events import Event, EventType, MacroSentimentEvent
+from src.schemas.events import Event, MacroSentimentEvent
 
 
 class ExpertPersonasAgent(BaseAgent):
@@ -55,12 +56,12 @@ class ExpertPersonasAgent(BaseAgent):
                 break
             except Exception as e:
                 self.logger.error("Error in personas polling loop: %s", e)
-            
+
             await asyncio.sleep(self._poll_interval)
 
     async def _evaluate_macro_sentiment(self) -> None:
         news_text = await self._alt_data.fetch_latest_news()
-        
+
         if not self._api_key:
             self.logger.warning("No Gemini API Key. Using neutral fallback sentiment.")
             await self.emit(MacroSentimentEvent.create(
@@ -71,10 +72,10 @@ class ExpertPersonasAgent(BaseAgent):
                 producer=self.name,
             ))
             return
-            
+
         prompt = self._build_prompt(news_text)
         result = await self._call_gemini(prompt)
-        
+
         if result:
             self.logger.info("Macro Sentiment Evaluated: %s", result.get("rationale", ""))
             await self.emit(MacroSentimentEvent.create(
@@ -125,7 +126,7 @@ class ExpertPersonasAgent(BaseAgent):
 
         parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])
         text = parts[0].get("text", "") if parts else ""
-        
+
         text = text.strip()
         json_match = re.search(r"\{.*\}", text, re.DOTALL)
         if json_match:

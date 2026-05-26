@@ -85,7 +85,7 @@ class BacktestDataProvider:
                 )
             except Exception as e:
                 logger.warning("Primary provider get_historical failed for %s: %s", instrument, e)
-        
+
         if not candles:
             # Fallback to Jugaad for real data instead of synthetic
             logger.info("Falling back to JugaadMarketDataProvider for %s historical data", instrument)
@@ -100,7 +100,7 @@ class BacktestDataProvider:
                 )
             except Exception as e:
                 logger.warning("Jugaad fallback failed for %s: %s", instrument, e)
-                
+
         return candles
 
     def _expand_candles_to_ticks(

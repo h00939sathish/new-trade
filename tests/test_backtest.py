@@ -58,14 +58,14 @@ async def test_backtest_equity_curve():
 
 @pytest.mark.asyncio
 async def test_backtest_engine_trade_math():
-    from src.schemas.events import OrderSide, OrderType, ProductType, Exchange, OrderEvent
-    
+    from src.schemas.events import Exchange, OrderEvent, OrderSide, OrderType, ProductType
+
     engine = BacktestEngine(
         initial_capital=100_000.0,
         commission_pct=0.001,  # 0.1% commission
         slippage_bps=10.0,     # 10 bps slippage (0.1%)
     )
-    
+
     # 1. Test Buy Fill calculation with commission and slippage (Bug 4)
     # Order Event for BUY of 100 shares at 100.0
     order_buy = OrderEvent.create(
@@ -77,15 +77,15 @@ async def test_backtest_engine_trade_math():
         product=ProductType.MIS,
         price=100.0,
     )
-    
+
     await engine._simulate_fill(order_buy)
-    
+
     pos = engine._positions["TEST"]
     assert pos["quantity"] == 100
     assert pos["avg_cost"] == pytest.approx(100.225296)
     assert pos["cost"] == pytest.approx(10022.529617)
     assert engine._capital == pytest.approx(89977.470383)
-    
+
     # 2. Test Sell Fill calculation with commission and slippage (Bug 4, Bug 2, Bug 3)
     # Order Event for SELL of 100 shares at 110.0
     order_sell = OrderEvent.create(
@@ -97,13 +97,13 @@ async def test_backtest_engine_trade_math():
         product=ProductType.MIS,
         price=110.0,
     )
-    
+
     await engine._simulate_fill(order_sell)
-    
+
     assert engine._capital == pytest.approx(100950.297762)
     assert pos["quantity"] == 0
     assert pos["avg_cost"] == 0.0  # Reset on quantity = 0 (Bug 3)
     assert pos["cost"] == 0.0
-    
+
     assert len(engine._trade_log) == 1
     assert engine._trade_log[0]["pnl"] == pytest.approx(950.297762)

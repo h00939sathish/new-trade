@@ -9,6 +9,7 @@ Scheduled for removal in a future version.
 from __future__ import annotations
 
 import warnings
+
 warnings.warn(
     "src.execution.router is deprecated and unused. Use src.agents.execution instead.",
     DeprecationWarning,

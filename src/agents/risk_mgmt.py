@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 from src.agents.base import BaseAgent
@@ -307,15 +307,15 @@ class RiskManagementAgent(BaseAgent):
         if not hasattr(self, "_volume_history") or instrument not in self._volume_history:
             # Pass by default if no volume data is available yet
             return self._check("liquidity", True, {"reason": "no_data"})
-            
+
         vols = self._volume_history[instrument]
         if not vols:
             return self._check("liquidity", True, {"reason": "no_data"})
-            
+
         avg_vol = sum(vols) / len(vols)
         # Threshold would ideally be configurable; using 1000 for demonstration
         passed = avg_vol > 1000.0 or len(vols) < 10
-        
+
         return self._check("liquidity", passed, {
             "avg_volume": avg_vol,
             "threshold": 1000.0,

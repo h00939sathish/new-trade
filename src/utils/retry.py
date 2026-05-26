@@ -1,7 +1,9 @@
 import asyncio
 import logging
+from collections.abc import Callable
+from typing import Any
+
 import httpx
-from typing import Callable, Any
 
 logger = logging.getLogger("utils.retry")
 

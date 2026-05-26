@@ -1,8 +1,11 @@
-import pytest
 import asyncio
+
+import pytest
+
 from src.agents.strategy_gen import StrategyGenAgent
-from src.monitoring.decay_detector import PerformanceDecayDetector
 from src.event_store.memory import InMemoryEventStore
+from src.monitoring.decay_detector import PerformanceDecayDetector
+
 
 class MockSystem:
     def __init__(self, es):
@@ -24,7 +27,7 @@ class MockMarketIntel:
 async def test_performance_decay_detector():
     es = InMemoryEventStore()
     await es.connect()
-    
+
     system = MockSystem(es)
     detector = PerformanceDecayDetector(
         system=system,
@@ -32,26 +35,26 @@ async def test_performance_decay_detector():
         min_trades=5,
         min_sharpe=0.5
     )
-    
+
     # 1. Record some winning trades for 'momentum' with variance
     winning_trades = [10.0, 11.0, 9.0, 10.0, 10.0]
     for pnl in winning_trades:
         detector.record_trade("momentum", pnl)
-    
+
     # Weight should still be 1.0
     assert system.strategy_gen._strategy_weights["momentum"] == 1.0
-    
+
     # 2. Record some losing trades for 'momentum' with variance to trigger decay
     losing_trades = [-10.0, -11.0, -9.0, -10.0, -10.0]
     for pnl in losing_trades:
         detector.record_trade("momentum", pnl)
-        
+
     # Weight should be zeroed
     assert system.strategy_gen._strategy_weights["momentum"] == 0.0
-    
+
     # Give the async task a chance to run
     await asyncio.sleep(0.05)
-    
+
     # System event should have been emitted
     assert len(system.market_intel.emitted_events) > 0
     decay_event = system.market_intel.emitted_events[0]

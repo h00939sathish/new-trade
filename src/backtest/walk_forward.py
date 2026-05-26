@@ -1,9 +1,10 @@
-import logging
 import itertools
-from datetime import datetime, date, UTC
+import logging
+from datetime import UTC, date, datetime
 from typing import Any
+
 from src.backtest.engine import BacktestEngine, BacktestResult
-from src.config.strategy_config import build_strategies_from_config, STRATEGY_REGISTRY
+from src.config.strategy_config import STRATEGY_REGISTRY
 
 logger = logging.getLogger("backtest.walk_forward")
 
@@ -60,7 +61,7 @@ class WalkForwardValidator:
             d = self._get_tick_date(t)
             if d != date.min:
                 dates_map.setdefault(d, []).append(t)
-        
+
         sorted_dates = sorted(dates_map.keys())
         return sorted_dates, dates_map
 
@@ -87,15 +88,15 @@ class WalkForwardValidator:
         while i + self.train_days + self.test_days <= len(sorted_dates):
             train_dates = sorted_dates[i : i + self.train_days]
             test_dates = sorted_dates[i + self.train_days : i + self.train_days + self.test_days]
-            
+
             train_ticks = []
             for d in train_dates:
                 train_ticks.extend(dates_map[d])
-            
+
             test_ticks = []
             for d in test_dates:
                 test_ticks.extend(dates_map[d])
-                
+
             windows.append({
                 "train_range": (train_dates[0], train_dates[-1]),
                 "test_range": (test_dates[0], test_dates[-1]),
@@ -106,7 +107,7 @@ class WalkForwardValidator:
             i += self.test_days
 
         logger.info("Generated %d walk-forward rolling windows.", len(windows))
-        
+
         out_of_sample_trades = []
         out_of_sample_equity_curve = []
         current_capital = self.initial_capital
@@ -114,7 +115,7 @@ class WalkForwardValidator:
 
         for idx, win in enumerate(windows):
             logger.info("Window %d/%d: Optimizing on %s to %s", idx + 1, len(windows), win["train_range"][0], win["train_range"][1])
-            
+
             # 1. Parameter sweep on training set
             best_params = await self.optimize(strategy_name, win["train_ticks"], grid, metric)
             logger.info("Window %d: Selected best params: %s", idx + 1, best_params)
@@ -123,20 +124,20 @@ class WalkForwardValidator:
             test_engine = BacktestEngine(initial_capital=current_capital)
             strat_cls = STRATEGY_REGISTRY[strategy_name]
             test_engine._strategy_gen.register_strategy(strat_cls(**best_params))
-            
+
             result: BacktestResult = await test_engine.run(win["test_ticks"])
-            
+
             # Record out-of-sample trades
             for t in result.trades:
                 out_of_sample_trades.append({**t, "window": idx + 1})
-            
+
             # Chain equity curves smoothly
             out_of_sample_equity_curve.extend(result.equity_curve)
-            
+
             prev_capital = current_capital
             current_capital = result.final_value
             pnl = current_capital - prev_capital
-            
+
             history.append({
                 "window": idx + 1,
                 "train_range": (str(win["train_range"][0]), str(win["train_range"][1])),
@@ -149,7 +150,7 @@ class WalkForwardValidator:
 
         # 3. Aggregate final out-of-sample statistics
         final_result = self._aggregate_results(out_of_sample_trades, out_of_sample_equity_curve, self.initial_capital)
-        
+
         return {
             "strategy": strategy_name,
             "metric_optimized": metric,
@@ -168,7 +169,7 @@ class WalkForwardValidator:
         keys = list(grid.keys())
         values = list(grid.values())
         combinations = [dict(zip(keys, prod)) for prod in itertools.product(*values)]
-        
+
         best_score = -float("inf")
         # Initialize default parameters from grid first combo
         best_params = combinations[0] if combinations else {}
@@ -178,10 +179,10 @@ class WalkForwardValidator:
         for combo in combinations:
             engine = BacktestEngine(initial_capital=self.initial_capital)
             engine._strategy_gen.register_strategy(strat_cls(**combo))
-            
+
             res: BacktestResult = await engine.run(ticks)
             score = getattr(res, metric, 0.0)
-            
+
             # Safeguard: check trades count to prevent choosing parameter that avoids trading entirely
             if res.total_trades > 0 and score > best_score:
                 best_score = score
@@ -194,23 +195,23 @@ class WalkForwardValidator:
         total_trades = len(trades)
         wins = [t for t in trades if t.get("pnl", 0) > 0]
         losses = [t for t in trades if t.get("pnl", 0) <= 0]
-        
+
         winning_trades = len(wins)
         losing_trades = len(losses)
         win_rate = winning_trades / total_trades if total_trades > 0 else 0.0
-        
+
         avg_win = sum(t["pnl"] for t in wins) / len(wins) if wins else 0.0
         avg_loss = abs(sum(t["pnl"] for t in losses)) / len(losses) if losses else 0.0
-        
+
         profit_factor = (
             sum(t["pnl"] for t in wins) / abs(sum(t["pnl"] for t in losses))
             if losses and abs(sum(t["pnl"] for t in losses)) > 0
             else float("inf") if wins else 0.0
         )
-        
+
         final_value = equity_curve[-1] if equity_curve else initial_capital
         total_pnl = final_value - initial_capital
-        
+
         max_dd = 0.0
         peak = initial_capital
         for val in equity_curve:
@@ -224,7 +225,7 @@ class WalkForwardValidator:
             prev = equity_curve[i - 1]
             if prev > 0:
                 returns.append((equity_curve[i] - prev) / prev)
-        
+
         sharpe = 0.0
         if len(returns) > 1:
             avg_r = sum(returns) / len(returns)

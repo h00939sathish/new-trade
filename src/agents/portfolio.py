@@ -1,17 +1,17 @@
 import asyncio
 import time
+from collections import deque
 from typing import Any
 
+import numpy as np
+
 from src.agents.base import BaseAgent
+from src.risk.portfolio_optimizer import InstitutionalPortfolioOptimizer
 from src.schemas.events import (
     Event,
     EventType,
     PortfolioEvent,
 )
-from collections import deque
-import numpy as np
-
-from src.risk.portfolio_optimizer import InstitutionalPortfolioOptimizer
 
 
 class PortfolioOptimizationAgent(BaseAgent):
@@ -184,11 +184,11 @@ class PortfolioOptimizationAgent(BaseAgent):
         price = event.data.get("last_price")
         if price is None:
             return
-            
+
         if instrument not in self._price_history:
             self._price_history[instrument] = deque(maxlen=500)
         self._price_history[instrument].append(float(price))
-        
+
         # Run institutional optimizer periodically
         now = time.monotonic()
         if now - self._last_optimization > self._rebalance_interval:
@@ -278,8 +278,8 @@ class PortfolioOptimizationAgent(BaseAgent):
             self._peak_capital = total_value
 
         # Check KillSwitch limits before emitting
-        from src.risk.kill_switch import KillSwitch
         from src.config.settings import settings
+        from src.risk.kill_switch import KillSwitch
         ks = KillSwitch()
         ks.setup(
             max_daily_loss=getattr(settings, "risk_max_daily_loss", 5000.0),

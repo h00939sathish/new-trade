@@ -3,10 +3,8 @@ from typing import Any
 
 import yaml
 
-from src.strategies.base import Strategy
 from src.strategies import STRATEGY_REGISTRY
-
-
+from src.strategies.base import Strategy
 
 DEFAULT_CONFIG = {
     "strategies": {

@@ -1,5 +1,6 @@
 import logging
-from src.schemas.events import EventType, RiskCheckEvent
+
+from src.schemas.events import RiskCheckEvent
 
 logger = logging.getLogger("risk.reconciliation")
 
@@ -13,7 +14,7 @@ async def reconcile_positions(system) -> None:
     portfolio_agent = getattr(system, "portfolio_opt", None)
     if not exec_agent or not portfolio_agent:
         return
-        
+
     broker = exec_agent._broker
     if not broker:
         # Paper trading or no broker connected: skip reconciliation
@@ -26,7 +27,7 @@ async def reconcile_positions(system) -> None:
             net_positions = broker_positions_raw.get("net", [])
         else:
             net_positions = broker_positions_raw
-            
+
         broker_positions = {}
         for pos in net_positions:
             symbol = pos.get("tradingsymbol", "")
@@ -58,7 +59,7 @@ async def reconcile_positions(system) -> None:
         for symbol, data in mismatches.items():
             b_qty = data["broker"]
             l_qty = data["local"]
-            
+
             # Emit Risk Breach Event
             breach_event = RiskCheckEvent.create(
                 check_name="position_reconciliation",
@@ -72,7 +73,7 @@ async def reconcile_positions(system) -> None:
                 producer="reconciliation"
             )
             await portfolio_agent.emit(breach_event)
-            
+
             # Reconcile local state: update local to match broker
             if symbol not in portfolio_agent._positions:
                 portfolio_agent._positions[symbol] = {
@@ -84,7 +85,7 @@ async def reconcile_positions(system) -> None:
             portfolio_agent._positions[symbol]["quantity"] = b_qty
             if b_qty == 0:
                 portfolio_agent._positions[symbol]["avg_cost"] = 0.0
-            
+
             # Emit portfolio update to sync with execution and other agents
             await portfolio_agent._emit_portfolio_update(symbol, "buy" if b_qty > 0 else "sell")
     else:

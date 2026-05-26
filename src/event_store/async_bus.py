@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import Any
+
 from src.schemas.events import Event, EventType
 
 logger = logging.getLogger("event_store.bus")
@@ -15,13 +15,13 @@ _CRITICAL_EVENT_TYPES = {
 
 class AsyncEventBus:
     _instance = None
-    
+
     def __new__(cls, *args, **kwargs):
         if not cls._instance:
             cls._instance = super().__new__(cls)
             cls._instance._initialized = False
         return cls._instance
-        
+
     def __init__(self):
         if self._initialized:
             return
@@ -29,21 +29,21 @@ class AsyncEventBus:
         self._event_store = None
         self._initialized = True
         self._dropped_events: int = 0
-        
+
     def set_event_store(self, event_store) -> None:
         self._event_store = event_store
 
     @property
     def dropped_events(self) -> int:
         return self._dropped_events
-        
+
     def subscribe(self, agent_name: str, event_types: set[EventType]) -> asyncio.Queue:
         queue: asyncio.Queue = asyncio.Queue(maxsize=10000)
         for et in event_types:
             etype_str = et.value if hasattr(et, "value") else str(et)
             self._subscribers.setdefault(etype_str, []).append(queue)
         return queue
-        
+
     async def publish(self, event: Event) -> None:
         # Fan-out to subscriber queues
         etype_str = event.event_type.value if hasattr(event.event_type, "value") else str(event.event_type)
@@ -77,7 +77,7 @@ class AsyncEventBus:
                         "Event bus FULL: dropped event %s (total dropped: %d, queue_size: %d)",
                         event.event_type.value, self._dropped_events, queue.qsize(),
                     )
-        
+
         # Persist to event store
         if self._event_store:
             from src.event_store.memory import InMemoryEventStore

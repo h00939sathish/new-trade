@@ -6,13 +6,13 @@ from typing import Any
 from src.agents import (
     AlertAgent,
     ExecutionAgent,
+    ExpertPersonasAgent,
     MarketIntelAgent,
     PortfolioOptimizationAgent,
     ReflectionEngineAgent,
+    RegimeDetectionAgent,
     RiskManagementAgent,
     StrategyGenAgent,
-    RegimeDetectionAgent,
-    ExpertPersonasAgent,
 )
 from src.config.settings import settings
 from src.event_store import create_event_store

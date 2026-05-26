@@ -107,7 +107,7 @@ class BacktestEngine:
                 tick_timestamp = datetime.fromisoformat(tick_timestamp)
             elif isinstance(tick_timestamp, (int, float)):
                 tick_timestamp = datetime.fromtimestamp(tick_timestamp, UTC)
-            
+
             self._current_time = tick_timestamp
 
             tick = TickEvent.create(
@@ -149,7 +149,7 @@ class BacktestEngine:
     async def _simulate_fill(self, event: Event) -> None:
         order = OrderEvent(**event.model_dump())
         price = order.price or 100.0
-        
+
         from src.risk.costs import TransactionCostModel
         cost_model = TransactionCostModel(slippage_bps=self._slippage_bps)
         # Apply slippage to fill price
@@ -172,7 +172,7 @@ class BacktestEngine:
         quantity = order.quantity
         side = order.side
         cost = fill_price * quantity
-        
+
         from src.risk.costs import TransactionCostModel
         cost_model = TransactionCostModel(brokerage_pct=self._commission_pct, slippage_bps=self._slippage_bps)
         txn_fee = cost_model.total_cost(side.value, quantity, fill_price, product=order.product.value)

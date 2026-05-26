@@ -2,7 +2,6 @@ import json
 import logging
 import os
 import re
-
 from pathlib import Path
 from typing import Any
 
@@ -134,12 +133,12 @@ class ReflectionEngineAgent(BaseAgent):
     async def _find_best_mutation(self, baseline_result: Any) -> dict[str, Any] | None:
         from src.config.strategy_config import load_strategy_config
         cfg = load_strategy_config(str(self._strategy_config_path))
-        
+
         best_strategy = None
         best_params = None
         best_sharpe = baseline_result.sharpe_ratio
         best_result = baseline_result
-        
+
         # Grid search bounds
         search_spaces = {
             "momentum": {
@@ -172,27 +171,27 @@ class ReflectionEngineAgent(BaseAgent):
                 "threshold": [0.005, 0.01, 0.015],
             }
         }
-        
+
         import itertools
         for strat_name, strat_cfg in cfg.get("strategies", {}).items():
             if not strat_cfg.get("enabled", True):
                 continue
-            
+
             space = search_spaces.get(strat_name)
             if not space:
                 continue
-                
+
             # Get keys and list of possible values
             keys, values = zip(*space.items())
             # Generate Cartesian product
             for val_combination in itertools.product(*values):
                 params = dict(zip(keys, val_combination))
-                
+
                 # Check if these params are different from current config params
                 current_params = strat_cfg.get("params", {})
                 if all(current_params.get(k) == v for k, v in params.items()):
                     continue
-                
+
                 # Run backtest
                 override = {strat_name: {"params": params, "enabled": True}}
                 res = await self._run_backtest(strategy_config_override=override)
@@ -203,7 +202,7 @@ class ReflectionEngineAgent(BaseAgent):
                         best_strategy = strat_name
                         best_params = params
                         best_result = res
-                        
+
         if best_strategy and best_sharpe > baseline_result.sharpe_ratio * 1.05:
             return {
                 "strategy": best_strategy,

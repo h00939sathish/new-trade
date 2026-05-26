@@ -107,7 +107,7 @@ class MarketIntelAgent(BaseAgent):
         key = f"{instrument}.{interval}"
         self._latest_ohlcv[key] = event
         await self.emit(event)
-        
+
         # Only buffer and aggregate from base timeframe to prevent recursive aggregation cascade
         if interval in ("minute", "1minute"):
             buf_key = f"{instrument}.{interval}"
@@ -147,7 +147,7 @@ class MarketIntelAgent(BaseAgent):
             if not tf_candles:
                 continue
             agg = tf_candles[-1]
-            
+
             # Emit aggregated candles directly instead of calling ingest_ohlcv recursively
             from datetime import UTC, datetime
             dt = datetime.fromtimestamp(agg["timestamp"], UTC)
@@ -165,7 +165,7 @@ class MarketIntelAgent(BaseAgent):
             # Override event timestamp with rounded timeframe timestamp
             agg_event.timestamp = dt
             agg_event.data["timestamp"] = dt.isoformat()
-            
+
             key = f"{instrument}.{tf}"
             self._latest_ohlcv[key] = agg_event
             await self.emit(agg_event)

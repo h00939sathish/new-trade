@@ -17,6 +17,7 @@ dependencies = [
     "pyotp>=2.9",
     "jugaad-data>=0.3",
     "rich>=13.0",
+    "feedparser>=6.0.0",
 ]
 
 

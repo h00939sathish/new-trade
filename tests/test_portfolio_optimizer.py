@@ -18,7 +18,6 @@ from src.risk.portfolio_optimizer import (
     _ledoit_wolf_shrinkage,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -160,7 +159,7 @@ class TestRiskParity:
         )
         data = _make_returns(3, 200, seed=99)
         result = opt.optimize(data)
-        
+
         # Compute actual risk contributions
         names = list(data.keys())
         min_len = min(len(v) for v in data.values())
@@ -170,7 +169,7 @@ class TestRiskParity:
         port_var = w @ cov @ w
         marginal = cov @ w
         rc = w * marginal / port_var if port_var > 0 else np.full(len(w), 1 / len(w))
-        
+
         # Risk contributions should be roughly equal (1/3 each)
         target = 1.0 / 3
         for i, contrib in enumerate(rc):

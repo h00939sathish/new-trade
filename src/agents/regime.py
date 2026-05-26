@@ -1,10 +1,11 @@
 import logging
 from collections import deque
 from typing import Any
+
 import numpy as np
 
 from src.agents.base import BaseAgent
-from src.schemas.events import Event, EventType, SystemEvent
+from src.schemas.events import Event, EventType
 
 logger = logging.getLogger("agent.regime")
 
@@ -35,7 +36,7 @@ class RegimeDetectionAgent(BaseAgent):
         high = data.get("high", close)
         low = data.get("low", close)
         interval = data.get("interval", "minute")
-        
+
         if close is None:
             return
 
@@ -64,7 +65,7 @@ class RegimeDetectionAgent(BaseAgent):
                 abs(lows[j] - closes_prev)
             )
             trs.append(tr)
-        
+
         atr = np.mean(trs[-self._window:]) if trs else 0.0
         atr_ma = np.mean(trs[-self._window*2:]) if len(trs) >= self._window*2 else atr
 
@@ -86,7 +87,7 @@ class RegimeDetectionAgent(BaseAgent):
         if new_regime != self._current_regime:
             self._current_regime = new_regime
             self.logger.warning("Market regime changed to: %s", new_regime)
-            
+
             from src.schemas.events import Event, EventMetadata
             regime_event = Event(
                 event_type=EventType.SYSTEM_STATE,
@@ -99,7 +100,7 @@ class RegimeDetectionAgent(BaseAgent):
     def _compute_trend_strength(self, highs: list[float], lows: list[float], closes: list[float], period: int) -> float:
         if len(closes) < period + 1:
             return 0.0
-        
+
         plus_dm = []
         minus_dm = []
         tr = []
@@ -107,13 +108,13 @@ class RegimeDetectionAgent(BaseAgent):
         for i in range(1, len(closes)):
             up = highs[i] - highs[i-1]
             down = lows[i-1] - lows[i]
-            
+
             p_dm = up if (up > down and up > 0) else 0.0
             m_dm = down if (down > up and down > 0) else 0.0
-            
+
             plus_dm.append(p_dm)
             minus_dm.append(m_dm)
-            
+
             true_range = max(
                 highs[i] - lows[i],
                 abs(highs[i] - closes[i-1]),
@@ -124,7 +125,7 @@ class RegimeDetectionAgent(BaseAgent):
         smooth_tr = sum(tr[-period:])
         if smooth_tr == 0:
             return 0.0
-            
+
         smooth_plus = sum(plus_dm[-period:])
         smooth_minus = sum(minus_dm[-period:])
 

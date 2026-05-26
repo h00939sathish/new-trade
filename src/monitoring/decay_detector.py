@@ -1,6 +1,6 @@
 import logging
+
 import numpy as np
-from typing import Any
 
 logger = logging.getLogger("monitoring.decay_detector")
 
@@ -15,10 +15,10 @@ class PerformanceDecayDetector:
     def record_trade(self, strategy_name: str, pnl: float) -> None:
         if not strategy_name or strategy_name == "unknown":
             return
-            
+
         self._strategy_pnls.setdefault(strategy_name, []).append(pnl)
         pnls = self._strategy_pnls[strategy_name]
-        
+
         logger.info("Decay Detector: Recorded trade for %s, PnL: %.2f. Total trades: %d", strategy_name, pnl, len(pnls))
 
         if len(pnls) >= self.min_trades:
@@ -27,11 +27,11 @@ class PerformanceDecayDetector:
             window_pnls = pnls[-self.rolling_window:]
             mean_pnl = np.mean(window_pnls)
             std_pnl = np.std(window_pnls)
-            
+
             rolling_sharpe = (mean_pnl / std_pnl) * np.sqrt(252) if std_pnl > 0.0 else 0.0
-            
+
             logger.info("Decay Detector: Strategy %s rolling Sharpe: %.3f", strategy_name, rolling_sharpe)
-            
+
             if rolling_sharpe < self.min_sharpe:
                 self._disable_strategy(strategy_name, rolling_sharpe)
 
@@ -47,10 +47,10 @@ class PerformanceDecayDetector:
                 if strategy_name in sg._strategy_weights:
                     sg._strategy_weights[strategy_name] = 0.0
                     logger.warning("Decay Detector: Set %s weight to 0.0 in strategy_gen", strategy_name)
-                    
+
             # 2. Emit alert / system event
             try:
-                from src.schemas.events import Event, EventType, EventMetadata
+                from src.schemas.events import Event, EventMetadata, EventType
                 decay_event = Event(
                     event_type=EventType.SYSTEM_ERROR,
                     stream="system.errors",

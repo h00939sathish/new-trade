@@ -1,13 +1,12 @@
-import pytest
-import asyncio
-from unittest.mock import MagicMock, AsyncMock, patch
-from datetime import datetime, UTC
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from src.connectors.alternative_data import AlternativeDataProvider
+import pytest
+
 from src.agents.personas import ExpertPersonasAgent
 from src.agents.strategy_gen import StrategyGenAgent
-from src.schemas.events import EventType, MacroSentimentEvent, TickEvent, Exchange
+from src.connectors.alternative_data import AlternativeDataProvider
 from src.event_store.memory import InMemoryEventStore
+from src.schemas.events import EventType, Exchange, MacroSentimentEvent, TickEvent
 
 
 @pytest.mark.asyncio
@@ -108,7 +107,7 @@ async def test_strategy_gen_receives_macro_multiplier():
         composite_multiplier=1.5,
         rationale="Strong macro trend."
     )
-    
+
     # Pass event directly to strategy_gen
     await strategy_gen.on_event(macro_event)
 
@@ -124,9 +123,9 @@ async def test_strategy_gen_receives_macro_multiplier():
         "confidence": 0.5,
         "features": {}
     })
-    
+
     strategy_gen.register_strategy(mock_strategy, weight=1.0)
-    
+
     # Force process a mock tick event
     tick = TickEvent.create(
         instrument="RELIANCE",
@@ -134,7 +133,7 @@ async def test_strategy_gen_receives_macro_multiplier():
         last_price=2500.0,
         volume=100
     )
-    
+
     # We want to trace output signals, so we can mock emit or subscribe to signals
     signals_received = []
     async def mock_emit(event):
@@ -142,10 +141,10 @@ async def test_strategy_gen_receives_macro_multiplier():
             signals_received.append(event)
 
     strategy_gen.emit = mock_emit
-    
+
     # Process tick
     await strategy_gen._process_tick(tick)
-    
+
     # The default threshold is 0.3.
     # Base vote: weight(1.0) * dir(1.0) * confidence(0.5) = 0.5
     # scaled by composite_multiplier(1.5) = 0.75

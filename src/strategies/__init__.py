@@ -1,6 +1,7 @@
 import importlib
-import pkgutil
 import inspect
+import pkgutil
+
 from src.strategies.base import Strategy
 
 # This will hold dynamically discovered strategy classes
@@ -9,11 +10,11 @@ STRATEGY_REGISTRY: dict[str, type[Strategy]] = {}
 def load_strategies():
     """Dynamically loads all Strategy classes from the src.strategies package."""
     import src.strategies as strategies_pkg
-    
+
     for _, module_name, is_pkg in pkgutil.iter_modules(strategies_pkg.__path__):
         if is_pkg or module_name == "base":
             continue
-            
+
         module = importlib.import_module(f"src.strategies.{module_name}")
         for name, obj in inspect.getmembers(module, inspect.isclass):
             if issubclass(obj, Strategy) and obj is not Strategy:
@@ -26,7 +27,7 @@ def load_strategies():
                     registry_key = getattr(instance, "name", name)
                 except Exception:
                     registry_key = name
-                    
+
                 STRATEGY_REGISTRY[registry_key] = obj
-                
+
 load_strategies()

@@ -8,6 +8,7 @@ Scheduled for removal in a future version.
 from __future__ import annotations
 
 import warnings
+
 warnings.warn(
     "src.risk.analytics is deprecated and unused. Risk is managed by RiskManagementAgent.",
     DeprecationWarning,

@@ -65,7 +65,7 @@ class BaseAgent(Agent):
             await self.event_store.connect()
             from src.event_store.async_bus import event_bus
             event_bus.set_event_store(self.event_store)
-            
+
             await self.on_start()
             self.status = AgentStatus.RUNNING
             self._running = True
@@ -153,13 +153,14 @@ class BaseAgent(Agent):
             [e.value for e in self._subscribed_event_types],
         )
         import time
+
         from src.event_store.async_bus import event_bus
         self._queue = event_bus.subscribe(self.name, self._subscribed_event_types)
-        
+
         while self._running:
             try:
                 event = await self._queue.get()  # Blocks until event arrives (Bug 3.3)
-                
+
                 # Skip events produced by this agent itself to avoid feedback loops (Bug 2.5)
                 if event.metadata and event.metadata.producer == self.name:
                     continue

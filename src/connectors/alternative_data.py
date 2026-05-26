@@ -1,5 +1,6 @@
 import asyncio
 import logging
+
 import feedparser
 
 
@@ -20,7 +21,7 @@ class AlternativeDataProvider:
                     # Some feeds only have title, some have summary
                     summary = getattr(entry, "summary", "")
                     headlines.append(f"- {entry.title} {summary}")
-            
+
             if not headlines:
                 return "No recent significant macro or geopolitical news available."
             return "\n".join(headlines)

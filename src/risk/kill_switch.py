@@ -1,7 +1,6 @@
 import logging
-from datetime import datetime
-from typing import Any
-from src.schemas.events import Event, EventType, SystemEvent
+
+from src.schemas.events import EventType
 
 logger = logging.getLogger("risk.kill_switch")
 
@@ -10,7 +9,7 @@ class KillSwitch:
 
     def __new__(cls, *args, **kwargs):
         if not cls._instance:
-            cls._instance = super(KillSwitch, cls).__new__(cls)
+            cls._instance = super().__new__(cls)
             cls._instance._active = False
             cls._instance._reason = ""
             cls._instance._max_daily_loss = 5000.0  # ₹5,000 max daily loss

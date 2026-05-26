@@ -95,7 +95,7 @@ class ExecutionAgent(BaseAgent):
             self._load_outstanding_orders()
         except Exception as e:
             self.logger.error("Failed to initialize order DB: %s", e)
-            
+
         task = asyncio.create_task(self._twap_loop(), name="execution.twap_loop")
         self._tasks.append(task)
 
@@ -125,7 +125,7 @@ class ExecutionAgent(BaseAgent):
         if self._order_db is None:
             return
         try:
-            from datetime import datetime, UTC
+            from datetime import UTC, datetime
             now = datetime.now(UTC).isoformat()
             self._order_db.execute(
                 """INSERT OR REPLACE INTO orders
@@ -157,7 +157,7 @@ class ExecutionAgent(BaseAgent):
         if self._order_db is None:
             return
         try:
-            from datetime import datetime, UTC
+            from datetime import UTC, datetime
             self._order_db.execute(
                 "UPDATE orders SET status = ?, updated_at = ? WHERE event_id = ?",
                 (status, datetime.now(UTC).isoformat(), event_id),
@@ -171,7 +171,7 @@ class ExecutionAgent(BaseAgent):
         if self._order_db is None:
             return
         try:
-            from datetime import datetime, UTC
+            from datetime import UTC, datetime
             self._order_db.execute(
                 """INSERT OR IGNORE INTO fills
                    (fill_id, order_id, instrument, side, fill_price, fill_quantity, filled_at)
@@ -215,12 +215,12 @@ class ExecutionAgent(BaseAgent):
         instrument = signal.get("instrument", "")
         direction = signal.get("direction")
         confidence = signal.get("confidence", 0.0)
-        
+
         from src.risk.kill_switch import KillSwitch
         if KillSwitch().active and direction != "neutral":
             self.logger.warning("Signal blocked: Kill Switch is active (%s)", KillSwitch().reason)
             return
-        
+
         # Handle position closing immediately (neutral signals bypass pre-trade risk checks)
         if direction == "neutral":
             qty = self._get_position_qty(instrument)
@@ -229,7 +229,7 @@ class ExecutionAgent(BaseAgent):
                 return
             side = OrderSide.SELL if qty > 0 else OrderSide.BUY
             close_qty = abs(qty)
-            
+
             order_event = OrderEvent.create(
                 instrument=instrument,
                 exchange=Exchange(signal.get("exchange", "NSE")),
@@ -247,7 +247,7 @@ class ExecutionAgent(BaseAgent):
                 system_metrics.count_order(order_event.status.value)
             except Exception:
                 pass
-                
+
             tag = order_event.event_id
             if self._broker is not None:
                 existing_id = await self._is_order_placed(tag)
@@ -273,7 +273,7 @@ class ExecutionAgent(BaseAgent):
                     tag=tag,
                 )
                 order_event.data["broker_order_id"] = broker_id
-                
+
             await self.emit(order_event)
             self._open_orders[order_event.event_id] = order_event
             self._persist_order(order_event, strategy=signal.get("strategy", "exit"))
@@ -354,7 +354,7 @@ class ExecutionAgent(BaseAgent):
         price = signal.get("price")
         strategy_name = signal.get("strategy", "unknown")
         side = OrderSide.BUY if direction == "long" else OrderSide.SELL
-        
+
         # Calculate quantity using features volatility if available (Bug 3.2)
         features = signal.get("features", {})
         volatility = features.get("atr") or features.get("std")
@@ -377,14 +377,14 @@ class ExecutionAgent(BaseAgent):
         quantity = self._calculate_quantity(confidence, price, allocated_capital, volatility)
         if quantity <= 0:
             return
-            
+
         # TWAP Smart Order Routing for large orders
         if quantity >= 500:
             iceberg = quantity >= 1000
             self.logger.info("Order quantity %d >= 500, routing to TWAP engine (iceberg=%s)", quantity, iceberg)
             await self._start_twap(signal, quantity, side, price, iceberg=iceberg)
             return
-            
+
         order_event = OrderEvent.create(
             instrument=instrument,
             exchange=Exchange(signal.get("exchange", "NSE")),
@@ -464,7 +464,7 @@ class ExecutionAgent(BaseAgent):
             qty = min(chunk_size, rem)
             chunks.append(qty)
             rem -= qty
-            
+
         twap_id = f"twap_{instrument}_{time.time()}"
         self._twap_orders[twap_id] = {
             "instrument": instrument,
@@ -490,19 +490,19 @@ class ExecutionAgent(BaseAgent):
                     if not twap["chunks"]:
                         completed.append(twap_id)
                         continue
-                        
+
                     if now - twap["last_executed_at"] >= twap["interval"]:
                         chunk_qty = twap["chunks"].pop(0)
-                        
+
                         # Generate the order slice
                         disclosed_qty = None
                         if twap.get("iceberg") and chunk_qty >= 10:
                             # Reveal only 10% of the chunk, minimum 1
                             disclosed_qty = max(1, chunk_qty // 10)
-                            
+
                         # Iceberg requires LIMIT orders in Indian markets usually, but we keep it MARKET or LIMIT if price exists
                         order_type = OrderType.LIMIT if twap["price"] else OrderType.MARKET
-                        
+
                         order_event = OrderEvent.create(
                             instrument=twap["instrument"],
                             exchange=Exchange(twap["signal"].get("exchange", "NSE")),
@@ -515,7 +515,7 @@ class ExecutionAgent(BaseAgent):
                             producer=self.name,
                         )
                         tag = order_event.event_id
-                        
+
                         if self._broker is not None:
                             try:
                                 broker_id = await self._broker.place_order(
@@ -535,31 +535,31 @@ class ExecutionAgent(BaseAgent):
                                 # Re-insert the chunk to try again
                                 twap["chunks"].insert(0, chunk_qty)
                                 continue
-                                
+
                         await self.emit(order_event)
                         self._open_orders[order_event.event_id] = order_event
                         self._persist_order(order_event, strategy=twap["signal"].get("strategy", "unknown"))
-                        
+
                         twap["executed"] += chunk_qty
                         twap["last_executed_at"] = now
                         self.logger.info(
                             "TWAP %s executed chunk %d/%d. Progress: %d/%d",
                             twap_id, chunk_qty, chunk_qty, twap["executed"], twap["total"]
                         )
-                        
+
                         if self._paper_trading:
                             await self._simulate_fill(order_event)
-                            
+
                         if not twap["chunks"]:
                             completed.append(twap_id)
-                            
+
                 for twap_id in completed:
                     del self._twap_orders[twap_id]
                     self.logger.info("TWAP %s completed fully", twap_id)
-                    
+
             except Exception as e:
                 self.logger.error("TWAP loop error: %s", e, exc_info=True)
-                
+
             await asyncio.sleep(5.0)
 
     async def place_order(
@@ -656,11 +656,11 @@ class ExecutionAgent(BaseAgent):
                 order.instrument,
             )
             price = 0.0
-        
+
         from src.risk.costs import TransactionCostModel
         cost_model = TransactionCostModel()
         fill_price = cost_model.effective_fill_price(order.side.value, price)
-        
+
         fill_event = FillEvent.create(
             order_id=order.event_id,
             instrument=order.instrument,
@@ -695,7 +695,7 @@ class ExecutionAgent(BaseAgent):
         # Risk per trade: 1% of capital
         risk_per_trade = available_capital * 0.01
         # ATR-based stop distance (2x ATR or volatility)
-        stop_distance = volatility * 2.0  
+        stop_distance = volatility * 2.0
         if stop_distance <= 0:
             return 0
         # Position size = risk / stop distance

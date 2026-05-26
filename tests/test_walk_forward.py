@@ -1,6 +1,9 @@
+from datetime import UTC, datetime
+
 import pytest
-from datetime import datetime, UTC
+
 from src.backtest.walk_forward import WalkForwardValidator
+
 
 @pytest.mark.asyncio
 async def test_walk_forward_validator():
@@ -20,7 +23,7 @@ async def test_walk_forward_validator():
         {"instrument": "TEST", "price": 100.0 + i * 1.0, "volume": 1000, "timestamp": datetime(2026, 5, 27, 9, 15 + i, 0, tzinfo=UTC).isoformat()}
         for i in range(10)
     ])
-    
+
     validator = WalkForwardValidator(
         train_days=2,
         test_days=1,
@@ -32,9 +35,9 @@ async def test_walk_forward_validator():
             }
         }
     )
-    
+
     result = await validator.run_validation("momentum", ticks, metric="total_pnl")
-    
+
     assert result["strategy"] == "momentum"
     assert len(result["windows"]) == 1
     assert "overall_oos_performance" in result

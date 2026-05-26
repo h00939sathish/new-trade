@@ -1,5 +1,6 @@
 from typing import Any
 
+
 class Strategy:
     name: str
     data_type: str = "any"  # "tick", "candle", or "any"

@@ -1,5 +1,7 @@
 from typing import Any
+
 from src.strategies.base import Strategy
+
 
 class VolatilityBreakoutStrategy(Strategy):
     """
@@ -27,30 +29,30 @@ class VolatilityBreakoutStrategy(Strategy):
         if not highs or not lows:
             # We need candle high/low data for true breakout
             return None
-            
+
         if len(highs) < self.window + 1 or len(lows) < self.window + 1:
             return None
-            
+
         # The previous N periods (excluding current incomplete period)
         prev_highs = highs[-(self.window + 1):-1]
         prev_lows = lows[-(self.window + 1):-1]
-        
+
         highest_high = max(prev_highs)
         lowest_low = min(prev_lows)
-        
+
         current_price = prices[-1]
-        
+
         direction = None
         confidence = 0.8  # Breakout signals usually have a fixed high confidence in trend models
-        
+
         if current_price > highest_high:
             direction = "long"
         elif current_price < lowest_low:
             direction = "short"
-            
+
         if not direction:
             return None
-            
+
         return {
             "direction": direction,
             "confidence": confidence,

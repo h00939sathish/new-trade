@@ -1,11 +1,13 @@
-import pytest
-import asyncio
-import httpx
 from unittest.mock import AsyncMock, MagicMock
+
+import httpx
+import pytest
+
 from src.risk.kill_switch import KillSwitch
 from src.risk.reconciliation import reconcile_positions
+from src.schemas.events import EventType, OrderSide, OrderType, ProductType
 from src.utils.retry import with_retry
-from src.schemas.events import Event, EventType, Exchange, OrderSide, OrderType, ProductType
+
 
 @pytest.mark.asyncio
 async def test_kill_switch_mechanism():
@@ -18,13 +20,13 @@ async def test_kill_switch_mechanism():
     mock_execution = MagicMock()
     mock_portfolio = MagicMock()
     mock_strategy = MagicMock()
-    
+
     mock_execution._open_orders = {"ORD1": MagicMock()}
     mock_execution.cancel_order = AsyncMock()
     mock_execution.place_order = AsyncMock()
     mock_portfolio._positions = {"RELIANCE": {"quantity": 10}}
     mock_strategy._running = True
-    
+
     mock_system.execution = mock_execution
     mock_system.portfolio_opt = mock_portfolio
     mock_system.strategy_gen = mock_strategy
