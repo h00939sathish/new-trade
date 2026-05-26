@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Any
 
@@ -40,7 +41,7 @@ class KiteBroker:
         if tag is not None:
             order_params["tag"] = tag
 
-        order_id = self._client.place_order(**order_params)
+        order_id = await asyncio.to_thread(self._client.place_order, **order_params)
         logger.info(
             "Order placed: %s %s %d %s @ %.2f (id=%s)",
             side.value.upper(), tradingsymbol, quantity,
@@ -65,29 +66,30 @@ class KiteBroker:
             params["trigger_price"] = trigger_price
         if order_type is not None:
             params["order_type"] = order_type.value.upper()
-        result = self._client.modify_order(**params)
+        result = await asyncio.to_thread(self._client.modify_order, **params)
         logger.info("Order modified: %s", order_id)
         return result
 
     async def cancel_order(self, order_id: str) -> dict[str, Any]:
-        result = self._client.cancel_order(order_id)
+        result = await asyncio.to_thread(self._client.cancel_order, order_id)
         logger.info("Order cancelled: %s", order_id)
         return result
 
     async def get_orders(self) -> list[dict[str, Any]]:
-        return self._client.get_orders()
+        return await asyncio.to_thread(self._client.get_orders)
 
     async def get_positions(self) -> list[dict[str, Any]]:
-        return self._client.get_positions()
+        return await asyncio.to_thread(self._client.get_positions)
 
     async def get_holdings(self) -> list[dict[str, Any]]:
-        return self._client.get_holdings()
+        return await asyncio.to_thread(self._client.get_holdings)
 
     async def get_order_history(self, order_id: str) -> list[dict[str, Any]]:
-        return self._client.get_order_history(order_id)
+        return await asyncio.to_thread(self._client.get_order_history, order_id)
 
     async def get_trades(self) -> list[dict[str, Any]]:
-        return self._client.get_trades()
+        return await asyncio.to_thread(self._client.get_trades)
 
     async def get_margins(self) -> dict[str, Any]:
-        return self._client.get_margins()
+        return await asyncio.to_thread(self._client.get_margins)
+

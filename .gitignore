@@ -26,6 +26,7 @@ htmlcov/
 
 # Local databases & logs
 trading_events.db
+order_state.db
 dash_stderr.txt
 dash_stdout.txt
 
@@ -33,3 +34,9 @@ dash_stdout.txt
 *.egg-info/
 build/
 dist/
+
+# Dead/generated directories
+graphify-out/
+trading-system/
+node_modules/
+*.db*

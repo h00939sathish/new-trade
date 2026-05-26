@@ -68,15 +68,10 @@ async def test_strategy_gen_sl_tp_exits():
     
     # Register strategy and fake a position
     # Instrument: RELIANCE, qty: 10, avg_price: 100.0
-    agent._positions["RELIANCE"] = {
-        "quantity": 10,
-        "avg_price": 100.0,
-        "stop_loss": 98.0, # 2% SL
-        "take_profit": 105.0, # 5% TP
-        "stop_loss_pct": 0.02,
-        "take_profit_pct": 0.05,
-        "side": "long"
-    }
+    from src.risk.position_registry import position_registry
+    position_registry.reset()
+    position_registry.update_from_fill("RELIANCE", "buy", 10, 100.0)
+    position_registry.set_sl_tp("RELIANCE", stop_loss=98.0, take_profit=105.0, stop_loss_pct=0.02, take_profit_pct=0.05)
     
     # 1. Trigger Tick below Stop Loss
     tick_event = Event(

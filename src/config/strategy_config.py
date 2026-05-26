@@ -3,28 +3,10 @@ from typing import Any
 
 import yaml
 
-from src.agents.strategy_gen import (
-    ATRStrategy,
-    BollingerBandsStrategy,
-    IchimokuStrategy,
-    MACDStrategy,
-    MeanReversionStrategy,
-    MomentumStrategy,
-    RSIStrategy,
-    Strategy,
-    VolumeStrategy,
-)
+from src.strategies.base import Strategy
+from src.strategies import STRATEGY_REGISTRY
 
-STRATEGY_REGISTRY: dict[str, type[Strategy]] = {
-    "momentum": MomentumStrategy,
-    "mean_reversion": MeanReversionStrategy,
-    "atr_breakout": ATRStrategy,
-    "bollinger": BollingerBandsStrategy,
-    "rsi": RSIStrategy,
-    "macd": MACDStrategy,
-    "volume": VolumeStrategy,
-    "ichimoku": IchimokuStrategy,
-}
+
 
 DEFAULT_CONFIG = {
     "strategies": {
@@ -67,6 +49,21 @@ DEFAULT_CONFIG = {
             "enabled": False,
             "weight": 0.05,
             "params": {"conversion": 9, "base": 26, "lagging": 52, "displacement": 26},
+        },
+        "stat_arb": {
+            "enabled": False,
+            "weight": 0.1,
+            "params": {"primary_symbol": "TCS", "secondary_symbol": "INFY", "window": 60, "entry_z": 2.0, "exit_z": 0.5},
+        },
+        "vol_breakout": {
+            "enabled": True,
+            "weight": 0.15,
+            "params": {"window": 20},
+        },
+        "ml_regime": {
+            "enabled": False,
+            "weight": 0.2,
+            "params": {"lookback_window": 100, "prediction_horizon": 5},
         },
     },
 }

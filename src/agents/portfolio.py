@@ -1,4 +1,5 @@
 import asyncio
+import time
 from typing import Any
 
 from src.agents.base import BaseAgent
@@ -7,6 +8,10 @@ from src.schemas.events import (
     EventType,
     PortfolioEvent,
 )
+from collections import deque
+import numpy as np
+
+from src.risk.portfolio_optimizer import InstitutionalPortfolioOptimizer
 
 
 class PortfolioOptimizationAgent(BaseAgent):
@@ -18,6 +23,12 @@ class PortfolioOptimizationAgent(BaseAgent):
         self._pnl: float = 0.0
         self._trade_history: list[dict[str, Any]] = []
         self._kelly_fractions: dict[str, float] = {}
+        self._price_history: dict[str, deque[float]] = {}
+        self._optimal_weights: dict[str, float] = {}
+        self._strategy_weights: dict[str, float] = {}
+        self._strategy_returns: dict[str, deque[float]] = {}
+        self._last_optimization = 0.0
+        self._optimizer: InstitutionalPortfolioOptimizer | None = None
 
     async def on_start(self) -> None:
         self.logger.info(
@@ -26,9 +37,19 @@ class PortfolioOptimizationAgent(BaseAgent):
         self.subscribe(EventType.FILL)
         self.subscribe(EventType.SIGNAL)
         self.subscribe(EventType.PORTFOLIO_UPDATE)
+        self.subscribe(EventType.TICK)
 
         from src.monitoring.decay_detector import PerformanceDecayDetector
         self.decay_detector = PerformanceDecayDetector(system=getattr(self, "system", None))
+
+        # Initialise the institutional optimizer from settings
+        from src.config.settings import settings
+        self._optimizer = InstitutionalPortfolioOptimizer(
+            regime=getattr(settings, "portfolio_optimizer_regime", "risk_parity"),
+            min_weight=getattr(settings, "portfolio_optimizer_min_weight", 0.05),
+            max_weight=getattr(settings, "portfolio_optimizer_max_weight", 0.40),
+        )
+        self._rebalance_interval = getattr(settings, "portfolio_optimizer_rebalance_interval", 300)
 
         task = asyncio.create_task(self._reconciliation_loop(), name="portfolio_opt.reconciliation")
         self._tasks.append(task)
@@ -53,6 +74,8 @@ class PortfolioOptimizationAgent(BaseAgent):
                 await self._on_signal(event)
             case EventType.PORTFOLIO_UPDATE:
                 self._on_portfolio_update(event)
+            case EventType.TICK:
+                await self._on_tick(event)
 
     async def _on_fill(self, event: Event) -> None:
         instrument = event.data.get("instrument", "")
@@ -103,6 +126,15 @@ class PortfolioOptimizationAgent(BaseAgent):
                 order_id = event.data.get("order_id", "")
                 strategy_name = system_ref.execution._order_strategies.get(order_id, "unknown")
 
+            # Track per-strategy returns for the institutional optimizer
+            if strategy_name != "unknown":
+                if strategy_name not in self._strategy_returns:
+                    self._strategy_returns[strategy_name] = deque(maxlen=500)
+                # Store return as fraction of allocated capital for that strategy
+                alloc = self._capital * self._strategy_weights.get(strategy_name, 1.0 / max(1, len(self._strategy_returns)))
+                ret_frac = realized_pnl / alloc if alloc > 0 else 0.0
+                self._strategy_returns[strategy_name].append(ret_frac)
+
             if hasattr(self, "decay_detector"):
                 self.decay_detector.record_trade(strategy_name, realized_pnl)
 
@@ -146,6 +178,99 @@ class PortfolioOptimizationAgent(BaseAgent):
         b = 1.0
         kelly = (b * win_prob - loss_prob) / b
         return max(0.0, min(kelly * 0.25, 0.25))
+
+    async def _on_tick(self, event: Event) -> None:
+        instrument = event.data.get("instrument", "")
+        price = event.data.get("last_price")
+        if price is None:
+            return
+            
+        if instrument not in self._price_history:
+            self._price_history[instrument] = deque(maxlen=500)
+        self._price_history[instrument].append(float(price))
+        
+        # Run institutional optimizer periodically
+        now = time.monotonic()
+        if now - self._last_optimization > self._rebalance_interval:
+            await self._optimize_portfolio()
+            self._last_optimization = now
+
+    async def _optimize_portfolio(self) -> None:
+        """Run the institutional optimizer across strategy return series."""
+        if self._optimizer is None:
+            return
+
+        # --- Strategy-level optimisation (primary) ---
+        strategy_data: dict[str, np.ndarray] = {}
+        for name, returns_deque in self._strategy_returns.items():
+            if len(returns_deque) >= 2:
+                strategy_data[name] = np.array(returns_deque)
+
+        if len(strategy_data) >= 2:
+            result = self._optimizer.optimize(strategy_data)
+            self._strategy_weights = dict(result.weights)
+            self.logger.info(
+                "Strategy weights [%s]: %s (SR=%.2f, vol=%.4f)",
+                result.regime_used,
+                {k: f"{v:.1%}" for k, v in result.weights.items()},
+                result.sharpe,
+                result.expected_vol,
+            )
+            # Emit rebalance event with enriched payload
+            await self.emit(Event(
+                event_type=EventType.PORTFOLIO_REBALANCE,
+                stream="portfolio.rebalance",
+                data={
+                    "weights": result.weights,
+                    "regime_used": result.regime_used,
+                    "expected_return": result.expected_return,
+                    "expected_vol": result.expected_vol,
+                    "sharpe": result.sharpe,
+                    "cov_condition_number": result.cov_condition_number,
+                    "shrinkage_intensity": result.shrinkage_intensity,
+                    "converged": result.converged,
+                },
+                metadata={"producer": self.name},
+            ))
+            return
+
+        # --- Instrument-level fallback (if not enough strategy data yet) ---
+        instruments = [k for k, v in self._price_history.items() if len(v) >= 100]
+        if len(instruments) < 2:
+            return
+
+        returns_dict: dict[str, np.ndarray] = {}
+        min_len = min(len(self._price_history[inst]) for inst in instruments)
+        for inst in instruments:
+            prices = np.array(self._price_history[inst])[-min_len:]
+            rets = np.diff(prices) / prices[:-1]
+            returns_dict[inst] = rets
+
+        result = self._optimizer.optimize(returns_dict)
+        self._optimal_weights = dict(result.weights)
+        self.logger.info(
+            "Instrument weights (fallback) [%s]: %s",
+            result.regime_used,
+            {k: f"{v:.1%}" for k, v in result.weights.items()},
+        )
+        await self.emit(Event(
+            event_type=EventType.PORTFOLIO_REBALANCE,
+            stream="portfolio.rebalance",
+            data={
+                "weights": result.weights,
+                "regime_used": result.regime_used,
+                "expected_return": result.expected_return,
+                "expected_vol": result.expected_vol,
+                "sharpe": result.sharpe,
+                "converged": result.converged,
+                "level": "instrument_fallback",
+            },
+            metadata={"producer": self.name},
+        ))
+
+    def get_strategy_weights(self) -> dict[str, float]:
+        """Return the current optimal strategy weights for capital allocation."""
+        return dict(self._strategy_weights)
 
     async def _emit_portfolio_update(self, instrument: str, side: str) -> None:
         total_value = self._capital + self.get_total_exposure()

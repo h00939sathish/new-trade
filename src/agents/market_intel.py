@@ -187,7 +187,17 @@ class MarketIntelAgent(BaseAgent):
 
     def _handle_tick(self, event: Event) -> None:
         instrument = event.data.get("instrument", "")
-        self._latest_ticks[instrument] = event
+        # Store the event as-is — downstream should access via .data dict
+        # to avoid type mismatch between Event and TickEvent
+        if isinstance(event, TickEvent):
+            self._latest_ticks[instrument] = event
+        else:
+            # Convert generic Event to TickEvent for consistent downstream access
+            try:
+                tick = TickEvent(**event.model_dump())
+                self._latest_ticks[instrument] = tick
+            except Exception:
+                self._latest_ticks[instrument] = event
 
     def _handle_ohlcv(self, event: Event) -> None:
         instrument = event.data.get("instrument", "")

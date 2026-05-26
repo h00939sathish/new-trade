@@ -71,7 +71,8 @@ class KiteClient:
 
     def place_order(self, **kwargs: Any) -> str:
         if self._kite and self._connected:
-            result = self._kite.place_order(variety=kwargs.get("variety", "regular"), kwargs=kwargs)  # type: ignore
+            variety = kwargs.pop("variety", "regular")
+            result = self._kite.place_order(variety=variety, **kwargs)  # type: ignore
             return result.get("order_id", "")
         order_id = f"paper_{kwargs.get('tradingsymbol', 'unknown')}_{hash(str(kwargs)) % 10000}"
         logger.info("Paper order placed: %s", order_id)

@@ -53,6 +53,11 @@ class Settings(BaseSettings):
     risk_max_leverage: float = 3.0
     risk_max_order_value: float = 50_000.0
 
+    portfolio_optimizer_regime: str = "risk_parity"
+    portfolio_optimizer_max_weight: float = 0.40
+    portfolio_optimizer_min_weight: float = 0.05
+    portfolio_optimizer_rebalance_interval: int = 300
+
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
 

@@ -42,6 +42,7 @@ class ReflectionEngineAgent(BaseAgent):
         self._mutation_history: list[dict[str, Any]] = []
         self._last_evaluation_pnl = 0.0
         self._last_baseline_result: Any = None
+        self._pending_mutation: dict[str, Any] | None = None
 
     async def on_start(self) -> None:
         self.logger.info("Reflection Engine Agent initializing")
@@ -108,15 +109,26 @@ class ReflectionEngineAgent(BaseAgent):
         )
 
         mutated_result = hypothesis.pop("result")
-        # Since _find_best_mutation only returns if it's a verified improvement, we apply it directly
-        await self._apply_mutation(hypothesis, mutated_result)
 
+        # SAFETY: Do NOT auto-apply mutations. Log the proposal for human review.
         self._mutation_history.append({
             "hypothesis": hypothesis,
             "baseline": self._result_to_dict(current_result),
             "mutated": self._result_to_dict(mutated_result),
-            "applied": True,
+            "applied": False,
+            "status": "pending_approval",
         })
+        self.logger.warning(
+            "MUTATION PROPOSED (requires manual approval): strategy=%s params=%s "
+            "baseline_sharpe=%.3f -> proposed_sharpe=%.3f. "
+            "Use reflection.approve_last_mutation() to apply.",
+            hypothesis.get("strategy"), hypothesis.get("params"),
+            current_result.sharpe_ratio, mutated_result.sharpe_ratio,
+        )
+        self._pending_mutation = {
+            "hypothesis": hypothesis,
+            "result": mutated_result,
+        }
         self._last_baseline_result = current_result
 
     async def _find_best_mutation(self, baseline_result: Any) -> dict[str, Any] | None:
@@ -313,8 +325,41 @@ class ReflectionEngineAgent(BaseAgent):
             "eval_window": settings.reflection_eval_window,
             "mutation_count": len(self._mutation_history),
             "baseline_pnl": self._baseline_pnl,
+            "pending_mutation": self._pending_mutation is not None,
         })
         return base
+
+    async def approve_last_mutation(self) -> bool:
+        """Manually approve and apply the last proposed mutation."""
+        if self._pending_mutation is None:
+            self.logger.warning("No pending mutation to approve")
+            return False
+        hypothesis = self._pending_mutation["hypothesis"]
+        result = self._pending_mutation["result"]
+        await self._apply_mutation(hypothesis, result)
+        # Update history to mark as applied
+        for entry in reversed(self._mutation_history):
+            if entry.get("status") == "pending_approval":
+                entry["applied"] = True
+                entry["status"] = "approved"
+                break
+        self._pending_mutation = None
+        self.logger.info("Mutation APPROVED and applied: %s", hypothesis.get("strategy"))
+        return True
+
+    async def reject_last_mutation(self) -> bool:
+        """Reject the pending mutation."""
+        if self._pending_mutation is None:
+            self.logger.warning("No pending mutation to reject")
+            return False
+        strategy = self._pending_mutation["hypothesis"].get("strategy")
+        for entry in reversed(self._mutation_history):
+            if entry.get("status") == "pending_approval":
+                entry["status"] = "rejected"
+                break
+        self._pending_mutation = None
+        self.logger.info("Mutation REJECTED: %s", strategy)
+        return True
 
     @staticmethod
     def _result_to_dict(r: Any) -> dict[str, Any]:

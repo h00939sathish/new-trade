@@ -35,12 +35,13 @@ class BacktestResult:
     profit_factor: float = 0.0
     trades: list[dict[str, Any]] = field(default_factory=list)
     equity_curve: list[float] = field(default_factory=list)
+    initial_capital: float = 0.0
 
     @property
     def return_pct(self) -> float:
-        if self.peak_value == 0:
+        if self.initial_capital == 0:
             return 0.0
-        return ((self.final_value - self.peak_value) / self.peak_value) * 100
+        return ((self.final_value - self.initial_capital) / self.initial_capital) * 100
 
 
 class BacktestEngine:
@@ -82,6 +83,10 @@ class BacktestEngine:
         self._trade_log.clear()
         self._equity_curve.clear()
 
+        # Reset the shared position registry so backtests are isolated
+        from src.risk.position_registry import position_registry
+        position_registry.reset()
+
         from datetime import UTC, datetime, timedelta
         base_time = datetime(2026, 5, 25, 9, 15, 0, tzinfo=UTC)
         self._current_time = base_time
@@ -89,10 +94,14 @@ class BacktestEngine:
         last_event_offset = 0
         last_order_offset = 0
 
+        warned_synthetic = False
         for i, tick_data in enumerate(ticks):
             # Parse or generate synthetic timestamp (Bug 5)
             tick_timestamp = tick_data.get("timestamp")
             if not tick_timestamp:
+                if not warned_synthetic:
+                    logger.warning("Using synthetic (generated) timestamps for backtest data. This invalidates real-time fidelity.")
+                    warned_synthetic = True
                 tick_timestamp = base_time + timedelta(seconds=i)
             elif isinstance(tick_timestamp, str):
                 tick_timestamp = datetime.fromisoformat(tick_timestamp)
@@ -117,7 +126,10 @@ class BacktestEngine:
                 if event.event_type == EventType.TICK:
                     await self._strategy_gen.on_event(event)
                 elif event.event_type == EventType.SIGNAL:
+                    # Send to BOTH risk manager (for validation) AND execution
+                    # (to store as pending signal for correlation with risk check)
                     await self._risk_mgmt.on_event(event)
+                    await self._execution.on_event(event)
                 elif event.event_type == EventType.RISK_CHECK:
                     await self._execution.on_event(event)
 
@@ -199,7 +211,7 @@ class BacktestEngine:
             self._peak_value = total
 
     def _compute_results(self) -> BacktestResult:
-        result = BacktestResult()
+        result = BacktestResult(initial_capital=self._initial_capital)
         result.equity_curve = self._equity_curve
         result.peak_value = self._peak_value
         result.final_value = self._equity_curve[-1] if self._equity_curve else self._initial_capital

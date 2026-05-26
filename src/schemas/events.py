@@ -273,6 +273,7 @@ class OrderEvent(Event):
     product: ProductType
     status: OrderStatus
     variety: str = "regular"
+    disclosed_quantity: int | None = None
 
     @classmethod
     def create(
@@ -288,6 +289,7 @@ class OrderEvent(Event):
         variety: str = "regular",
         order_id: str | None = None,
         status: OrderStatus = OrderStatus.PENDING,
+        disclosed_quantity: int | None = None,
         producer: str = "execution",
     ) -> "OrderEvent":
         data = {
@@ -302,6 +304,7 @@ class OrderEvent(Event):
             "product": product.value,
             "status": status.value,
             "variety": variety,
+            "disclosed_quantity": disclosed_quantity,
         }
         return cls(
             event_type=EventType.ORDER_CREATED if status == OrderStatus.PENDING else EventType.ORDER_ACCEPTED,
@@ -317,6 +320,7 @@ class OrderEvent(Event):
             product=product,
             status=status,
             variety=variety,
+            disclosed_quantity=disclosed_quantity,
             data=data,
             metadata=EventMetadata(producer=producer),
         )

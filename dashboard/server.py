@@ -119,6 +119,26 @@ async def _build_paper_report(source: str = "paper") -> dict[str, Any]:
                     "error_message": None,
                     "created_at": fill.timestamp.isoformat(),
                 })
+                
+        if hasattr(exec_agent, "_twap_orders"):
+            for twap_id, twap_state in exec_agent._twap_orders.items():
+                event = twap_state.get("event")
+                if event:
+                    filled = twap_state.get("filled_quantity", 0)
+                    total = event.data.get("quantity", 0)
+                    # Show ICEBERG or TWAP depending on execution strategy
+                    exec_strat = event.data.get("execution_strategy", "TWAP").upper()
+                    recent_orders.append({
+                        "order_ref": twap_id,
+                        "symbol": event.data.get("instrument", ""),
+                        "side": event.data.get("side", "").upper(),
+                        "quantity": total,
+                        "status": f"{exec_strat} ({filled}/{total})",
+                        "broker_order_id": None,
+                        "strategy": "consensus",
+                        "error_message": None,
+                        "created_at": event.timestamp.isoformat()
+                    })
                 recent_trades.append({
                     "symbol": fill.instrument,
                     "action": fill.side.value.upper(),
@@ -218,7 +238,7 @@ def create_app(system: Any = None, metrics: Any = None) -> FastAPI:
 
     app = FastAPI(title="Trading Dashboard")
 
-    frontend_dir = Path(__file__).resolve().parent / "control_plane" / "dist"
+    frontend_dir = Path(__file__).resolve().parent / "dist"
     assets_dir = frontend_dir / "assets"
 
     if assets_dir.exists():
@@ -227,7 +247,7 @@ def create_app(system: Any = None, metrics: Any = None) -> FastAPI:
     @app.get("/control/")
     @app.get("/control/{full_path:path}")
     async def serve_spa(full_path: str = ""):
-        frontend = Path(__file__).resolve().parent / "control_plane" / "dist"
+        frontend = Path(__file__).resolve().parent / "dist"
         if not full_path:
             return FileResponse(str(frontend / "index.html"))
         filepath = frontend / full_path
@@ -354,14 +374,29 @@ def create_app(system: Any = None, metrics: Any = None) -> FastAPI:
                 health = await _trading_system.health()
             except Exception:
                 pass
+        
         sg = health.get("strategy_gen", {})
         strategies = sg.get("strategies", ["momentum", "mean_reversion"])
+        
+        # Get live weights from portfolio agent
+        portfolio_agent = getattr(_trading_system, "portfolio_opt", None)
+        strategy_weights = {}
+        if portfolio_agent and hasattr(portfolio_agent, "get_strategy_weights"):
+            strategy_weights = portfolio_agent.get_strategy_weights()
+            
+        strategy_list = []
+        for name in strategies:
+            weight = strategy_weights.get(name, 1.0 / len(strategies) if strategies else 1.0)
+            strategy_list.append({
+                "name": name, 
+                "enabled": True, 
+                "configured_weight": weight, 
+                "runtime_weight": weight
+            })
+            
         return JSONResponse({
             "generated_at": datetime.now(timezone.utc).isoformat(),
-            "strategies": [
-                {"name": name, "enabled": True, "configured_weight": 1.0 / len(strategies), "runtime_weight": 1.0 / len(strategies)}
-                for name in strategies
-            ],
+            "strategies": strategy_list,
         })
 
     @app.get("/api/control-plane/overview")

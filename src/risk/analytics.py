@@ -1,4 +1,18 @@
+"""DEPRECATED: This module is not imported by any agent in the trading system.
+
+Contains PortfolioRiskReport and compute_portfolio_risk() which are standalone
+analytics functions orphaned from the main agent pipeline.
+
+Scheduled for removal in a future version.
+"""
 from __future__ import annotations
+
+import warnings
+warnings.warn(
+    "src.risk.analytics is deprecated and unused. Risk is managed by RiskManagementAgent.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 from dataclasses import dataclass, field
 from math import floor

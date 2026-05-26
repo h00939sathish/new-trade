@@ -1,10 +1,26 @@
 import math
+import time
 from collections import deque
 from datetime import datetime
 from typing import Any, Literal
 
 from src.agents.base import BaseAgent
+from src.risk.position_registry import position_registry
 from src.schemas.events import Event, EventType, Exchange, SignalEvent
+from src.strategies.base import Strategy
+from src.strategies.technical import (
+    ATRStrategy,
+    BollingerBandsStrategy,
+    IchimokuStrategy,
+    MACDStrategy,
+    MeanReversionStrategy,
+    MomentumStrategy,
+    RSIStrategy,
+    VolumeStrategy,
+)
+
+# Minimum seconds between signals for the same instrument (prevents overtrading)
+_SIGNAL_COOLDOWN_SECONDS = 30.0
 
 
 class StrategyGenAgent(BaseAgent):
@@ -15,16 +31,21 @@ class StrategyGenAgent(BaseAgent):
         self._tick_prices: dict[str, deque[float]] = {}
         self._candle_prices: dict[str, dict[str, deque[float]]] = {}
         self._candle_volumes: dict[str, dict[str, deque[float]]] = {}
+        self._candle_highs: dict[str, dict[str, deque[float]]] = {}
+        self._candle_lows: dict[str, dict[str, deque[float]]] = {}
         self._config_path = config_path
-        self._positions: dict[str, dict[str, Any]] = {}
         self._pending_signal_levels: dict[str, dict[str, float]] = {}
         self._last_tick_time: dict[str, datetime] = {}
-        self.threshold = 0.1
+        # Signal deduplication: track last emitted direction per instrument
+        self._last_signal_direction: dict[str, str] = {}
+        # Signal cooldown: track last signal emission time per instrument
+        self._last_signal_time: dict[str, float] = {}
+        self.threshold = 0.3  # Increased from 0.1 to reduce noise
         if self._config_path:
             try:
                 from src.config.strategy_config import load_strategy_config
                 cfg = load_strategy_config(self._config_path)
-                self.threshold = cfg.get("consensus_threshold", 0.1)
+                self.threshold = cfg.get("consensus_threshold", 0.3)
             except Exception:
                 pass
 
@@ -81,59 +102,40 @@ class StrategyGenAgent(BaseAgent):
         if not instrument:
             return
 
-        if instrument not in self._positions:
-            self._positions[instrument] = {
-                "quantity": 0,
-                "avg_price": 0.0,
-                "stop_loss": 0.0,
-                "take_profit": 0.0,
-                "stop_loss_pct": 0.0,
-                "take_profit_pct": 0.0,
-                "side": None
-            }
-
-        pos = self._positions[instrument]
-        qty_change = fill_qty if side == "buy" else -fill_qty
-        new_qty = pos["quantity"] + qty_change
+        # Update the shared position registry
+        pos = position_registry.update_from_fill(instrument, side, fill_qty, fill_price)
+        new_qty = pos["quantity"]
 
         if new_qty == 0:
-            self._positions[instrument] = {
-                "quantity": 0,
-                "avg_price": 0.0,
-                "stop_loss": 0.0,
-                "take_profit": 0.0,
-                "stop_loss_pct": 0.0,
-                "take_profit_pct": 0.0,
-                "side": None
-            }
-            self.logger.info("Position closed for %s", instrument)
+            # Position closed — clear signal deduplication so we can re-enter
+            self._last_signal_direction.pop(instrument, None)
+            self._last_signal_time.pop(instrument, None)
+            self.logger.info("Position closed for %s — signal state reset", instrument)
         else:
             current_side = "long" if new_qty > 0 else "short"
-            if pos["quantity"] == 0 or (pos["quantity"] > 0 and qty_change > 0) or (pos["quantity"] < 0 and qty_change < 0):
-                total_cost = (pos["avg_price"] * abs(pos["quantity"])) + (fill_price * fill_qty)
-                pos["avg_price"] = total_cost / abs(new_qty)
-                pos["side"] = current_side
+            pending = self._pending_signal_levels.get(instrument, {})
+            sl_pct = pending.get("stop_loss_pct", 0.02)
+            tp_pct = pending.get("take_profit_pct", 0.05)
 
-                pending = self._pending_signal_levels.get(instrument, {})
-                sl_pct = pending.get("stop_loss_pct", 0.02)
-                tp_pct = pending.get("take_profit_pct", 0.05)
-                pos["stop_loss_pct"] = sl_pct
-                pos["take_profit_pct"] = tp_pct
+            avg_price = pos["avg_price"]
+            if current_side == "long":
+                sl = avg_price * (1.0 - sl_pct)
+                tp = avg_price * (1.0 + tp_pct)
+            else:
+                sl = avg_price * (1.0 + sl_pct)
+                tp = avg_price * (1.0 - tp_pct)
 
-                if current_side == "long":
-                    pos["stop_loss"] = pos["avg_price"] * (1.0 - sl_pct)
-                    pos["take_profit"] = pos["avg_price"] * (1.0 + tp_pct)
-                else:
-                    pos["stop_loss"] = pos["avg_price"] * (1.0 + sl_pct)
-                    pos["take_profit"] = pos["avg_price"] * (1.0 - tp_pct)
-            pos["quantity"] = new_qty
-            self.logger.info("Position updated for %s: qty=%d, avg_price=%.2f, SL=%.2f, TP=%.2f",
-                             instrument, new_qty, pos["avg_price"], pos["stop_loss"], pos["take_profit"])
+            position_registry.set_sl_tp(
+                instrument, stop_loss=sl, take_profit=tp,
+                stop_loss_pct=sl_pct, take_profit_pct=tp_pct,
+            )
+            self.logger.info(
+                "Position updated for %s: qty=%d, avg_price=%.2f, SL=%.2f, TP=%.2f",
+                instrument, new_qty, avg_price, sl, tp,
+            )
 
     async def _check_sl_tp(self, instrument: str, current_price: float, timestamp: datetime, exchange: Exchange) -> None:
-        if instrument not in self._positions:
-            return
-        pos = self._positions[instrument]
+        pos = position_registry.get_position(instrument)
         if pos["quantity"] == 0:
             return
 
@@ -142,7 +144,7 @@ class StrategyGenAgent(BaseAgent):
             if is_trailing:
                 new_sl = current_price * (1.0 - pos["stop_loss_pct"])
                 if new_sl > pos["stop_loss"]:
-                    pos["stop_loss"] = new_sl
+                    position_registry.update_trailing_sl(instrument, new_sl)
                     self.logger.debug("Trailing SL updated for %s: %.2f", instrument, new_sl)
             if current_price <= pos["stop_loss"]:
                 self.logger.warning("Stop Loss hit for %s long position at %.2f (SL: %.2f)", instrument, current_price, pos["stop_loss"])
@@ -154,7 +156,7 @@ class StrategyGenAgent(BaseAgent):
             if is_trailing:
                 new_sl = current_price * (1.0 + pos["stop_loss_pct"])
                 if new_sl < pos["stop_loss"] or pos["stop_loss"] == 0.0:
-                    pos["stop_loss"] = new_sl
+                    position_registry.update_trailing_sl(instrument, new_sl)
                     self.logger.debug("Trailing SL updated for %s: %.2f", instrument, new_sl)
             if current_price >= pos["stop_loss"]:
                 self.logger.warning("Stop Loss hit for %s short position at %.2f (SL: %.2f)", instrument, current_price, pos["stop_loss"])
@@ -164,15 +166,9 @@ class StrategyGenAgent(BaseAgent):
                 await self._emit_exit_signal(instrument, current_price, "take_profit", exchange, timestamp)
 
     async def _emit_exit_signal(self, instrument: str, price: float, reason: str, exchange: Exchange, timestamp: datetime) -> None:
-        self._positions[instrument] = {
-            "quantity": 0,
-            "avg_price": 0.0,
-            "stop_loss": 0.0,
-            "take_profit": 0.0,
-            "stop_loss_pct": 0.0,
-            "take_profit_pct": 0.0,
-            "side": None
-        }
+        # Clear signal deduplication state so we can re-enter after exit
+        self._last_signal_direction.pop(instrument, None)
+        self._last_signal_time.pop(instrument, None)
         signal = {
             "direction": "neutral",
             "confidence": 1.0,
@@ -222,8 +218,19 @@ class StrategyGenAgent(BaseAgent):
             if abs_net >= self.threshold:
                 direction = "long" if net_signal > 0 else "short"
                 confidence = min(abs_net, 0.95)
-                sl_pct = 0.02
-                tp_pct = 0.05
+
+                # Signal deduplication: skip if same direction as last signal
+                if self._last_signal_direction.get(instrument) == direction:
+                    return
+
+                # Signal cooldown: skip if too recent
+                now = time.monotonic()
+                last_time = self._last_signal_time.get(instrument, 0.0)
+                if now - last_time < _SIGNAL_COOLDOWN_SECONDS:
+                    return
+
+                # Dynamic SL/TP based on ATR from strategy features
+                sl_pct, tp_pct = self._compute_dynamic_sl_tp(features_all, float(price))
                 self._pending_signal_levels[instrument] = {
                     "stop_loss_pct": sl_pct,
                     "take_profit_pct": tp_pct
@@ -240,6 +247,9 @@ class StrategyGenAgent(BaseAgent):
                 strategy_name = "consensus_ensemble"
                 if len(self._strategies) == 1:
                     strategy_name = list(self._strategies.keys())[0]
+
+                self._last_signal_direction[instrument] = direction
+                self._last_signal_time[instrument] = now
                 await self._emit_signal(instrument, strategy_name, consolidated, exchange=exchange, timestamp=event.timestamp,
                                         stop_loss_pct=sl_pct, take_profit_pct=tp_pct)
 
@@ -247,6 +257,8 @@ class StrategyGenAgent(BaseAgent):
         instrument = event.data.get("instrument", "")
         exchange = Exchange(event.data.get("exchange", "NSE"))
         close = event.data.get("close")
+        high = event.data.get("high", close)
+        low = event.data.get("low", close)
         volume = event.data.get("volume", 0.0)
         interval = event.data.get("interval", "minute")
         if close is None:
@@ -263,6 +275,19 @@ class StrategyGenAgent(BaseAgent):
             self._candle_volumes[instrument][interval] = deque(maxlen=500)
         self._candle_volumes[instrument][interval].append(float(volume))
 
+        # Store high/low for proper ATR calculation
+        if instrument not in self._candle_highs:
+            self._candle_highs[instrument] = {}
+        if interval not in self._candle_highs[instrument]:
+            self._candle_highs[instrument][interval] = deque(maxlen=500)
+        self._candle_highs[instrument][interval].append(float(high) if high else float(close))
+
+        if instrument not in self._candle_lows:
+            self._candle_lows[instrument] = {}
+        if interval not in self._candle_lows[instrument]:
+            self._candle_lows[instrument][interval] = deque(maxlen=500)
+        self._candle_lows[instrument][interval].append(float(low) if low else float(close))
+
         await self._check_sl_tp(instrument, float(close), event.timestamp, exchange)
 
         votes = []
@@ -277,7 +302,12 @@ class StrategyGenAgent(BaseAgent):
             if strategy_data_type in ("candle", "any") and (norm_strat == norm_event or strategy_timeframe == interval):
                 prices_list = list(self._candle_prices[instrument][interval])
                 volumes_list = list(self._candle_volumes[instrument][interval])
-                signal = await strategy.evaluate(instrument, prices_list, volumes=volumes_list)
+                highs_list = list(self._candle_highs.get(instrument, {}).get(interval, []))
+                lows_list = list(self._candle_lows.get(instrument, {}).get(interval, []))
+                signal = await strategy.evaluate(
+                    instrument, prices_list, volumes=volumes_list,
+                    highs=highs_list, lows=lows_list,
+                )
                 if signal is not None:
                     direction = signal["direction"]
                     confidence = signal["confidence"]
@@ -298,8 +328,19 @@ class StrategyGenAgent(BaseAgent):
             if abs_net >= self.threshold:
                 direction = "long" if net_signal > 0 else "short"
                 confidence = min(abs_net, 0.95)
-                sl_pct = 0.02
-                tp_pct = 0.05
+
+                # Signal deduplication: skip if same direction as last signal
+                if self._last_signal_direction.get(instrument) == direction:
+                    return
+
+                # Signal cooldown: skip if too recent
+                now = time.monotonic()
+                last_time = self._last_signal_time.get(instrument, 0.0)
+                if now - last_time < _SIGNAL_COOLDOWN_SECONDS:
+                    return
+
+                # Dynamic SL/TP based on ATR from strategy features
+                sl_pct, tp_pct = self._compute_dynamic_sl_tp(features_all, float(close))
                 self._pending_signal_levels[instrument] = {
                     "stop_loss_pct": sl_pct,
                     "take_profit_pct": tp_pct
@@ -316,6 +357,9 @@ class StrategyGenAgent(BaseAgent):
                 strategy_name = "consensus_ensemble"
                 if len(self._strategies) == 1:
                     strategy_name = list(self._strategies.keys())[0]
+
+                self._last_signal_direction[instrument] = direction
+                self._last_signal_time[instrument] = now
                 await self._emit_signal(instrument, strategy_name, consolidated, exchange=exchange, timestamp=event.timestamp,
                                         stop_loss_pct=sl_pct, take_profit_pct=tp_pct)
 
@@ -361,6 +405,32 @@ class StrategyGenAgent(BaseAgent):
             weight = cfg.get("strategies", {}).get(name, {}).get("weight", 1.0)
             self.register_strategy(strategy, weight=weight)
 
+    def _compute_dynamic_sl_tp(
+        self,
+        features_all: dict[str, dict[str, Any]],
+        price: float,
+    ) -> tuple[float, float]:
+        """Compute dynamic SL/TP based on ATR from strategy features.
+
+        Falls back to 2% SL / 4% TP if no ATR data available.
+        Uses 2x ATR for SL and 3x ATR for TP (risk:reward = 1:1.5).
+        """
+        atr = None
+        for _, strat_data in features_all.items():
+            feat = strat_data.get("features", {})
+            if "atr" in feat and feat["atr"] is not None and feat["atr"] > 0:
+                atr = feat["atr"]
+                break
+
+        if atr is not None and price > 0:
+            sl_pct = min(max((2.0 * atr) / price, 0.005), 0.05)  # Clamp: 0.5%-5%
+            tp_pct = min(max((3.0 * atr) / price, 0.01), 0.10)   # Clamp: 1%-10%
+        else:
+            sl_pct = 0.02
+            tp_pct = 0.04
+
+        return sl_pct, tp_pct
+
     async def on_stop(self) -> None:
         self.logger.info("Strategy Generation Agent stopping")
 
@@ -369,393 +439,15 @@ class StrategyGenAgent(BaseAgent):
         base.update({
             "strategies": list(self._strategies.keys()),
             "instruments_tracked": len(self._tick_prices) + len(self._candle_prices),
-            "positions_tracked": len(self._positions),
+            "positions_tracked": len(position_registry.get_all_positions()),
+            "cooldown_active": [
+                k for k, v in self._last_signal_time.items()
+                if time.monotonic() - v < _SIGNAL_COOLDOWN_SECONDS
+            ],
         })
         return base
 
 
-class Strategy:
-    name: str
-    data_type: str = "any"  # "tick", "candle", or "any"
-    timeframe: str = "minute"
-
-    async def evaluate(
-        self,
-        instrument: str,
-        prices: list[float],
-        volumes: list[float] | None = None,
-    ) -> dict[str, Any] | None: ...
+from src.strategies.base import Strategy
 
 
-class MomentumStrategy(Strategy):
-    def __init__(self, short_window: int = 5, long_window: int = 20, threshold: float = 0.02):
-        self.name = "momentum"
-        self.data_type = "any"
-        self.timeframe = "minute"
-        self.short_window = short_window
-        self.long_window = long_window
-        self.threshold = threshold
-
-    async def evaluate(
-        self,
-        instrument: str,
-        prices: list[float],
-        volumes: list[float] | None = None,
-    ) -> dict[str, Any] | None:
-        if len(prices) < self.long_window:
-            return None
-        short_ma = sum(prices[-self.short_window:]) / self.short_window
-        long_ma = sum(prices[-self.long_window:]) / self.long_window
-        ratio = (short_ma - long_ma) / long_ma
-        if abs(ratio) < self.threshold:
-            return None
-        direction: Literal["long", "short"] = "long" if ratio > 0 else "short"
-        confidence = min(abs(ratio) / 0.05, 0.95)
-        return {
-            "direction": direction,
-            "confidence": confidence,
-            "price": prices[-1],
-            "features": {
-                "short_ma": short_ma,
-                "long_ma": long_ma,
-                "ratio": ratio,
-            },
-        }
-
-
-class MeanReversionStrategy(Strategy):
-    def __init__(self, window: int = 20, entry_z: float = 2.0, exit_z: float = 0.5):
-        self.name = "mean_reversion"
-        self.data_type = "any"
-        self.timeframe = "minute"
-        self.window = window
-        self.entry_z = entry_z
-        self.exit_z = exit_z
-
-    async def evaluate(
-        self,
-        instrument: str,
-        prices: list[float],
-        volumes: list[float] | None = None,
-    ) -> dict[str, Any] | None:
-        if len(prices) < self.window:
-            return None
-        recent = prices[-self.window:]
-        mean = sum(recent) / len(recent)
-        variance = sum((p - mean) ** 2 for p in recent) / len(recent)
-        std = math.sqrt(variance) if variance > 0 else 1.0
-        current_price = prices[-1]
-        z_score = (current_price - mean) / std
-        if abs(z_score) < self.entry_z:
-            return None
-        direction: Literal["long", "short"] = "long" if z_score < 0 else "short"
-        confidence = min(abs(z_score) / (self.entry_z * 2), 0.95)
-        return {
-            "direction": direction,
-            "confidence": confidence,
-            "price": current_price,
-            "features": {
-                "mean": mean,
-                "std": std,
-                "z_score": z_score,
-            },
-        }
-
-
-class ATRStrategy(Strategy):
-    def __init__(self, window: int = 14, multiplier: float = 2.0, threshold: float = 0.01):
-        self.name = "atr_breakout"
-        self.data_type = "candle"
-        self.timeframe = "minute"
-        self.window = window
-        self.multiplier = multiplier
-        self.threshold = threshold
-
-    async def evaluate(
-        self,
-        instrument: str,
-        prices: list[float],
-        volumes: list[float] | None = None,
-    ) -> dict[str, Any] | None:
-        if len(prices) < self.window + 1:
-            return None
-        recent = prices[-(self.window + 1):]
-        tr_values = []
-        for i in range(1, len(recent)):
-            high = max(recent[i], recent[i-1])
-            low = min(recent[i], recent[i-1])
-            tr_values.append(high - low)
-        atr = sum(tr_values) / len(tr_values)
-        current = prices[-1]
-        prev = prices[-2]
-        if prev == 0:
-            return None
-        change = (current - prev) / prev
-        if abs(change) < self.threshold:
-            return None
-        ratio = abs(change) / atr if atr > 0 else 0
-        direction = "long" if change > 0 else "short"
-        confidence = min(ratio / self.multiplier, 0.95)
-        return {
-            "direction": direction,
-            "confidence": confidence,
-            "price": current,
-            "features": {
-                "atr": atr,
-                "change_pct": change,
-                "ratio": ratio,
-            },
-        }
-
-
-class BollingerBandsStrategy(Strategy):
-    def __init__(self, window: int = 20, num_std: float = 2.0):
-        self.name = "bollinger"
-        self.data_type = "candle"
-        self.timeframe = "minute"
-        self.window = window
-        self.num_std = num_std
-
-    async def evaluate(
-        self,
-        instrument: str,
-        prices: list[float],
-        volumes: list[float] | None = None,
-    ) -> dict[str, Any] | None:
-        if len(prices) < self.window:
-            return None
-        recent = prices[-self.window:]
-        mean = sum(recent) / len(recent)
-        variance = sum((p - mean) ** 2 for p in recent) / len(recent)
-        std = math.sqrt(variance) if variance > 0 else 1.0
-        upper = mean + self.num_std * std
-        lower = mean - self.num_std * std
-        current = prices[-1]
-        if lower < current < upper:
-            return None
-        direction = "long" if current <= lower else "short"
-        distance = min(abs(current - mean) / (self.num_std * std), 1.0) if std > 0 else 0
-        confidence = min(distance, 0.95)
-        return {
-            "direction": direction,
-            "confidence": confidence,
-            "price": current,
-            "features": {
-                "mean": mean,
-                "std": std,
-                "upper": upper,
-                "lower": lower,
-                "band_width": (upper - lower) / mean if mean > 0 else 0,
-            },
-        }
-
-
-class RSIStrategy(Strategy):
-    def __init__(self, window: int = 14, oversold: float = 30.0, overbought: float = 70.0):
-        self.name = "rsi"
-        self.data_type = "candle"
-        self.timeframe = "minute"
-        self.window = window
-        self.oversold = oversold
-        self.overbought = overbought
-
-    async def evaluate(
-        self,
-        instrument: str,
-        prices: list[float],
-        volumes: list[float] | None = None,
-    ) -> dict[str, Any] | None:
-        if len(prices) < self.window + 1:
-            return None
-        gains, losses = [], []
-        for i in range(-self.window, 0):
-            change = prices[i] - prices[i - 1]
-            gains.append(max(change, 0))
-            losses.append(max(-change, 0))
-        avg_gain = sum(gains) / self.window
-        avg_loss = sum(losses) / self.window
-        if avg_loss == 0:
-            rsi = 100.0
-        else:
-            rs = avg_gain / avg_loss
-            rsi = 100.0 - (100.0 / (1.0 + rs))
-        current = prices[-1]
-        if self.oversold < rsi < self.overbought:
-            return None
-        direction = "long" if rsi <= self.oversold else "short"
-        distance = abs(rsi - 50.0) / 50.0
-        confidence = min(distance, 0.95)
-        return {
-            "direction": direction,
-            "confidence": confidence,
-            "price": current,
-            "features": {
-                "rsi": rsi,
-                "avg_gain": avg_gain,
-                "avg_loss": avg_loss,
-            },
-        }
-
-
-class MACDStrategy(Strategy):
-    def __init__(self, fast: int = 12, slow: int = 26, signal: int = 9, threshold: float = 0.0):
-        self.name = "macd"
-        self.data_type = "candle"
-        self.timeframe = "minute"
-        self.fast = fast
-        self.slow = slow
-        self.signal = signal
-        self.threshold = threshold
-
-    async def evaluate(
-        self,
-        instrument: str,
-        prices: list[float],
-        volumes: list[float] | None = None,
-    ) -> dict[str, Any] | None:
-        if len(prices) < self.slow + self.signal + 1:
-            return None
-        ema_fast = self._ema(prices, self.fast)
-        ema_slow = self._ema(prices, self.slow)
-        offset = self.slow - self.fast
-        macd_line = [f - s for f, s in zip(ema_fast[offset:], ema_slow)]
-        signal_line = self._ema(macd_line, self.signal)
-        if len(macd_line) < 2 or len(signal_line) < 2:
-            return None
-        curr = macd_line[-1]
-        prev = macd_line[-2]
-        curr_sig = signal_line[-1]
-        prev_sig = signal_line[-2]
-        hist = curr - curr_sig
-        if abs(hist) <= self.threshold:
-            return None
-        direction = "long" if hist > 0 else "short"
-        confidence = min(abs(hist) / (abs(curr_sig) + 1e-10), 0.95)
-        prev_hist = prev - prev_sig
-        cross = "none"
-        if prev_hist <= 0 < hist:
-            cross = "bullish"
-        elif prev_hist >= 0 > hist:
-            cross = "bearish"
-        return {
-            "direction": direction,
-            "confidence": confidence,
-            "price": prices[-1],
-            "features": {
-                "macd": curr,
-                "signal": curr_sig,
-                "histogram": hist,
-                "cross": cross,
-            },
-        }
-
-    @staticmethod
-    def _ema(values: list[float], period: int) -> list[float]:
-        if len(values) < period:
-            return []
-        k = 2.0 / (period + 1)
-        result = [sum(values[:period]) / period]
-        for v in values[period:]:
-            result.append((v - result[-1]) * k + result[-1])
-        return result
-
-
-class VolumeStrategy(Strategy):
-    def __init__(self, volume_window: int = 20, price_window: int = 10, volume_mult: float = 1.5):
-        self.name = "volume"
-        self.data_type = "candle"
-        self.timeframe = "minute"
-        self.volume_window = volume_window
-        self.price_window = price_window
-        self.volume_mult = volume_mult
-
-    async def evaluate(
-        self,
-        instrument: str,
-        prices: list[float],
-        volumes: list[float] | None = None,
-    ) -> dict[str, Any] | None:
-        if volumes is None:
-            return None
-        return await self.evaluate_with_volume(instrument, prices, volumes)
-
-    async def evaluate_with_volume(
-        self,
-        instrument: str,
-        prices: list[float],
-        volumes: list[float],
-    ) -> dict[str, Any] | None:
-        if len(prices) < self.price_window or len(volumes) < self.volume_window:
-            return None
-        recent_vol = volumes[-self.volume_window:]
-        avg_vol = sum(recent_vol) / len(recent_vol)
-        curr_vol = volumes[-1]
-        if curr_vol <= avg_vol * self.volume_mult:
-            return None
-        price_change = (prices[-1] - prices[-self.price_window]) / prices[-self.price_window]
-        if abs(price_change) < 0.005:
-            return None
-        direction = "long" if price_change > 0 else "short"
-        confidence = min(curr_vol / (avg_vol * 3) if avg_vol > 0 else 0, 0.95)
-        return {
-            "direction": direction,
-            "confidence": confidence,
-            "price": prices[-1],
-            "features": {
-                "volume_ratio": curr_vol / avg_vol if avg_vol > 0 else 0,
-                "avg_volume": avg_vol,
-                "current_volume": curr_vol,
-                "price_change_pct": price_change,
-            },
-        }
-
-
-class IchimokuStrategy(Strategy):
-    def __init__(self, conversion: int = 9, base: int = 26, lagging: int = 52, displacement: int = 26):
-        self.name = "ichimoku"
-        self.data_type = "candle"
-        self.timeframe = "minute"
-        self.conversion = conversion
-        self.base = base
-        self.lagging = lagging
-        self.displacement = displacement
-
-    async def evaluate(
-        self,
-        instrument: str,
-        prices: list[float],
-        volumes: list[float] | None = None,
-    ) -> dict[str, Any] | None:
-        if len(prices) < self.lagging + self.displacement:
-            return None
-        conv = self._midpoint(prices, self.conversion)
-        base = self._midpoint(prices, self.base)
-        if conv is None or base is None:
-            return None
-        current = prices[-1]
-        if conv > base and current > conv:
-            direction = "long"
-            confidence = min(abs(conv - base) / (base + 1e-10) * 10, 0.95)
-        elif conv < base and current < base:
-            direction = "short"
-            confidence = min(abs(conv - base) / (base + 1e-10) * 10, 0.95)
-        else:
-            return None
-        return {
-            "direction": direction,
-            "confidence": confidence,
-            "price": current,
-            "features": {
-                "conversion": conv,
-                "base": base,
-                "cloud_top": max(conv, base),
-                "cloud_bottom": min(conv, base),
-            },
-        }
-
-    @staticmethod
-    def _midpoint(prices: list[float], period: int) -> float | None:
-        if len(prices) < period:
-            return None
-        segment = prices[-period:]
-        return (max(segment) + min(segment)) / 2

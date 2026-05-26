@@ -74,14 +74,34 @@ class BacktestDataProvider:
         from_date: date,
         to_date: date,
     ) -> list[dict[str, Any]]:
+        candles = []
         if hasattr(self._provider, "get_historical"):
-            return await self._provider.get_historical(
-                tradingsymbol=instrument,
-                interval_minutes=1440,
-                days=(to_date - from_date).days,
-                exchange=self._exchange,
-            )
-        return []
+            try:
+                candles = await self._provider.get_historical(
+                    tradingsymbol=instrument,
+                    interval_minutes=1440,
+                    days=(to_date - from_date).days,
+                    exchange=self._exchange,
+                )
+            except Exception as e:
+                logger.warning("Primary provider get_historical failed for %s: %s", instrument, e)
+        
+        if not candles:
+            # Fallback to Jugaad for real data instead of synthetic
+            logger.info("Falling back to JugaadMarketDataProvider for %s historical data", instrument)
+            try:
+                from src.connectors.jugaad.market_data import JugaadMarketDataProvider
+                jugaad_provider = JugaadMarketDataProvider()
+                candles = await jugaad_provider.get_historical(
+                    tradingsymbol=instrument,
+                    interval_minutes=1440,
+                    days=(to_date - from_date).days,
+                    exchange=self._exchange,
+                )
+            except Exception as e:
+                logger.warning("Jugaad fallback failed for %s: %s", instrument, e)
+                
+        return candles
 
     def _expand_candles_to_ticks(
         self,

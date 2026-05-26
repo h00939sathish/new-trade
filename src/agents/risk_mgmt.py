@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timezone, timedelta
 from typing import Any
 
 from src.agents.base import BaseAgent
@@ -8,6 +8,14 @@ from src.schemas.events import (
     EventType,
     RiskCheckEvent,
 )
+
+# IST timezone offset
+_IST = timezone(timedelta(hours=5, minutes=30))
+# NSE market hours
+_MARKET_OPEN_HOUR, _MARKET_OPEN_MIN = 9, 15
+_MARKET_CLOSE_HOUR, _MARKET_CLOSE_MIN = 15, 30
+# Auto square-off warning before close
+_SQUARE_OFF_HOUR, _SQUARE_OFF_MIN = 15, 15
 
 
 class RiskManagementAgent(BaseAgent):
@@ -58,11 +66,68 @@ class RiskManagementAgent(BaseAgent):
             case EventType.RISK_BREACH:
                 self.logger.warning("Risk breach: %s", event.data)
 
+    def _is_market_hours(self) -> bool:
+        """Check if current time is within NSE trading hours (9:15-15:30 IST)."""
+        now_ist = datetime.now(_IST)
+        market_open = now_ist.replace(
+            hour=_MARKET_OPEN_HOUR, minute=_MARKET_OPEN_MIN, second=0, microsecond=0,
+        )
+        market_close = now_ist.replace(
+            hour=_MARKET_CLOSE_HOUR, minute=_MARKET_CLOSE_MIN, second=0, microsecond=0,
+        )
+        return market_open <= now_ist <= market_close
+
+    def _is_square_off_window(self) -> bool:
+        """Check if we're in the auto-square-off window (15:15-15:30 IST)."""
+        now_ist = datetime.now(_IST)
+        square_off = now_ist.replace(
+            hour=_SQUARE_OFF_HOUR, minute=_SQUARE_OFF_MIN, second=0, microsecond=0,
+        )
+        market_close = now_ist.replace(
+            hour=_MARKET_CLOSE_HOUR, minute=_MARKET_CLOSE_MIN, second=0, microsecond=0,
+        )
+        return square_off <= now_ist <= market_close
+
     async def _validate_signal(self, event: Event) -> None:
         signal = event.data
         instrument = signal.get("instrument", "")
         direction = signal.get("direction", "neutral")
         confidence = signal.get("confidence", 0.0)
+
+        # Market hours enforcement: block new entries outside trading hours
+        if direction != "neutral" and not self._is_market_hours():
+            self.logger.warning(
+                "Signal REJECTED: outside market hours (%s %s)", instrument, direction,
+            )
+            risk_event = RiskCheckEvent.create(
+                check_name="signal_validation",
+                passed=False,
+                instrument=instrument,
+                details={"signal": {**signal, "_signal_event_id": event.event_id},
+                         "checks": [{"name": "market_hours", "passed": False,
+                                      "details": {"reason": "outside NSE trading hours"}}]},
+                producer=self.name,
+            )
+            await self.emit(risk_event)
+            return
+
+        # Warn during square-off window — only allow closing positions
+        if direction != "neutral" and self._is_square_off_window():
+            self.logger.warning(
+                "Signal REJECTED: in square-off window (15:15-15:30). Only exits allowed. %s %s",
+                instrument, direction,
+            )
+            risk_event = RiskCheckEvent.create(
+                check_name="signal_validation",
+                passed=False,
+                instrument=instrument,
+                details={"signal": {**signal, "_signal_event_id": event.event_id},
+                         "checks": [{"name": "square_off_window", "passed": False,
+                                      "details": {"reason": "square-off window active"}}]},
+                producer=self.name,
+            )
+            await self.emit(risk_event)
+            return
 
         # Direction-aware exposure check: sell orders reducing positions
         # should bypass the exposure limit (fix 1.2)
@@ -75,6 +140,7 @@ class RiskManagementAgent(BaseAgent):
             await self._check_instrument_risk(instrument, direction, confidence),
             await self._check_drawdown_risk(),
             await self._check_var_risk(instrument),
+            await self._check_liquidity_risk(instrument),
         ]
         # Only check exposure for orders that INCREASE position
         if not is_reducing:
@@ -223,7 +289,9 @@ class RiskManagementAgent(BaseAgent):
         sorted_ret = sorted(returns)
         var_idx = max(0, int(len(sorted_ret) * 0.05) - 1)
         var_95 = abs(sorted_ret[var_idx])
-        position_value = abs(self._positions.get(instrument, 0)) * 1000
+        # Use actual last tracked price instead of hardcoded multiplier
+        last_price = float(history[-1]) if history else 1000.0
+        position_value = abs(self._positions.get(instrument, 0)) * last_price
         var_loss = position_value * var_95
         max_var_loss = self._max_position_size * 0.02
         return self._check("var_95", var_loss <= max_var_loss, {
@@ -234,6 +302,26 @@ class RiskManagementAgent(BaseAgent):
             "returns_sample": len(returns),
         })
 
+    async def _check_liquidity_risk(self, instrument: str) -> dict[str, Any]:
+        """Check if instrument has sufficient recent volume/liquidity."""
+        if not hasattr(self, "_volume_history") or instrument not in self._volume_history:
+            # Pass by default if no volume data is available yet
+            return self._check("liquidity", True, {"reason": "no_data"})
+            
+        vols = self._volume_history[instrument]
+        if not vols:
+            return self._check("liquidity", True, {"reason": "no_data"})
+            
+        avg_vol = sum(vols) / len(vols)
+        # Threshold would ideally be configurable; using 1000 for demonstration
+        passed = avg_vol > 1000.0 or len(vols) < 10
+        
+        return self._check("liquidity", passed, {
+            "avg_volume": avg_vol,
+            "threshold": 1000.0,
+            "samples": len(vols)
+        })
+
     def _check(self, name: str, passed: bool, details: dict[str, Any]) -> dict[str, Any]:
         return {"name": name, "passed": passed, "details": details}
 
@@ -241,12 +329,17 @@ class RiskManagementAgent(BaseAgent):
         from collections import deque
         if not hasattr(self, "_price_history"):
             self._price_history: dict[str, deque[float]] = {}
+            self._volume_history: dict[str, deque[float]] = {}
         instrument = event.data.get("instrument", "")
         price = event.data.get("last_price") or event.data.get("close")
+        volume = event.data.get("volume")
         if price is not None:
             if instrument not in self._price_history:
                 self._price_history[instrument] = deque(maxlen=100)
+                self._volume_history[instrument] = deque(maxlen=100)
             self._price_history[instrument].append(float(price))
+            if volume is not None:
+                self._volume_history[instrument].append(float(volume))
 
     def _maybe_reset_daily_limits(self) -> None:
         """Auto-reset daily limits if the date has changed since last reset."""

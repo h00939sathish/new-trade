@@ -1,6 +1,17 @@
 import asyncio
+import logging
 from typing import Any
 from src.schemas.events import Event, EventType
+
+logger = logging.getLogger("event_store.bus")
+
+# Critical event types that must NEVER be silently dropped
+_CRITICAL_EVENT_TYPES = {
+    EventType.RISK_BREACH,
+    EventType.RISK_CHECK,
+    EventType.ORDER_CREATED,
+    EventType.SYSTEM_ERROR,
+}
 
 class AsyncEventBus:
     _instance = None
@@ -17,12 +28,17 @@ class AsyncEventBus:
         self._subscribers: dict[str, list[asyncio.Queue]] = {}
         self._event_store = None
         self._initialized = True
+        self._dropped_events: int = 0
         
     def set_event_store(self, event_store) -> None:
         self._event_store = event_store
+
+    @property
+    def dropped_events(self) -> int:
+        return self._dropped_events
         
     def subscribe(self, agent_name: str, event_types: set[EventType]) -> asyncio.Queue:
-        queue = asyncio.Queue(maxsize=2000)
+        queue: asyncio.Queue = asyncio.Queue(maxsize=10000)
         for et in event_types:
             etype_str = et.value if hasattr(et, "value") else str(et)
             self._subscribers.setdefault(etype_str, []).append(queue)
@@ -32,16 +48,35 @@ class AsyncEventBus:
         # Fan-out to subscriber queues
         etype_str = event.event_type.value if hasattr(event.event_type, "value") else str(event.event_type)
         queues = self._subscribers.get(etype_str, [])
+        is_critical = event.event_type in _CRITICAL_EVENT_TYPES
         for queue in queues:
             try:
                 queue.put_nowait(event)
             except asyncio.QueueFull:
-                # Remove oldest and retry if full, or log warning
-                try:
-                    queue.get_nowait()
-                    queue.put_nowait(event)
-                except Exception:
-                    pass
+                self._dropped_events += 1
+                if is_critical:
+                    # For critical events, drop oldest to make room — log at ERROR
+                    try:
+                        dropped = queue.get_nowait()
+                        queue.put_nowait(event)
+                        logger.error(
+                            "Event bus FULL: dropped older event %s to deliver critical %s "
+                            "(total dropped: %d)",
+                            dropped.event_type.value, event.event_type.value,
+                            self._dropped_events,
+                        )
+                    except Exception:
+                        logger.error(
+                            "Event bus FULL: FAILED to deliver critical event %s "
+                            "(total dropped: %d)",
+                            event.event_type.value, self._dropped_events,
+                        )
+                else:
+                    # Non-critical: log at warning
+                    logger.warning(
+                        "Event bus FULL: dropped event %s (total dropped: %d, queue_size: %d)",
+                        event.event_type.value, self._dropped_events, queue.qsize(),
+                    )
         
         # Persist to event store
         if self._event_store:
@@ -54,3 +89,4 @@ class AsyncEventBus:
 
 # Singleton instance
 event_bus = AsyncEventBus()
+

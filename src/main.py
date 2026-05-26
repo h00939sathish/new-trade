@@ -37,9 +37,32 @@ async def _handle_metrics_request(
     writer: asyncio.StreamWriter,
     health_fn=None,
 ) -> None:
-    data = await reader.read(1024)
-    request_line = data.decode("utf-8", errors="ignore").split("\r\n")[0]
+    data = await reader.read(4096)
+    request_text = data.decode("utf-8", errors="ignore")
+    request_line = request_text.split("\r\n")[0]
     path = request_line.split(" ")[1] if len(request_line.split(" ")) > 1 else "/"
+
+    # Basic bearer token authentication
+    auth_token = os.environ.get("TRA_HTTP_AUTH_TOKEN", "")
+    if auth_token:
+        auth_header = ""
+        for line in request_text.split("\r\n"):
+            if line.lower().startswith("authorization:"):
+                auth_header = line.split(":", 1)[1].strip()
+                break
+        expected = f"Bearer {auth_token}"
+        if auth_header != expected:
+            body = b"Unauthorized"
+            response = (
+                "HTTP/1.1 401 Unauthorized\r\n"
+                "Content-Type: text/plain\r\n"
+                f"Content-Length: {len(body)}\r\n"
+                "\r\n"
+            ).encode() + body
+            writer.write(response)
+            await writer.drain()
+            writer.close()
+            return
 
     import json
 
@@ -77,7 +100,7 @@ async def _handle_metrics_request(
         f"HTTP/1.1 {status}\r\n"
         f"Content-Type: {ct}\r\n"
         f"Content-Length: {len(body)}\r\n"
-        "Access-Control-Allow-Origin: *\r\n"
+        "Access-Control-Allow-Origin: http://localhost\r\n"
         "\r\n"
     ).encode() + body
     writer.write(response)
@@ -99,9 +122,9 @@ async def main():
     if dashboard_type == "fastapi":
         from dashboard.server import run_dashboard
 
-        dashboard_port = int(os.getenv("TRA_DASHBOARD_PORT", "8081"))
+        dashboard_port = int(os.getenv("PORT") or os.getenv("TRA_DASHBOARD_PORT", "8081"))
         dashboard_task = asyncio.create_task(
-            asyncio.to_thread(run_dashboard, system, system_metrics, port=dashboard_port),
+            asyncio.to_thread(run_dashboard, system, system_metrics, host="0.0.0.0", port=dashboard_port),
         )
         logger.info("FastAPI dashboard starting on port %d", dashboard_port)
 

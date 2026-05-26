@@ -1,4 +1,19 @@
+"""DEPRECATED: This module is not used by the trading system.
+
+The ExecutionAgent in src/agents/execution.py handles all order routing
+directly, including paper/live mode switching. This module contains
+TradingRouter, PaperBroker, and LiveOrderGuard which are never imported.
+
+Scheduled for removal in a future version.
+"""
 from __future__ import annotations
+
+import warnings
+warnings.warn(
+    "src.execution.router is deprecated and unused. Use src.agents.execution instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 import uuid
 from dataclasses import dataclass, field
