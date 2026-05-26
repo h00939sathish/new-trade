@@ -40,3 +40,4 @@ graphify-out/
 trading-system/
 node_modules/
 *.db*
+dashboard/node_modules/
