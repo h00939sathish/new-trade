@@ -17,7 +17,7 @@ COPY --from=frontend-builder /app/dashboard/dist /app/dashboard/dist
 COPY pyproject.toml .
 # Assume dependencies are standard if using pyproject or setup.py
 COPY . .
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir .[dashboard]
 
 EXPOSE 8080
 
