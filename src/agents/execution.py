@@ -22,13 +22,14 @@ from src.schemas.events import (
 # Maximum seconds to wait for a risk check before auto-rejecting a pending signal
 _RISK_CHECK_TIMEOUT_SECONDS = 2.0
 
-_ORDER_DB_PATH = Path("order_state.db")
+_ORDER_DB_PATH = Path("state/order_state.db")
 
 logger = logging.getLogger("execution")
 
 
 def _init_order_db(db_path: Path) -> sqlite3.Connection:
     """Initialize SQLite database for persistent order state."""
+    db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")

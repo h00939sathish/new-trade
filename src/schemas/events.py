@@ -23,6 +23,7 @@ class EventType(StrEnum):
     SYSTEM_ERROR = "system.error"
     SYSTEM_STATE = "system.state"
     AGENT_STATUS = "agent.status"
+    MACRO_SENTIMENT = "macro.sentiment"
 
 
 class OrderSide(StrEnum):
@@ -469,4 +470,36 @@ class SystemEvent(Event):
                 "fatal": fatal,
             },
             metadata=EventMetadata(producer="system"),
+        )
+
+
+class MacroSentimentEvent(Event):
+    geopolitical_score: float
+    macro_score: float
+    composite_multiplier: float
+    rationale: str
+
+    @classmethod
+    def create(
+        cls,
+        geopolitical_score: float,
+        macro_score: float,
+        composite_multiplier: float,
+        rationale: str,
+        producer: str = "personas",
+    ) -> "MacroSentimentEvent":
+        return cls(
+            event_type=EventType.MACRO_SENTIMENT,
+            stream="macro.sentiment",
+            geopolitical_score=geopolitical_score,
+            macro_score=macro_score,
+            composite_multiplier=composite_multiplier,
+            rationale=rationale,
+            data={
+                "geopolitical_score": geopolitical_score,
+                "macro_score": macro_score,
+                "composite_multiplier": composite_multiplier,
+                "rationale": rationale,
+            },
+            metadata=EventMetadata(producer=producer),
         )

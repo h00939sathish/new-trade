@@ -11,7 +11,7 @@ from src.schemas.events import Event
 
 
 class SqliteEventStore(EventStore):
-    def __init__(self, db_path: str | Path = "trading_events.db"):
+    def __init__(self, db_path: str | Path = "state/trading_events.db"):
         self.db_path = Path(db_path)
         self._conn: sqlite3.Connection | None = None
         self._write_lock = asyncio.Lock()
@@ -25,6 +25,7 @@ class SqliteEventStore(EventStore):
                 return
 
             def _conn_setup():
+                self.db_path.parent.mkdir(parents=True, exist_ok=True)
                 self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False, timeout=30.0)
                 self._conn.row_factory = sqlite3.Row
                 self._conn.execute("PRAGMA journal_mode=WAL")

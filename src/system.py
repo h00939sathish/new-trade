@@ -12,6 +12,7 @@ from src.agents import (
     RiskManagementAgent,
     StrategyGenAgent,
     RegimeDetectionAgent,
+    ExpertPersonasAgent,
 )
 from src.config.settings import settings
 from src.event_store import create_event_store
@@ -84,6 +85,11 @@ class TradingSystem:
             event_store=self._event_store,
             backtest_data_provider=bt_provider,
         )
+        self.personas = ExpertPersonasAgent(
+            event_store=self._event_store,
+            alternative_data_provider=None, # Will auto-init
+            poll_interval=3600,
+        )
         self._agents = [
             self.market_intel,
             self.strategy_gen,
@@ -93,6 +99,7 @@ class TradingSystem:
             self.regime_detection,
             self.alert,
             self.reflection,
+            self.personas,
         ]
         for agent in self._agents:
             agent.system = self

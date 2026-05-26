@@ -7,6 +7,7 @@ from src.agents.reflection_engine import ReflectionEngineAgent
 from src.agents.risk_mgmt import RiskManagementAgent
 from src.agents.strategy_gen import StrategyGenAgent
 from src.agents.regime import RegimeDetectionAgent
+from src.agents.personas import ExpertPersonasAgent
 
 __all__ = [
     "Agent",
@@ -22,4 +23,5 @@ __all__ = [
     "RiskManagementAgent",
     "StrategyGenAgent",
     "RegimeDetectionAgent",
+    "ExpertPersonasAgent",
 ]

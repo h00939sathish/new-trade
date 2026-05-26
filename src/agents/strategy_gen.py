@@ -40,6 +40,7 @@ class StrategyGenAgent(BaseAgent):
         self._last_signal_direction: dict[str, str] = {}
         # Signal cooldown: track last signal emission time per instrument
         self._last_signal_time: dict[str, float] = {}
+        self._current_macro_multiplier: float = 1.0
         self.threshold = 0.3  # Increased from 0.1 to reduce noise
         if self._config_path:
             try:
@@ -54,6 +55,7 @@ class StrategyGenAgent(BaseAgent):
         self.subscribe_market_data()
         self.subscribe_system()
         self.subscribe(EventType.FILL)
+        self.subscribe(EventType.MACRO_SENTIMENT)
         self._register_default_strategies()
 
     def register_strategy(self, strategy: "Strategy", weight: float = 1.0) -> None:
@@ -73,6 +75,14 @@ class StrategyGenAgent(BaseAgent):
                 self._handle_system_state(event)
             case EventType.SYSTEM_HEALTH:
                 pass
+            case EventType.MACRO_SENTIMENT:
+                self._handle_macro_sentiment(event)
+
+    def _handle_macro_sentiment(self, event: Event) -> None:
+        data = event.data
+        multiplier = data.get("composite_multiplier", 1.0)
+        self._current_macro_multiplier = multiplier
+        self.logger.info("Macro sentiment multiplier updated to: %.2f", multiplier)
 
     def _handle_system_state(self, event: Event) -> None:
         regime = event.data.get("regime")
@@ -213,7 +223,7 @@ class StrategyGenAgent(BaseAgent):
                     }
 
         if votes:
-            net_signal = sum(votes)
+            net_signal = sum(votes) * self._current_macro_multiplier
             abs_net = abs(net_signal)
             if abs_net >= self.threshold:
                 direction = "long" if net_signal > 0 else "short"
@@ -323,7 +333,7 @@ class StrategyGenAgent(BaseAgent):
                     }
 
         if votes:
-            net_signal = sum(votes)
+            net_signal = sum(votes) * self._current_macro_multiplier
             abs_net = abs(net_signal)
             if abs_net >= self.threshold:
                 direction = "long" if net_signal > 0 else "short"
