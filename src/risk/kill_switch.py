@@ -85,7 +85,6 @@ class KillSwitch:
 
     async def _cleanup_orders_and_positions(self, system) -> None:
         exec_agent = system.execution
-        broker = exec_agent._broker
 
         logger.info("Kill Switch: Cancelling all open orders...")
         # Cancel all open/pending orders

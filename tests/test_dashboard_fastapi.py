@@ -21,6 +21,9 @@ class TestFastAPIDashboard:
         assert resp.status_code == 200
         data = json.loads(resp.text)
         assert data["status"] == "ok"
+        assert data["broker_health"]["available"] is False
+        assert data["reconciliation"]["matched"] is None
+        assert data["telemetry"]["live_trading_configured"] is False
 
     def test_index_redirect(self, client):
         resp = client.get("/")
@@ -40,13 +43,19 @@ class TestFastAPIDashboard:
     def test_live_report(self, client):
         resp = client.get("/api/live-report")
         assert resp.status_code == 200
+        data = json.loads(resp.text)
+        assert data["telemetry"]["live_trading_configured"] is False
+        assert data["reconciliation"]["matched"] is None
+        assert data["warnings"]
 
     def test_validation_report(self, client):
         resp = client.get("/api/output/validation_report")
         assert resp.status_code == 200
         data = json.loads(resp.text)
+        assert data["available"] is False
         assert "summary" in data
         assert "trading_efficiency" in data
+        assert data["summary"]["sharpe_ratio"] is None
 
     def test_analysis_results(self, client):
         resp = client.get("/api/output/analysis_results")
@@ -75,6 +84,8 @@ class TestFastAPIDashboard:
         assert "broker" in data
         assert "controls" in data
         assert "health" in data
+        assert data["health"]["broker_health"]["available"] is False
+        assert data["health"]["reconciliation"]["matched"] is None
 
     def test_emergency_stop(self, client):
         resp = client.post("/api/control-plane/controls/emergency-stop")

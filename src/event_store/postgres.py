@@ -132,13 +132,16 @@ class PostgresEventStore(EventStore):
         params: list[Any] = []
         idx = 1
         if stream:
-            query += f" AND stream = ${idx}"; idx += 1
+            query += f" AND stream = ${idx}"
+            idx += 1
             params.append(stream)
         if after:
-            query += f" AND timestamp >= ${idx}"; idx += 1
+            query += f" AND timestamp >= ${idx}"
+            idx += 1
             params.append(after)
         if before:
-            query += f" AND timestamp <= ${idx}"; idx += 1
+            query += f" AND timestamp <= ${idx}"
+            idx += 1
             params.append(before)
         query += " ORDER BY position ASC"
         async with pool.acquire() as conn:

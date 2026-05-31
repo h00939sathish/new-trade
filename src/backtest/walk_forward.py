@@ -197,11 +197,7 @@ class WalkForwardValidator:
         losses = [t for t in trades if t.get("pnl", 0) <= 0]
 
         winning_trades = len(wins)
-        losing_trades = len(losses)
         win_rate = winning_trades / total_trades if total_trades > 0 else 0.0
-
-        avg_win = sum(t["pnl"] for t in wins) / len(wins) if wins else 0.0
-        avg_loss = abs(sum(t["pnl"] for t in losses)) / len(losses) if losses else 0.0
 
         profit_factor = (
             sum(t["pnl"] for t in wins) / abs(sum(t["pnl"] for t in losses))

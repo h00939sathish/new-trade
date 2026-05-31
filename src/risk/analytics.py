@@ -8,15 +8,14 @@ Scheduled for removal in a future version.
 from __future__ import annotations
 
 import warnings
+from dataclasses import dataclass, field
+from math import floor
 
 warnings.warn(
     "src.risk.analytics is deprecated and unused. Risk is managed by RiskManagementAgent.",
     DeprecationWarning,
     stacklevel=2,
 )
-
-from dataclasses import dataclass, field
-from math import floor
 
 
 @dataclass(frozen=True)

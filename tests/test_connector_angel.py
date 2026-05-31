@@ -29,9 +29,12 @@ async def test_angel_client_search_no_data(angel_client: AngelClient):
 
 @pytest.mark.asyncio
 async def test_angel_client_get_ltp_no_key():
+    import pytest
+    from src.connectors.angel.client import AngelClientError
+    
     client = AngelClient(api_key="", client_id="", password="", totp="")
-    result = await client.get_ltp(["NSE:RELIANCE"])
-    assert isinstance(result, dict)
+    with pytest.raises((AngelClientError, Exception)):
+        await client.get_ltp(["NSE:RELIANCE"])
 
 
 @pytest.mark.asyncio

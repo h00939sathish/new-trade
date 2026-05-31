@@ -1,10 +1,11 @@
-
+import asyncio
 import pytest
 
 from src.agents.execution import ExecutionAgent
 from src.agents.market_intel import MarketIntelAgent
 from src.agents.risk_mgmt import RiskManagementAgent
 from src.agents.strategy_gen import MeanReversionStrategy, MomentumStrategy, StrategyGenAgent
+from src.event_store.memory import InMemoryEventStore
 from src.schemas.events import Exchange
 
 
@@ -161,3 +162,24 @@ async def test_execution_paper_trading(execution: ExecutionAgent):
     health = await execution.health()
     assert health["filled_orders"] >= 1
     await execution.stop()
+
+
+@pytest.mark.asyncio
+async def test_agent_emits_periodic_health_heartbeats(monkeypatch):
+    monkeypatch.setenv("TRA_AGENT_HEARTBEAT_SECONDS", "0.01")
+    store = InMemoryEventStore()
+    agent = MarketIntelAgent(event_store=store)
+
+    await agent.start(run_background_loop=False)
+    await asyncio.sleep(0.05)
+
+    events = await store.read("events.bus")
+    health_events = [
+        event for event in events
+        if event.event_type.value == "system.health"
+        and event.data.get("component") == "market_intel"
+    ]
+
+    assert len(health_events) >= 2
+
+    await agent.stop()

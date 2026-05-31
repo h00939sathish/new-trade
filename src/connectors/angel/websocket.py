@@ -83,6 +83,7 @@ SessionFactory = Callable[
     WebSocketSession,
 ]
 TickCallback = Callable[[dict[str, Any]], Awaitable[None] | None]
+DisconnectCallback = Callable[[str], Awaitable[None] | None]
 
 
 class WebSocketAppSession:
@@ -91,16 +92,19 @@ class WebSocketAppSession:
         url: str,
         headers: dict[str, str],
         on_message: Callable[[Any], Awaitable[None]],
+        on_disconnect: DisconnectCallback | None = None,
         open_timeout: float = 5.0,
     ) -> None:
         self._url = url
         self._headers = headers
         self._on_message = on_message
+        self._on_disconnect = on_disconnect
         self._open_timeout = open_timeout
         self._app: Any = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._open_event = threading.Event()
         self._thread: threading.Thread | None = None
+        self._disconnect_notified = False
 
     async def connect(self) -> None:
         try:
@@ -123,6 +127,11 @@ class WebSocketAppSession:
 
         def on_error(_wsapp: Any, error: Any) -> None:
             logger.error("Angel WebSocket error: %s", error)
+            self._dispatch_disconnect(str(error))
+
+        def on_close(_wsapp: Any, _code: Any, message: Any) -> None:
+            reason = message if isinstance(message, str) and message else "closed"
+            self._dispatch_disconnect(reason)
 
         self._app = websocket.WebSocketApp(
             self._url,
@@ -131,6 +140,7 @@ class WebSocketAppSession:
             on_message=on_message,
             on_data=on_data,
             on_error=on_error,
+            on_close=on_close,
         )
         self._thread = threading.Thread(
             target=lambda: self._app.run_forever(
@@ -161,6 +171,12 @@ class WebSocketAppSession:
             return
         self._loop.call_soon_threadsafe(asyncio.create_task, self._on_message(message))
 
+    def _dispatch_disconnect(self, reason: str) -> None:
+        if not self._loop or not self._on_disconnect or self._disconnect_notified:
+            return
+        self._disconnect_notified = True
+        self._loop.call_soon_threadsafe(asyncio.create_task, self._on_disconnect(reason))
+
 
 class AngelWebSocketClient:
     ROOT_URI = "wss://smartapisocket.angelone.in/smart-stream"
@@ -174,6 +190,7 @@ class AngelWebSocketClient:
         auth_token: str,
         feed_token: str,
         on_tick: TickCallback | None = None,
+        on_disconnect: DisconnectCallback | None = None,
         session_factory: SessionFactory | None = None,
     ) -> None:
         if not all([api_key, client_code, auth_token, feed_token]):
@@ -185,6 +202,7 @@ class AngelWebSocketClient:
         self._auth_token = auth_token
         self._feed_token = feed_token
         self._on_tick = on_tick
+        self._on_disconnect = on_disconnect
         self._session_factory = session_factory or WebSocketAppSession
         self._session: WebSocketSession | None = None
         self._subscriptions: dict[tuple[int, int, str], AngelWebSocketSubscription] = {}
@@ -201,6 +219,7 @@ class AngelWebSocketClient:
                 "x-feed-token": self._feed_token,
             },
             self.handle_message,
+            self._on_disconnect,
         )
         await self._session.connect()
 

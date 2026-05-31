@@ -29,6 +29,8 @@ trading_events.db
 order_state.db
 dash_stderr.txt
 dash_stdout.txt
+state/angel_symbols.json
+state/burnin/
 
 # Python packaging
 *.egg-info/

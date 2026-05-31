@@ -7,6 +7,29 @@ from src.agents.base import BaseAgent
 from src.risk.position_registry import position_registry
 from src.schemas.events import Event, EventType, Exchange, SignalEvent
 from src.strategies.base import Strategy
+from src.strategies.technical import (
+    ATRStrategy,
+    BollingerBandsStrategy,
+    IchimokuStrategy,
+    MACDStrategy,
+    MeanReversionStrategy,
+    MomentumStrategy,
+    RSIStrategy,
+    VolumeStrategy,
+)
+
+__all__ = [
+    "ATRStrategy",
+    "BollingerBandsStrategy",
+    "IchimokuStrategy",
+    "MACDStrategy",
+    "MeanReversionStrategy",
+    "MomentumStrategy",
+    "RSIStrategy",
+    "Strategy",
+    "StrategyGenAgent",
+    "VolumeStrategy",
+]
 
 # Minimum seconds between signals for the same instrument (prevents overtrading)
 _SIGNAL_COOLDOWN_SECONDS = 30.0

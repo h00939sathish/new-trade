@@ -5,6 +5,8 @@ from typing import Any
 
 import httpx
 
+from src.connectors.angel.symbol_index import AngelSymbolIndex
+
 logger = logging.getLogger("connector.angel.client")
 
 BASE_URL = "https://apiconnect.angelbroking.com"
@@ -31,6 +33,7 @@ class AngelClient:
         client_id: str | None = None,
         password: str | None = None,
         totp: str | None = None,
+        symbol_index: AngelSymbolIndex | None = None,
     ):
         from src.config.settings import settings as _s
         self._api_key = api_key if api_key is not None else _s.angel_api_key
@@ -43,6 +46,9 @@ class AngelClient:
         self._token_expiry: datetime | None = None
         self._http = httpx.AsyncClient(timeout=15.0)
         self._symbol_map: dict[str, dict[str, Any]] = {}
+        self._symbol_index = symbol_index or AngelSymbolIndex(
+            fetch_symbols=self._fetch_symbol_master,
+        )
         self._lock = asyncio.Lock()
 
     async def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
@@ -138,16 +144,7 @@ class AngelClient:
         logger.info("Angel token refreshed")
 
     async def search_instruments(self, query: str) -> list[dict[str, Any]]:
-        if not self._symbol_map:
-            await self._load_symbol_map()
-        results = []
-        q = query.upper()
-        for token, meta in self._symbol_map.items():
-            if q in meta.get("tradingsymbol", "").upper() or q in meta.get("name", "").upper():
-                results.append({"instrument_token": token, **meta})
-            if len(results) >= 50:
-                break
-        return results
+        return await self._symbol_index.search(query)
 
     async def get_ltp(self, instruments: list[str]) -> dict[str, Any]:
         await self._ensure_token()
@@ -235,26 +232,17 @@ class AngelClient:
         return candles
 
     async def _resolve_token(self, tradingsymbol: str, exchange: str) -> str | None:
-        if not self._symbol_map:
-            await self._load_symbol_map()
-        up_symbol = tradingsymbol.upper()
-        up_exchange = exchange.upper()
-        for token, meta in self._symbol_map.items():
-            sym = meta.get("tradingsymbol", "").upper()
-            name = meta.get("name", "").upper()
-            exch = meta.get("exchange", "").upper()
-            if sym == up_symbol and exch == up_exchange:
-                return token
-            if name == up_symbol and exch == up_exchange:
-                return token
-        return None
+        return await self._symbol_index.resolve_token(tradingsymbol, exchange)
 
     async def resolve_token(self, tradingsymbol: str, exchange: str) -> str | None:
         return await self._resolve_token(tradingsymbol, exchange)
 
     async def _load_symbol_map(self) -> None:
+        self._symbol_map = await self._symbol_index.load()
+
+    async def _fetch_symbol_master(self) -> list[dict[str, Any]]:
         if not self._api_key:
-            return
+            return []
         try:
             resp = await self._request(
                 "GET",
@@ -263,22 +251,11 @@ class AngelClient:
             )
             resp.raise_for_status()
             symbols = resp.json()
-            self._symbol_map = {}
-            for entry in symbols:
-                token = entry.get("token")
-                if token:
-                    self._symbol_map[token] = {
-                        "tradingsymbol": entry.get("symbol", ""),
-                        "name": entry.get("name", ""),
-                        "exchange": entry.get("exch_seg", ""),
-                        "lot_size": int(entry.get("lotsize", 1)),
-                        "tick_size": float(entry.get("tick_size", 0.05)),
-                        "instrument_type": entry.get("instrumenttype", ""),
-                        "expiry": entry.get("expiry", ""),
-                    }
-            logger.info("Loaded %d symbols from Angel master contract", len(self._symbol_map))
+            logger.info("Loaded %d symbols from Angel master contract", len(symbols))
+            return symbols
         except Exception as e:
             logger.error("Failed to load Angel symbol map: %s", e)
+            raise
 
     async def disconnect(self) -> None:
         await self._http.aclose()

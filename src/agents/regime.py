@@ -35,8 +35,6 @@ class RegimeDetectionAgent(BaseAgent):
         close = data.get("close")
         high = data.get("high", close)
         low = data.get("low", close)
-        interval = data.get("interval", "minute")
-
         if close is None:
             return
 

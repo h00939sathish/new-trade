@@ -1,0 +1,203 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e1023]:
+    - complementary [ref=e1024]:
+      - generic [ref=e1025]:
+        - generic [ref=e1026]:
+          - link "Railway Logo" [ref=e1027] [cursor=pointer]:
+            - /url: /dashboard
+            - img "Railway Logo" [ref=e1029]
+          - button "aisathish07's Projects Trial" [ref=e1033] [cursor=pointer]:
+            - generic [ref=e1034]:
+              - generic "aisathish07's Projects" [ref=e1036]
+              - generic [ref=e1038]: aisathish07's Projects
+              - generic [ref=e1039]: Trial
+              - img [ref=e1041]
+        - navigation [ref=e1045]:
+          - link "Projects" [ref=e1046] [cursor=pointer]:
+            - /url: /dashboard
+            - generic [ref=e1047]:
+              - img [ref=e1049]
+              - generic [ref=e1051]: Projects
+          - link "Templates" [ref=e1052] [cursor=pointer]:
+            - /url: /workspace/templates
+            - generic [ref=e1053]:
+              - img [ref=e1055]
+              - generic [ref=e1058]: Templates
+          - link "Usage" [ref=e1060] [cursor=pointer]:
+            - /url: /workspace/usage
+            - generic [ref=e1061]:
+              - img [ref=e1063]
+              - generic [ref=e1065]: Usage
+          - link "People" [ref=e1066] [cursor=pointer]:
+            - /url: /workspace/people
+            - generic [ref=e1067]:
+              - img [ref=e1069]
+              - generic [ref=e1073]: People
+          - button "Settings" [ref=e1074] [cursor=pointer]:
+            - img [ref=e1076]
+            - generic [ref=e1078]:
+              - text: Settings
+              - img [ref=e1080]
+        - generic [ref=e1084]:
+          - link "Docs ↗" [ref=e1085] [cursor=pointer]:
+            - /url: https://docs.railway.com
+            - generic [ref=e1086]:
+              - img [ref=e1089]
+              - generic [ref=e1092]: Docs ↗
+          - link "Central Station ↗" [ref=e1093] [cursor=pointer]:
+            - /url: https://station.railway.com
+            - generic [ref=e1094]:
+              - img [ref=e1097]
+              - generic [ref=e1104]: Central Station ↗
+          - link "My support threads ↗" [ref=e1105] [cursor=pointer]:
+            - /url: https://backboard.railway.com/csc/auth/login?redirect_uri=https%3A%2F%2Fstation-server.railway.com%2Fauth%2Fcallback%3FredirectTo%3D%252Fmy-threads
+            - generic [ref=e1106]:
+              - img [ref=e1109]
+              - generic [ref=e1111]: My support threads ↗
+      - button "aisathish07" [ref=e1114] [cursor=pointer]:
+        - generic [ref=e1115]:
+          - generic "aisathish07" [ref=e1116]
+          - paragraph [ref=e1118]: aisathish07
+          - img [ref=e1120]
+      - button "Collapse sidebar" [ref=e1124]
+    - generic [ref=e1126]:
+      - banner [ref=e1127]:
+        - generic [ref=e1128]:
+          - button [ref=e1129] [cursor=pointer]:
+            - img [ref=e1132]
+          - button "22 days or $4.82 left" [ref=e1135] [cursor=pointer]:
+            - paragraph [ref=e1137]:
+              - generic [ref=e1138]: 22 days or $4.82 left
+      - main [ref=e1140]:
+        - generic [ref=e1143]:
+          - complementary [ref=e1144]:
+            - generic [ref=e1145]:
+              - heading "Account" [level=2] [ref=e1146]
+              - navigation [ref=e1147]:
+                - link "Account" [ref=e1148] [cursor=pointer]:
+                  - /url: /account
+                  - img [ref=e1151]
+                  - text: Account
+                - link "Notifications" [ref=e1154] [cursor=pointer]:
+                  - /url: /account/notifications
+                  - img [ref=e1157]
+                  - text: Notifications
+                - link "Feature Flags" [ref=e1159] [cursor=pointer]:
+                  - /url: /account/feature-flags
+                  - img [ref=e1162]
+                  - text: Feature Flags
+                - link "Tokens" [ref=e1164] [cursor=pointer]:
+                  - /url: /account/tokens
+                  - img [ref=e1167]
+                  - text: Tokens
+                - link "SSH Keys" [ref=e1169] [cursor=pointer]:
+                  - /url: /account/ssh-keys
+                  - img [ref=e1172]
+                  - text: SSH Keys
+                - link "Apps" [ref=e1174] [cursor=pointer]:
+                  - /url: /account/apps
+                  - img [ref=e1177]
+                  - text: Apps
+                - link "Security" [ref=e1182] [cursor=pointer]:
+                  - /url: /account/security
+                  - img [ref=e1185]
+                  - text: Security
+          - generic [ref=e1189]:
+            - paragraph [ref=e1191]: Account Settings
+            - separator [ref=e1192]
+            - generic [ref=e1193]:
+              - generic [ref=e1194]:
+                - paragraph [ref=e1195]: Account Information
+                - generic [ref=e1196]:
+                  - generic [ref=e1197]:
+                    - generic [ref=e1200]: Name
+                    - textbox "Name" [ref=e1202]:
+                      - /placeholder: name
+                      - text: aisathish07
+                  - generic [ref=e1203]:
+                    - generic [ref=e1206]: Email
+                    - textbox "Email" [ref=e1208]:
+                      - /placeholder: email@example.com
+                      - text: h00939sathish@gmail.com
+                  - generic [ref=e1209]:
+                    - generic [ref=e1212]: Username
+                    - textbox "Username" [ref=e1214]:
+                      - /placeholder: username
+                      - text: aisathish07
+                  - generic [ref=e1215]:
+                    - generic [ref=e1216]:
+                      - generic [ref=e1219]: Avatar URL
+                      - textbox "Avatar URL" [ref=e1221]:
+                        - /placeholder: https://avatar-url.png
+                        - text: https://avatars.githubusercontent.com/u/184928222?v=4
+                    - generic "aisathish07" [ref=e1223]
+                  - button "Update Info" [disabled] [ref=e1225]:
+                    - generic [ref=e1226]: Update Info
+              - generic [ref=e1227]:
+                - paragraph [ref=e1228]: Public Profile
+                - generic [ref=e1229]:
+                  - generic [ref=e1230]:
+                    - generic [ref=e1231]: Profile Visibility
+                    - generic [ref=e1233]:
+                      - switch "Profile Visibility Enable Public Profile" [ref=e1234] [cursor=pointer]
+                      - checkbox
+                      - paragraph [ref=e1238] [cursor=pointer]: Enable Public Profile
+                  - generic [ref=e1239]:
+                    - generic [ref=e1242]: Bio
+                    - textbox "Bio" [ref=e1244]:
+                      - /placeholder: A little blurb about you
+                  - generic [ref=e1245]:
+                    - generic [ref=e1248]: Website
+                    - textbox "Website" [ref=e1250]:
+                      - /placeholder: https://me.com
+                  - button "Update Profile" [disabled] [ref=e1251]:
+                    - generic [ref=e1252]: Update Profile
+              - generic [ref=e1253]:
+                - paragraph [ref=e1254]: Account Integrations
+                - generic [ref=e1255]:
+                  - generic [ref=e1256]:
+                    - generic [ref=e1257]:
+                      - generic [ref=e1258]:
+                        - img [ref=e1260]
+                        - paragraph [ref=e1262]: GitHub
+                      - button "Options" [ref=e1263] [cursor=pointer]:
+                        - img [ref=e1265]
+                    - generic [ref=e1269]:
+                      - generic [ref=e1270]:
+                        - img [ref=e1272]
+                        - paragraph [ref=e1275]:
+                          - text: Connected as
+                          - generic [ref=e1277]: aisathish07
+                      - separator [ref=e1280]
+                      - generic [ref=e1281]:
+                        - img [ref=e1283]
+                        - paragraph [ref=e1286]: Use GitHub to login to Railway
+                      - separator [ref=e1287]
+                      - generic [ref=e1288]:
+                        - img [ref=e1290]
+                        - paragraph [ref=e1293]:
+                          - text: Railway App installed –
+                          - button "Configure" [ref=e1294] [cursor=pointer]
+                  - generic [ref=e1295]:
+                    - generic [ref=e1296]:
+                      - generic [ref=e1297]:
+                        - img [ref=e1299]
+                        - paragraph [ref=e1301]: Discord
+                      - button "Connect" [ref=e1302] [cursor=pointer]:
+                        - generic [ref=e1303]: Connect
+                    - paragraph [ref=e1304]: Connect your Discord Account to join our community and access our new features.
+                  - generic [ref=e1305]:
+                    - generic [ref=e1306]:
+                      - generic [ref=e1307]:
+                        - img [ref=e1309]
+                        - paragraph [ref=e1315]: Google
+                      - button "Connect" [ref=e1316] [cursor=pointer]:
+                        - generic [ref=e1317]: Connect
+                    - paragraph [ref=e1318]: Link your Google account to access Railway via your Google workspace or your Google account.
+              - generic [ref=e1319]:
+                - paragraph [ref=e1320]: Danger
+                - button "Delete Account" [ref=e1322] [cursor=pointer]:
+                  - generic [ref=e1324]:
+                    - img [ref=e1326]
+                    - paragraph [ref=e1328]: Delete Account
+  - generic [ref=e479]: 5:28

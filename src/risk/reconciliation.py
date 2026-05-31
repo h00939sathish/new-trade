@@ -6,7 +6,7 @@ logger = logging.getLogger("risk.reconciliation")
 
 async def reconcile_positions(system) -> None:
     """Compare broker positions against local portfolio agent tracked positions.
-    
+
     Broker is the source of truth. If a mismatch is found, we log a RISK_BREACH event,
     update the local portfolio agent's positions, and emit updates.
     """

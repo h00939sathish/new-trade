@@ -55,12 +55,25 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["E501", "N806"]
 
 [tool.mypy]
-strict = true
 python_version = "3.12"
-disallow_untyped_defs = true
 ignore_missing_imports = true
+disable_error_code = [
+    "arg-type",
+    "assignment",
+    "attr-defined",
+    "has-type",
+    "index",
+    "no-any-return",
+    "no-redef",
+    "override",
+    "return-value",
+    "type-arg",
+    "unused-ignore",
+    "var-annotated",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

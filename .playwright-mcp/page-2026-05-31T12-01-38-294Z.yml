@@ -1,0 +1,152 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e1329]:
+    - complementary [ref=e1330]:
+      - generic [ref=e1331]:
+        - generic [ref=e1332]:
+          - link "Railway Logo" [ref=e1333] [cursor=pointer]:
+            - /url: /dashboard
+            - img "Railway Logo" [ref=e1335]
+          - button "aisathish07's Projects Trial" [ref=e1339] [cursor=pointer]:
+            - generic [ref=e1340]:
+              - generic "aisathish07's Projects" [ref=e1342]
+              - generic [ref=e1344]: aisathish07's Projects
+              - generic [ref=e1345]: Trial
+              - img [ref=e1347]
+        - navigation [ref=e1351]:
+          - link "Projects" [ref=e1352] [cursor=pointer]:
+            - /url: /dashboard
+            - generic [ref=e1353]:
+              - img [ref=e1355]
+              - generic [ref=e1357]: Projects
+          - link "Templates" [ref=e1358] [cursor=pointer]:
+            - /url: /workspace/templates
+            - generic [ref=e1359]:
+              - img [ref=e1361]
+              - generic [ref=e1364]: Templates
+          - link "Usage" [ref=e1366] [cursor=pointer]:
+            - /url: /workspace/usage
+            - generic [ref=e1367]:
+              - img [ref=e1369]
+              - generic [ref=e1371]: Usage
+          - link "People" [ref=e1372] [cursor=pointer]:
+            - /url: /workspace/people
+            - generic [ref=e1373]:
+              - img [ref=e1375]
+              - generic [ref=e1379]: People
+          - button "Settings" [ref=e1380] [cursor=pointer]:
+            - img [ref=e1382]
+            - generic [ref=e1384]:
+              - text: Settings
+              - img [ref=e1386]
+        - generic [ref=e1390]:
+          - link "Docs ↗" [ref=e1391] [cursor=pointer]:
+            - /url: https://docs.railway.com
+            - generic [ref=e1392]:
+              - img [ref=e1395]
+              - generic [ref=e1398]: Docs ↗
+          - link "Central Station ↗" [ref=e1399] [cursor=pointer]:
+            - /url: https://station.railway.com
+            - generic [ref=e1400]:
+              - img [ref=e1403]
+              - generic [ref=e1410]: Central Station ↗
+          - link "My support threads ↗" [ref=e1411] [cursor=pointer]:
+            - /url: https://backboard.railway.com/csc/auth/login?redirect_uri=https%3A%2F%2Fstation-server.railway.com%2Fauth%2Fcallback%3FredirectTo%3D%252Fmy-threads
+            - generic [ref=e1412]:
+              - img [ref=e1415]
+              - generic [ref=e1417]: My support threads ↗
+      - button "aisathish07" [ref=e1420] [cursor=pointer]:
+        - generic [ref=e1421]:
+          - generic "aisathish07" [ref=e1422]
+          - paragraph [ref=e1424]: aisathish07
+          - img [ref=e1426]
+      - button "Collapse sidebar" [ref=e1430]
+    - generic [ref=e1432]:
+      - banner [ref=e1433]:
+        - generic [ref=e1434]:
+          - button [ref=e1435] [cursor=pointer]:
+            - img [ref=e1438]
+          - button "22 days or $4.82 left" [ref=e1441] [cursor=pointer]:
+            - paragraph [ref=e1443]:
+              - generic [ref=e1444]: 22 days or $4.82 left
+      - main [ref=e1446]:
+        - generic [ref=e1449]:
+          - complementary [ref=e1450]:
+            - generic [ref=e1451]:
+              - heading "Account" [level=2] [ref=e1452]
+              - navigation [ref=e1453]:
+                - link "Account" [ref=e1454] [cursor=pointer]:
+                  - /url: /account
+                  - img [ref=e1457]
+                  - text: Account
+                - link "Notifications" [ref=e1460] [cursor=pointer]:
+                  - /url: /account/notifications
+                  - img [ref=e1463]
+                  - text: Notifications
+                - link "Feature Flags" [ref=e1465] [cursor=pointer]:
+                  - /url: /account/feature-flags
+                  - img [ref=e1468]
+                  - text: Feature Flags
+                - link "Tokens" [ref=e1470] [cursor=pointer]:
+                  - /url: /account/tokens
+                  - img [ref=e1473]
+                  - text: Tokens
+                - link "SSH Keys" [ref=e1475] [cursor=pointer]:
+                  - /url: /account/ssh-keys
+                  - img [ref=e1478]
+                  - text: SSH Keys
+                - link "Apps" [ref=e1480] [cursor=pointer]:
+                  - /url: /account/apps
+                  - img [ref=e1483]
+                  - text: Apps
+                - link "Security" [ref=e1488] [cursor=pointer]:
+                  - /url: /account/security
+                  - img [ref=e1491]
+                  - text: Security
+          - generic [ref=e1495]:
+            - paragraph [ref=e1497]: Tokens
+            - separator [ref=e1498]
+            - generic [ref=e1499]:
+              - generic [ref=e1500]:
+                - heading "New Token" [level=2] [ref=e1501]
+                - generic [ref=e1503]:
+                  - generic [ref=e1505]:
+                    - generic [ref=e1508]: Name
+                    - textbox "Name" [ref=e1510]:
+                      - /placeholder: API Token
+                  - generic [ref=e1512]:
+                    - generic [ref=e1513]: Workspace
+                    - generic [ref=e1514]:
+                      - combobox "Workspace" [ref=e1515] [cursor=pointer]:
+                        - option "No workspace" [selected]
+                        - option "aisathish07's Projects"
+                      - generic:
+                        - generic:
+                          - img
+                  - button "Create" [disabled] [ref=e1516]:
+                    - generic [ref=e1517]: Create
+              - generic [ref=e1518]:
+                - paragraph [ref=e1519]: API Tokens
+                - paragraph [ref=e1520]:
+                  - text: API tokens allow you to programmatically access your Railway account.
+                  - link "Read more about API tokens in our docs" [ref=e1521] [cursor=pointer]:
+                    - /url: https://docs.railway.com/reference/public-api
+                  - text: .
+                - table [ref=e1523]:
+                  - rowgroup [ref=e1524]:
+                    - row "Name Scope Token" [ref=e1525]:
+                      - columnheader "Name" [ref=e1526]
+                      - columnheader "Scope" [ref=e1527]
+                      - columnheader "Token" [ref=e1528]
+                      - columnheader [ref=e1529]
+                  - rowgroup [ref=e1530]:
+                    - row "hermes aisathish07's Projects ****-9954" [ref=e1531]:
+                      - cell "hermes" [ref=e1532] [cursor=pointer]:
+                        - generic [ref=e1533]:
+                          - img [ref=e1535]
+                          - paragraph [ref=e1539]: hermes
+                      - cell "aisathish07's Projects" [ref=e1540] [cursor=pointer]
+                      - cell "****-9954" [ref=e1541] [cursor=pointer]
+                      - cell [ref=e1542] [cursor=pointer]:
+                        - button "Delete token" [ref=e1543]:
+                          - img [ref=e1545]
+  - generic [ref=e479]: 5:28

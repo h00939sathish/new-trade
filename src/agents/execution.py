@@ -647,15 +647,46 @@ class ExecutionAgent(BaseAgent):
         self._paper_trading = enabled
         self.logger.info("Paper trading: %s", enabled)
 
+    def _resolve_paper_fill_price(self, order: OrderEvent) -> float:
+        if order.price is not None and order.price > 0:
+            return float(order.price)
+
+        system_ref = getattr(self, "system", None)
+        market_intel = getattr(system_ref, "market_intel", None) if system_ref else None
+        if market_intel is not None:
+            latest_tick = market_intel.get_latest_tick(order.instrument)
+            tick_price = getattr(latest_tick, "last_price", None)
+            if tick_price is None and latest_tick is not None:
+                tick_price = latest_tick.data.get("last_price")
+            if tick_price is not None and tick_price > 0:
+                self.logger.warning(
+                    "Paper fill for %s missing order price; using latest tick %.2f",
+                    order.instrument,
+                    tick_price,
+                )
+                return float(tick_price)
+
+            latest_bar = market_intel.get_latest_ohlcv(order.instrument, "minute")
+            bar_close = getattr(latest_bar, "close", None)
+            if bar_close is None and latest_bar is not None:
+                bar_close = latest_bar.data.get("close")
+            if bar_close is not None and bar_close > 0:
+                self.logger.warning(
+                    "Paper fill for %s missing order price; using latest minute close %.2f",
+                    order.instrument,
+                    bar_close,
+                )
+                return float(bar_close)
+
+        self.logger.warning(
+            "Paper fill for %s has no valid price source; defaulting to 0",
+            order.instrument,
+        )
+        return 0.0
+
     async def _simulate_fill(self, order: OrderEvent) -> None:
         import asyncio
-        price = order.price
-        if price is None or price <= 0:
-            self.logger.warning(
-                "Paper fill for %s has no valid price — using last known tick price or 0",
-                order.instrument,
-            )
-            price = 0.0
+        price = self._resolve_paper_fill_price(order)
 
         from src.risk.costs import TransactionCostModel
         cost_model = TransactionCostModel()
@@ -779,4 +810,3 @@ class ExecutionAgent(BaseAgent):
             "pending_signals": len(self._pending_signals),
         })
         return base
-

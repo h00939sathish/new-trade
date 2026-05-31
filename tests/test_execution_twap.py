@@ -44,10 +44,7 @@ async def test_twap_order_slicing():
     # Create a small wrapper to run the loop exactly once
     async def single_step_loop():
         # we copy the inside of _twap_loop
-        import time
-        now = time.monotonic()
-        completed = []
-        for tid, t in agent._twap_orders.items():
+        for _tid, t in agent._twap_orders.items():
             if t["chunks"]:
                 chunk_qty = t["chunks"].pop(0)
                 order_event = agent._open_orders.get("dummy", Event(event_type=EventType.ORDER_CREATED, stream="test", data={"quantity": chunk_qty}, metadata={"producer": "test"}))

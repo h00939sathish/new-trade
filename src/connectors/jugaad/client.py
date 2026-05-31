@@ -70,4 +70,10 @@ class JugaadClient:
             return [{"symbol": query.upper(), "name": query.upper()}]
 
     async def get_ltp(self, instruments: list[str]) -> dict[str, Any]:
-        return {}
+        """Get live last traded prices via Yahoo Finance."""
+        try:
+            from src.connectors.yahoo import get_ltp_yahoo
+            return await get_ltp_yahoo(instruments)
+        except Exception as e:
+            logger.warning("Yahoo LTP fallback failed: %s", e)
+            return {}

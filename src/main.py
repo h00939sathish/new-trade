@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import signal
+from pathlib import Path
 
 from src.config.settings import settings
 from src.monitoring.dashboard import CliDashboard
@@ -110,11 +111,10 @@ async def _handle_metrics_request(
 
 async def main():
     system = TradingSystem()
-    await system.start()
-
     watchlist = os.getenv("TRA_WATCHLIST", "RELIANCE,TCS,INFY,HDFCBANK").split(",")
     system.set_watchlist(watchlist)
     logger.info("Watchlist: %s", watchlist)
+    await system.start()
 
     dashboard_type = os.getenv("TRA_DASHBOARD_TYPE", "http")
     metrics_port = int(os.getenv("PORT") or os.getenv("TRA_METRICS_PORT", "8080"))
@@ -142,6 +142,28 @@ async def main():
         cli_dashboard = None
         cli_task = None
 
+    burnin_task = None
+    if os.getenv("TRA_BURNIN", "0") == "1":
+        from src.monitoring.burnin import run_paper_reconciliation_loop
+
+        reconciliation_path = Path(
+            os.getenv("TRA_BURNIN_RECONCILIATION_PATH", "state/burnin/reconciliation.jsonl"),
+        )
+        reconciliation_interval = float(
+            os.getenv("TRA_BURNIN_RECONCILIATION_SECONDS", "1800"),
+        )
+        burnin_task = asyncio.create_task(
+            run_paper_reconciliation_loop(
+                system,
+                reconciliation_path,
+                interval_seconds=reconciliation_interval,
+            ),
+        )
+        logger.info(
+            "Paper burn-in reconciliation enabled (interval=%.0fs)",
+            reconciliation_interval,
+        )
+
     loop = asyncio.get_event_loop()
     stop_event = asyncio.Event()
 
@@ -166,6 +188,9 @@ async def main():
         if cli_task:
             cli_task.cancel()
             all_tasks.append(cli_task)
+        if burnin_task:
+            burnin_task.cancel()
+            all_tasks.append(burnin_task)
         if all_tasks:
             await asyncio.gather(*all_tasks, return_exceptions=True)
         await system.stop()

@@ -66,5 +66,8 @@ class Settings(BaseSettings):
 
     agent_alert_enabled: bool = True
 
+    yahoo_poll_interval: int = 60
+    market_hours_only: bool = True
+
 
 settings = Settings()

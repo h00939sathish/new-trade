@@ -1,0 +1,82 @@
+- generic [ref=e16]:
+  - banner [ref=e18]:
+    - generic [ref=e19]:
+      - link "Railway Logo" [ref=e20] [cursor=pointer]:
+        - /url: /dashboard
+        - img "Railway Logo" [ref=e22]
+      - generic [ref=e25]:
+        - button "thorough-mercy" [ref=e28] [cursor=pointer]:
+          - generic "aisathish07's Projects" [ref=e29]
+          - generic [ref=e31]: thorough-mercy
+          - img [ref=e33]
+        - button "production" [ref=e37] [cursor=pointer]:
+          - generic [ref=e38]: production
+          - img [ref=e40]
+    - navigation [ref=e42]:
+      - generic [ref=e44]:
+        - button "Toggle activity" [ref=e46] [cursor=pointer]:
+          - img [ref=e48]
+        - button [ref=e50] [cursor=pointer]:
+          - img [ref=e53]
+        - button "22 days or $4.82 left" [ref=e56] [cursor=pointer]:
+          - paragraph [ref=e58]:
+            - generic [ref=e59]: 22 days or $4.82 left
+        - button "Agent" [ref=e61] [cursor=pointer]:
+          - img [ref=e63]
+          - text: Agent
+  - generic [ref=e65]:
+    - navigation "Project navigation" [ref=e66]:
+      - generic [ref=e67]:
+        - link "Architecture" [ref=e70] [cursor=pointer]:
+          - /url: /project/6f6b9eba-ad5d-4536-bdb4-dd5eb682da6f?environmentId=479c05c1-9860-46eb-93d5-bfdad0a7aa9c
+          - img [ref=e72]
+        - link "Observability" [ref=e78] [cursor=pointer]:
+          - /url: /project/6f6b9eba-ad5d-4536-bdb4-dd5eb682da6f/observability?environmentId=479c05c1-9860-46eb-93d5-bfdad0a7aa9c
+          - img [ref=e80]
+        - link "Logs" [ref=e83] [cursor=pointer]:
+          - /url: /project/6f6b9eba-ad5d-4536-bdb4-dd5eb682da6f/logs?environmentId=479c05c1-9860-46eb-93d5-bfdad0a7aa9c
+          - img [ref=e85]
+        - link "Settings" [ref=e89] [cursor=pointer]:
+          - /url: /project/6f6b9eba-ad5d-4536-bdb4-dd5eb682da6f/settings?environmentId=479c05c1-9860-46eb-93d5-bfdad0a7aa9c
+          - img [ref=e91]
+      - button [ref=e94] [cursor=pointer]:
+        - generic "aisathish07" [ref=e96]
+    - region [ref=e102]:
+      - generic [ref=e107]:
+        - img [ref=e108]
+        - generic [ref=e109]:
+          - generic [ref=e111]:
+            - generic:
+              - img
+              - button "new-trade new-trade-production.up.railway.app Sleeping" [ref=e112]:
+                - link "new-trade new-trade-production.up.railway.app Sleeping" [ref=e115] [cursor=pointer]:
+                  - /url: /project/6f6b9eba-ad5d-4536-bdb4-dd5eb682da6f/service/a6b3788f-061e-48ab-a09b-2497e5c0945e?environmentId=479c05c1-9860-46eb-93d5-bfdad0a7aa9c
+                  - generic [ref=e116]:
+                    - img [ref=e118]
+                    - generic [ref=e120]:
+                      - paragraph [ref=e121]: new-trade
+                      - paragraph [ref=e122]: new-trade-production.up.railway.app
+                  - generic [ref=e124]:
+                    - img [ref=e126]
+                    - paragraph [ref=e128]: Sleeping
+          - toolbar "Canvas options" [ref=e130]:
+            - button "Canvas settings" [ref=e131] [cursor=pointer]:
+              - img [ref=e133]
+            - group "canvas action" [ref=e143]:
+              - button "Zoom in" [ref=e144] [cursor=pointer]:
+                - img [ref=e146]
+              - button "Zoom out" [ref=e148] [cursor=pointer]:
+                - img [ref=e150]
+              - button "Center canvas" [ref=e151] [cursor=pointer]:
+                - img [ref=e153]
+            - group "canvas action" [ref=e158]:
+              - button "Undo" [ref=e159] [cursor=pointer]:
+                - img [ref=e161]
+              - button "Redo" [ref=e164] [cursor=pointer]:
+                - img [ref=e166]
+            - button "Visibility layers" [ref=e169] [cursor=pointer]:
+              - img [ref=e171]
+          - button "Add" [ref=e176] [cursor=pointer]:
+            - img [ref=e178]
+            - generic [ref=e180]: Add
+          - img [ref=e181]

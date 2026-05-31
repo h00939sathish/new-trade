@@ -24,7 +24,12 @@ class MarketIntelAgent(BaseAgent):
         self._max_buffer_size = 500
 
     async def on_start(self) -> None:
-        self.logger.info("Market Intelligence Agent initializing")
+        provider_name = type(self._market_data_provider).__name__ if self._market_data_provider else "None"
+        self.logger.info(
+            "Market Intelligence Agent initializing (provider=%s, instruments=%d)",
+            provider_name,
+            len(self._instruments),
+        )
         self.subscribe_market_data()
         self.subscribe_system()
         if self._market_data_provider is not None:
@@ -34,6 +39,8 @@ class MarketIntelAgent(BaseAgent):
                 self._market_data_provider.add_instrument(inst, self._exchange.value)
             await self._market_data_provider.start()
             await self._load_historical_data()
+        else:
+            self.logger.warning("No market data provider configured — agent will be passive")
         self._emit_market_data()
 
     def add_instrument(self, instrument: str) -> None:
@@ -206,6 +213,12 @@ class MarketIntelAgent(BaseAgent):
         self._latest_ohlcv[key] = event
 
     async def _on_provider_tick(self, data: dict[str, Any]) -> None:
+        self.logger.debug(
+            "Tick received: %s @ %.2f (vol=%s)",
+            data.get("instrument"),
+            data.get("last_price", 0),
+            data.get("volume"),
+        )
         await self.ingest_tick(
             instrument=data["instrument"],
             exchange=Exchange(data["exchange"]),
@@ -214,6 +227,16 @@ class MarketIntelAgent(BaseAgent):
         )
 
     async def _on_provider_ohlcv(self, data: dict[str, Any]) -> None:
+        self.logger.debug(
+            "OHLCV received: %s [%s] O=%.2f H=%.2f L=%.2f C=%.2f V=%s",
+            data.get("instrument"),
+            data.get("interval", "minute"),
+            data.get("open", 0),
+            data.get("high", 0),
+            data.get("low", 0),
+            data.get("close", 0),
+            data.get("volume", 0),
+        )
         await self.ingest_ohlcv(
             instrument=data["instrument"],
             exchange=Exchange(data["exchange"]),

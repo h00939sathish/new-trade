@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from abc import ABC, abstractmethod
 from enum import StrEnum
 from typing import Any
@@ -45,6 +46,10 @@ class BaseAgent(Agent):
         self._subscribed_event_types: set[EventType] = set()
         self._tasks: list[asyncio.Task] = []
         self._running = False
+        self._health_emit_interval_seconds = max(
+            0.01,
+            float(os.getenv("TRA_AGENT_HEARTBEAT_SECONDS", "30")),
+        )
 
         self.logger = logging.getLogger(f"agent.{name}")
         self.logger.setLevel(log_level or settings.log_level)
@@ -74,6 +79,12 @@ class BaseAgent(Agent):
                     self._subscribe_bus_loop(), name=f"{self.name}.bus"
                 )
                 self._tasks.append(task)
+            self._tasks.append(
+                asyncio.create_task(
+                    self._health_emit_loop(),
+                    name=f"{self.name}.health",
+                )
+            )
             self.logger.info("Agent started successfully")
             await self._emit_health()
         except Exception as e:
@@ -189,6 +200,18 @@ class BaseAgent(Agent):
         health = await self.health()
         event = SystemEvent.health(self.name, "running", health)
         await self.emit(event)
+
+    async def _health_emit_loop(self) -> None:
+        while self._running:
+            try:
+                await asyncio.sleep(self._health_emit_interval_seconds)
+                if not self._running:
+                    break
+                await self._emit_health()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                self.logger.error("Health emission error: %s", e, exc_info=True)
 
     async def on_start(self) -> None:
         pass

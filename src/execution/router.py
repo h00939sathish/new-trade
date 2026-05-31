@@ -8,19 +8,18 @@ Scheduled for removal in a future version.
 """
 from __future__ import annotations
 
+import uuid
 import warnings
+from dataclasses import dataclass, field
+from typing import Any, Literal, Protocol
+
+from src.schemas.events import Exchange, OrderSide, OrderType, ProductType
 
 warnings.warn(
     "src.execution.router is deprecated and unused. Use src.agents.execution instead.",
     DeprecationWarning,
     stacklevel=2,
 )
-
-import uuid
-from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol
-
-from src.schemas.events import Exchange, OrderSide, OrderType, ProductType
 
 ExecutionMode = Literal["paper", "live"]
 

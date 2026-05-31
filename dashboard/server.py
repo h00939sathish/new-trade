@@ -16,11 +16,47 @@ from fastapi.staticfiles import StaticFiles
 logger = logging.getLogger("dashboard")
 
 BASE_DIR = Path(__file__).resolve().parent
-FRONTEND_DIR = BASE_DIR / "control_plane" / "dist"
+FRONTEND_DIR = BASE_DIR / "dist"
 
 _dashboard_app: FastAPI | None = None
 _trading_system: Any = None
 _metrics_collector: Any = None
+
+
+def _agent_health_summary(health_data: dict[str, Any]) -> tuple[int, int, str]:
+    agents_running = sum(1 for s in health_data.values() if s.get("status") == "running")
+    total_agents = len(health_data)
+    status = "ok" if total_agents == 0 or agents_running == total_agents else "degraded"
+    return agents_running, total_agents, status
+
+
+def _execution_runtime_state(exec_agent: Any) -> dict[str, Any]:
+    if exec_agent is None:
+        return {
+            "simulated": True,
+            "broker_name": "simulated",
+            "broker_available": False,
+            "pending_orders": 0,
+        }
+
+    is_simulated = bool(exec_agent._broker is None or exec_agent._paper_trading)
+    broker_name = "simulated" if is_simulated else "kite"
+    return {
+        "simulated": is_simulated,
+        "broker_name": broker_name,
+        "broker_available": not is_simulated,
+        "pending_orders": len(exec_agent._open_orders),
+    }
+
+
+def _telemetry_summary(exec_state: dict[str, Any], metrics: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "live_trading_configured": exec_state["broker_available"],
+        "market_data_activity_detected": bool(metrics.get("total_events", 0)),
+        "order_activity_detected": bool(metrics.get("orders_by_status")),
+        "reconciliation_available": exec_state["broker_available"],
+        "validation_metrics_live": False,
+    }
 
 
 async def _build_paper_report(source: str = "paper") -> dict[str, Any]:
@@ -39,10 +75,12 @@ async def _build_paper_report(source: str = "paper") -> dict[str, Any]:
 
     now = datetime.now(timezone.utc).isoformat()
     uptime = metrics.get("uptime_seconds", 0)
+    agents_running, total_agents, _ = _agent_health_summary(health_data)
 
     # Reconstruct from real agents
     portfolio_agent = getattr(_trading_system, "portfolio_opt", None)
     exec_agent = getattr(_trading_system, "execution", None)
+    exec_state = _execution_runtime_state(exec_agent)
 
     initial_capital = 1_000_000.0
     cash = 1_000_000.0
@@ -162,20 +200,22 @@ async def _build_paper_report(source: str = "paper") -> dict[str, Any]:
         if total_t > 0:
             win_rate = round((wins / total_t) * 100, 2)
 
-    agents_running = sum(1 for s in health_data.values() if s.get("status") == "running")
-    total_agents = len(health_data) or 1
-
-    is_simulated = (exec_agent is None or exec_agent._broker is None or exec_agent._paper_trading)
-    broker_name = "simulated" if is_simulated else "kite"
-
     from src.risk.kill_switch import KillSwitch
     kill_switch_active = KillSwitch().active
     kill_switch_reason = KillSwitch().reason
+    telemetry = _telemetry_summary(exec_state, metrics)
+    warnings: list[str] = []
+    if source == "live" and not telemetry["live_trading_configured"]:
+        warnings.append("Live broker telemetry unavailable; runtime is operating in simulated mode.")
+    if source == "live" and not telemetry["market_data_activity_detected"]:
+        warnings.append("No event activity observed in metrics snapshot; market data ingestion may be idle.")
 
     return {
         "generated_at": now,
         "database_url": "sqlite",
         "source": source,
+        "telemetry": telemetry,
+        "warnings": warnings,
         "summary": {
             "portfolio_value": portfolio_value,
             "cash": cash,
@@ -212,20 +252,21 @@ async def _build_paper_report(source: str = "paper") -> dict[str, Any]:
             for name, s in health_data.items()
         ],
         "broker_health": {
-            "available": agents_running == total_agents,
-            "status": broker_name,
+            "available": exec_state["broker_available"],
+            "status": exec_state["broker_name"],
             "consecutive_failures": total_agents - agents_running,
             "last_error": kill_switch_reason if kill_switch_active else None,
             "last_failure_at": now if kill_switch_active else None,
-            "wrapped_broker": broker_name,
+            "wrapped_broker": exec_state["broker_name"],
             "context": f"{agents_running}/{total_agents} agents online",
         },
         "reconciliation": {
-            "matched": True,
-            "broker": broker_name,
-            "cash_delta": 0,
-            "portfolio_value_delta": 0,
-            "share_deltas": {},
+            "available": exec_state["broker_available"],
+            "matched": True if exec_state["broker_available"] else None,
+            "broker": exec_state["broker_name"],
+            "cash_delta": 0 if exec_state["broker_available"] else None,
+            "portfolio_value_delta": 0 if exec_state["broker_available"] else None,
+            "share_deltas": {} if exec_state["broker_available"] else None,
             "synced_at": now,
         },
     }
@@ -278,54 +319,41 @@ def create_app(system: Any = None, metrics: Any = None) -> FastAPI:
     @app.get("/api/output/validation_report")
     async def api_validation_report():
         metrics = _metrics_collector.snapshot() if _metrics_collector else {}
+        available = bool(metrics.get("total_events", 0)) and bool(metrics.get("orders_by_status"))
         return JSONResponse({
+            "available": available,
+            "warning": None if available else "Validation report is placeholder-only because live production telemetry is unavailable.",
             "summary": {
-                "total_return": 5.2,
-                "annual_return": 12.8,
-                "max_drawdown": -8.5,
-                "sharpe_ratio": 1.2,
-                "volatility": 14.2,
+                "total_return": None,
+                "annual_return": None,
+                "max_drawdown": None,
+                "sharpe_ratio": None,
+                "volatility": None,
                 "total_trades": metrics.get("total_events", 0),
-                "final_value": 1_052_000,
+                "final_value": None,
                 "initial_capital": 1_000_000,
-                "benchmark_return": 10.5,
-                "alpha": 2.3,
+                "benchmark_return": None,
+                "alpha": None,
             },
             "benchmark_comparison": {
-                "strategy_total_return_pct": 5.2,
-                "benchmark_total_return_pct": 10.5,
-                "alpha_pct": -5.3,
-                "final_strategy_value": 1_052_000,
-                "final_benchmark_value": 1_105_000,
+                "strategy_total_return_pct": None,
+                "benchmark_total_return_pct": None,
+                "alpha_pct": None,
+                "final_strategy_value": None,
+                "final_benchmark_value": None,
             },
             "trading_efficiency": {
-                "total_turnover": 2_500_000,
-                "turnover_ratio": 2.5,
-                "avg_trade_value": 25_000,
-                "median_trade_value": 18_000,
-                "total_slippage": 1_250,
-                "total_commission": 3_750,
-                "cost_drag_pct_of_initial": 0.5,
+                "total_turnover": None,
+                "turnover_ratio": None,
+                "avg_trade_value": None,
+                "median_trade_value": None,
+                "total_slippage": None,
+                "total_commission": None,
+                "cost_drag_pct_of_initial": None,
             },
-            "monthly_returns": [
-                {"month": "2026-01", "return_pct": 1.2},
-                {"month": "2026-02", "return_pct": -0.8},
-                {"month": "2026-03", "return_pct": 2.1},
-                {"month": "2026-04", "return_pct": 1.5},
-                {"month": "2026-05", "return_pct": 1.2},
-            ],
-            "strategy_participation": [
-                {"strategy": "momentum", "trades": 45, "gross_value": 12_500, "avg_confidence": 0.72},
-                {"strategy": "mean_reversion", "trades": 38, "gross_value": 8_200, "avg_confidence": 0.65},
-                {"strategy": "atr_breakout", "trades": 22, "gross_value": 15_100, "avg_confidence": 0.81},
-                {"strategy": "bollinger", "trades": 18, "gross_value": 5_800, "avg_confidence": 0.58},
-                {"strategy": "rsi", "trades": 12, "gross_value": 3_200, "avg_confidence": 0.63},
-            ],
-            "regime_breakdown": [
-                {"regime": "trending_up", "days": 45, "avg_daily_return_pct": 0.12, "avg_turnover_pct": 8.5},
-                {"regime": "sideways", "days": 30, "avg_daily_return_pct": 0.02, "avg_turnover_pct": 5.2},
-                {"regime": "trending_down", "days": 15, "avg_daily_return_pct": -0.08, "avg_turnover_pct": 6.8},
-            ],
+            "monthly_returns": [],
+            "strategy_participation": [],
+            "regime_breakdown": [],
             "configuration": {
                 "benchmark": "^NSEI",
                 "symbols": ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK"],
@@ -407,27 +435,26 @@ def create_app(system: Any = None, metrics: Any = None) -> FastAPI:
                 health = await _trading_system.health()
             except Exception:
                 pass
-        agents_running = sum(1 for s in health.values() if s.get("status") == "running")
-        total = len(health)
-        status = "ok" if total == 0 or agents_running == total else "degraded"
+        agents_running, total, status = _agent_health_summary(health)
         
         exec_agent = getattr(_trading_system, "execution", None)
-        is_simulated = (exec_agent is None or exec_agent._broker is None or exec_agent._paper_trading)
-        broker_name = "simulated" if is_simulated else "kite"
+        exec_state = _execution_runtime_state(exec_agent)
+        metrics = _metrics_collector.snapshot() if _metrics_collector else {}
         
         from src.risk.kill_switch import KillSwitch
         kill_switch_active = KillSwitch().active
 
         return JSONResponse({
-            "broker": {"name": broker_name, "simulated": is_simulated, "allow_live_orders": not is_simulated},
+            "broker": {"name": exec_state["broker_name"], "simulated": exec_state["simulated"], "allow_live_orders": exec_state["broker_available"]},
             "controls": {"approvals_paused": False, "emergency_stop_active": kill_switch_active},
             "health": {
                 "status": status,
-                "pending_orders": len(exec_agent._open_orders) if exec_agent else 0,
+                "pending_orders": exec_state["pending_orders"],
                 "queue_total": 0,
-                "broker_health": {"available": total == 0 or agents_running == total, "status": broker_name},
-                "reconciliation": {"matched": True, "broker": broker_name},
+                "broker_health": {"available": exec_state["broker_available"], "status": exec_state["broker_name"]},
+                "reconciliation": {"available": exec_state["broker_available"], "matched": True if exec_state["broker_available"] else None, "broker": exec_state["broker_name"]},
             },
+            "telemetry": _telemetry_summary(exec_state, metrics),
             "outputs": {"analysis_timestamp": datetime.now(timezone.utc).isoformat(), "validation_alpha_pct": 2.3},
         })
 
@@ -439,24 +466,31 @@ def create_app(system: Any = None, metrics: Any = None) -> FastAPI:
                 health = await _trading_system.health()
             except Exception:
                 pass
-        agents_running = sum(1 for s in health.values() if s.get("status") == "running")
-        total = len(health)
-        status = "ok" if total == 0 or agents_running == total else "degraded"
+        agents_running, total, status = _agent_health_summary(health)
         
         exec_agent = getattr(_trading_system, "execution", None)
-        is_simulated = (exec_agent is None or exec_agent._broker is None or exec_agent._paper_trading)
-        broker_name = "simulated" if is_simulated else "kite"
+        exec_state = _execution_runtime_state(exec_agent)
+        metrics = _metrics_collector.snapshot() if _metrics_collector else {}
         
         from src.risk.kill_switch import KillSwitch
         kill_switch_active = KillSwitch().active
 
         return JSONResponse({
             "status": status,
-            "pending_orders": len(exec_agent._open_orders) if exec_agent else 0,
+            "pending_orders": exec_state["pending_orders"],
             "approvals_paused": False,
             "emergency_stop_active": kill_switch_active,
-            "broker_health": {"available": agents_running == total, "status": broker_name},
-            "reconciliation": {"matched": True, "broker": broker_name, "cash_delta": 0, "portfolio_value_delta": 0, "share_deltas": {}},
+            "broker_health": {"available": exec_state["broker_available"], "status": exec_state["broker_name"]},
+            "reconciliation": {
+                "available": exec_state["broker_available"],
+                "matched": True if exec_state["broker_available"] else None,
+                "broker": exec_state["broker_name"],
+                "cash_delta": 0 if exec_state["broker_available"] else None,
+                "portfolio_value_delta": 0 if exec_state["broker_available"] else None,
+                "share_deltas": {} if exec_state["broker_available"] else None,
+            },
+            "telemetry": _telemetry_summary(exec_state, metrics),
+            "agent_health": {"running": agents_running, "total": total},
         })
 
     @app.post("/api/control-plane/controls/emergency-stop")

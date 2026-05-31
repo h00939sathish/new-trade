@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import pytest
@@ -32,10 +33,11 @@ async def test_websocket_connects_with_angel_headers():
     session = FakeSocketSession()
     captured = {}
 
-    def session_factory(url, headers, on_message):
+    def session_factory(url, headers, on_message, on_disconnect=None):
         captured["url"] = url
         captured["headers"] = headers
         captured["on_message"] = on_message
+        captured["on_disconnect"] = on_disconnect
         return session
 
     client = AngelWebSocketClient(
@@ -260,6 +262,58 @@ async def test_market_data_provider_uses_supplied_symbol_token_without_master_lo
     await provider.stop()
 
 
+@pytest.mark.asyncio
+async def test_market_data_provider_falls_back_to_polling_after_websocket_disconnect():
+    session = FakeSocketSession()
+    captured = {}
+    polling_started = asyncio.Event()
+
+    class FakeAngelClient:
+        api_key = "api-key"
+        client_id = "client-code"
+        jwt_token = "jwt-token"
+        feed_token = "feed-token"
+
+        async def connect(self) -> None:
+            return None
+
+        async def disconnect(self) -> None:
+            return None
+
+        async def ensure_token(self) -> None:
+            return None
+
+        async def resolve_token(self, tradingsymbol: str, exchange: str) -> str | None:
+            return "2885"
+
+    provider = AngelMarketDataProvider(
+        client=FakeAngelClient(),
+        websocket_factory=lambda **kwargs: AngelWebSocketClient(
+            **kwargs,
+            session_factory=lambda _url, _headers, _on_message, on_disconnect=None: _capture_session(
+                captured,
+                session,
+                on_disconnect,
+            ),
+        ),
+    )
+
+    async def fake_poll_loop() -> None:
+        polling_started.set()
+        await asyncio.sleep(3600)
+
+    provider._poll_loop = fake_poll_loop
+    provider.add_instrument("RELIANCE-EQ", "NSE")
+
+    await provider.start()
+    await captured["on_disconnect"]("Connection to remote host was lost.")
+    await asyncio.wait_for(polling_started.wait(), timeout=1.0)
+
+    assert provider._websocket is None
+
+    await provider.stop()
+
+
 def test_websocket_app_headers_are_serialized_as_header_lines():
     assert _header_lines({
         "Authorization": "jwt-token",
@@ -268,3 +322,8 @@ def test_websocket_app_headers_are_serialized_as_header_lines():
         "Authorization: jwt-token",
         "x-api-key: api-key",
     ]
+
+
+def _capture_session(captured, session, on_disconnect):
+    captured["on_disconnect"] = on_disconnect
+    return session

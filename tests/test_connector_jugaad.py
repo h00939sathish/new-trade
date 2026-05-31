@@ -33,9 +33,11 @@ async def test_get_quote_returns_empty(client: JugaadClient):
 
 
 @pytest.mark.asyncio
-async def test_get_ltp_returns_empty(client: JugaadClient):
+async def test_get_ltp_returns_yahoo_data(client: JugaadClient):
+    """get_ltp now proxies to Yahoo Finance and should return a dict
+    (possibly with real data if network is available)."""
     result = await client.get_ltp(["NSE:RELIANCE"])
-    assert result == {}
+    assert isinstance(result, dict)
 
 
 @pytest.mark.asyncio
