@@ -10,7 +10,7 @@ from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 logger = logging.getLogger("dashboard")
@@ -56,6 +56,59 @@ def _telemetry_summary(exec_state: dict[str, Any], metrics: dict[str, Any]) -> d
         "order_activity_detected": bool(metrics.get("orders_by_status")),
         "reconciliation_available": exec_state["broker_available"],
         "validation_metrics_live": False,
+    }
+
+
+def _metrics_text() -> str:
+    collector = _metrics_collector
+    if collector is None:
+        from src.monitoring.metrics import system_metrics
+
+        collector = system_metrics
+    if hasattr(collector, "prometheus_text"):
+        try:
+            return collector.prometheus_text()
+        except Exception:
+            logger.exception("metrics export failed")
+    return ""
+
+
+async def _health_payload() -> dict[str, Any]:
+    health = {}
+    if _trading_system is not None:
+        try:
+            health = await _trading_system.health()
+        except Exception:
+            pass
+    agents_running, total, status = _agent_health_summary(health)
+
+    exec_agent = getattr(_trading_system, "execution", None)
+    exec_state = _execution_runtime_state(exec_agent)
+    metrics = _metrics_collector.snapshot() if _metrics_collector else {}
+
+    from src.risk.kill_switch import KillSwitch
+
+    kill_switch_active = KillSwitch().active
+
+    return {
+        "status": status,
+        "pending_orders": exec_state["pending_orders"],
+        "approvals_paused": False,
+        "emergency_stop_active": kill_switch_active,
+        "broker_health": {
+            "available": exec_state["broker_available"],
+            "status": exec_state["broker_name"],
+        },
+        "reconciliation": {
+            "available": exec_state["broker_available"],
+            "matched": True if exec_state["broker_available"] else None,
+            "broker": exec_state["broker_name"],
+            "cash_delta": 0 if exec_state["broker_available"] else None,
+            "portfolio_value_delta": 0 if exec_state["broker_available"] else None,
+            "share_deltas": {} if exec_state["broker_available"] else None,
+        },
+        "telemetry": _telemetry_summary(exec_state, metrics),
+        "agent_health": {"running": agents_running, "total": total},
     }
 
 
@@ -193,7 +246,7 @@ async def _build_paper_report(source: str = "paper") -> dict[str, Any]:
     recent_orders = sorted(recent_orders, key=lambda x: x["created_at"], reverse=True)[:20]
     recent_trades = sorted(recent_trades, key=lambda x: x["timestamp"], reverse=True)[:20]
 
-    win_rate = 62.5
+    win_rate = 0.0
     if recent_trades:
         wins = sum(1 for t in recent_trades if t.get("pnl", 0) > 0)
         total_t = len(recent_trades)
@@ -365,17 +418,17 @@ def create_app(system: Any = None, metrics: Any = None) -> FastAPI:
 
     @app.get("/api/output/analysis_results")
     async def api_analysis_results():
-        health = {}
-        if _trading_system is not None:
-            try:
-                health = await _trading_system.health()
-            except Exception:
-                pass
+        market_symbols: list[str] = []
+        market_intel = getattr(_trading_system, "market_intel", None)
+        if market_intel is not None:
+            latest_ticks = getattr(market_intel, "_latest_ticks", {})
+            if isinstance(latest_ticks, dict):
+                market_symbols = sorted(latest_ticks.keys())
         return JSONResponse({
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "market_data_symbols": list(health.keys()),
+            "market_data_symbols": market_symbols,
             "features_computed": True,
-            "sentiment": {name: {"score": 0.3, "magnitude": 0.5} for name in health},
+            "sentiment": {symbol: {"score": 0.3, "magnitude": 0.5} for symbol in market_symbols},
             "fundamentals_internal": {},
             "fundamentals_skill": {},
         })
@@ -427,6 +480,7 @@ def create_app(system: Any = None, metrics: Any = None) -> FastAPI:
             "strategies": strategy_list,
         })
 
+    @app.get("/api/overview")
     @app.get("/api/control-plane/overview")
     async def api_overview():
         health = {}
@@ -459,39 +513,14 @@ def create_app(system: Any = None, metrics: Any = None) -> FastAPI:
         })
 
     @app.get("/health")
+    @app.get("/api/health")
     async def api_health():
-        health = {}
-        if _trading_system is not None:
-            try:
-                health = await _trading_system.health()
-            except Exception:
-                pass
-        agents_running, total, status = _agent_health_summary(health)
-        
-        exec_agent = getattr(_trading_system, "execution", None)
-        exec_state = _execution_runtime_state(exec_agent)
-        metrics = _metrics_collector.snapshot() if _metrics_collector else {}
-        
-        from src.risk.kill_switch import KillSwitch
-        kill_switch_active = KillSwitch().active
+        return JSONResponse(await _health_payload())
 
-        return JSONResponse({
-            "status": status,
-            "pending_orders": exec_state["pending_orders"],
-            "approvals_paused": False,
-            "emergency_stop_active": kill_switch_active,
-            "broker_health": {"available": exec_state["broker_available"], "status": exec_state["broker_name"]},
-            "reconciliation": {
-                "available": exec_state["broker_available"],
-                "matched": True if exec_state["broker_available"] else None,
-                "broker": exec_state["broker_name"],
-                "cash_delta": 0 if exec_state["broker_available"] else None,
-                "portfolio_value_delta": 0 if exec_state["broker_available"] else None,
-                "share_deltas": {} if exec_state["broker_available"] else None,
-            },
-            "telemetry": _telemetry_summary(exec_state, metrics),
-            "agent_health": {"running": agents_running, "total": total},
-        })
+    @app.get("/metrics")
+    @app.get("/api/metrics")
+    async def api_metrics():
+        return PlainTextResponse(_metrics_text(), media_type="text/plain; charset=utf-8")
 
     @app.post("/api/control-plane/controls/emergency-stop")
     @app.post("/api/control-plane/controls/reset")

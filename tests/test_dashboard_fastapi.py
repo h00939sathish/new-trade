@@ -25,12 +25,25 @@ class TestFastAPIDashboard:
         assert data["reconciliation"]["matched"] is None
         assert data["telemetry"]["live_trading_configured"] is False
 
+    def test_api_health_alias(self, client):
+        resp = client.get("/api/health")
+        assert resp.status_code == 200
+        data = json.loads(resp.text)
+        assert data["status"] == "ok"
+        assert data["broker_health"]["available"] is False
+
     def test_index_redirect(self, client):
         resp = client.get("/")
         assert resp.status_code == 200
         data = json.loads(resp.text)
         assert "dashboard" in data
         assert data["dashboard"] == "/control/"
+
+    def test_metrics_aliases(self, client):
+        for path in ("/metrics", "/api/metrics"):
+            resp = client.get(path)
+            assert resp.status_code == 200
+            assert "trading_uptime_seconds" in resp.text
 
     def test_paper_report(self, client):
         resp = client.get("/api/paper-report")
@@ -47,6 +60,8 @@ class TestFastAPIDashboard:
         assert data["telemetry"]["live_trading_configured"] is False
         assert data["reconciliation"]["matched"] is None
         assert data["warnings"]
+        assert data["summary"]["total_trades"] == 0
+        assert data["summary"]["win_rate_pct"] == 0.0
 
     def test_validation_report(self, client):
         resp = client.get("/api/output/validation_report")
@@ -60,6 +75,9 @@ class TestFastAPIDashboard:
     def test_analysis_results(self, client):
         resp = client.get("/api/output/analysis_results")
         assert resp.status_code == 200
+        data = json.loads(resp.text)
+        assert data["market_data_symbols"] == []
+        assert data["sentiment"] == {}
 
     def test_experiment_report(self, client):
         resp = client.get("/api/output/experiment_report")
@@ -86,6 +104,13 @@ class TestFastAPIDashboard:
         assert "health" in data
         assert data["health"]["broker_health"]["available"] is False
         assert data["health"]["reconciliation"]["matched"] is None
+
+    def test_overview_alias(self, client):
+        resp = client.get("/api/overview")
+        assert resp.status_code == 200
+        data = json.loads(resp.text)
+        assert "broker" in data
+        assert data["health"]["status"] == "ok"
 
     def test_emergency_stop(self, client):
         resp = client.post("/api/control-plane/controls/emergency-stop")

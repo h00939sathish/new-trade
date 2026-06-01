@@ -40,9 +40,9 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
 
     agent_market_intel_enabled: bool = True
-    agent_strategy_gen_enabled: bool = False
+    agent_strategy_gen_enabled: bool = True
     agent_risk_mgmt_enabled: bool = True
-    agent_execution_enabled: bool = False
+    agent_execution_enabled: bool = True
     agent_reflection_enabled: bool = True
 
     reflection_eval_window: int = 20
