@@ -112,6 +112,7 @@ async def test_strategy_gen_consensus_ensemble():
 
     agent = StrategyGenAgent(event_store=store)
     agent.threshold = 0.2
+    agent.short_threshold = 0.2
 
     await agent.start(run_background_loop=False)
     agent._strategies.clear()

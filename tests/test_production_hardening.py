@@ -32,8 +32,8 @@ async def test_kill_switch_mechanism():
     mock_system.strategy_gen = mock_strategy
     mock_system.market_intel = AsyncMock()
 
-    # Set limits: daily loss limit 5000, drawdown 5%
-    ks.setup(max_daily_loss=5000.0, max_drawdown_pct=0.05, initial_capital=100000.0)
+    # Set limits: daily loss limit 1%, drawdown 5%
+    ks.setup(daily_loss_pct=0.01, max_drawdown_pct=0.05, initial_capital=100000.0)
 
     # 1. Test safe limits
     triggered = await ks.check_limits(

@@ -282,8 +282,8 @@ class PortfolioOptimizationAgent(BaseAgent):
         from src.risk.kill_switch import KillSwitch
         ks = KillSwitch()
         ks.setup(
-            max_daily_loss=getattr(settings, "risk_max_daily_loss", 5000.0),
-            max_drawdown_pct=getattr(settings, "risk_max_drawdown_pct", 0.05),
+            daily_loss_pct=getattr(settings, "kill_switch_daily_loss_pct", 0.01),
+            max_drawdown_pct=getattr(settings, "kill_switch_max_drawdown_pct", 0.05),
             initial_capital=self._peak_capital
         )
         system_ref = getattr(self, "system", None)
