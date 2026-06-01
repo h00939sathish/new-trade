@@ -80,7 +80,7 @@ class KiteClient:
 
     def modify_order(self, order_id: str, **kwargs: Any) -> dict[str, Any]:
         if self._kite and self._connected:
-            return self._kite.modify_order(order_id=order_id, kwargs=kwargs)  # type: ignore
+            return self._kite.modify_order(order_id=order_id, **kwargs)  # type: ignore
         return {"order_id": order_id}
 
     def cancel_order(self, order_id: str) -> dict[str, Any]:

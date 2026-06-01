@@ -38,7 +38,7 @@ class AsyncEventBus:
         return self._dropped_events
 
     def subscribe(self, agent_name: str, event_types: set[EventType]) -> asyncio.Queue:
-        queue: asyncio.Queue = asyncio.Queue(maxsize=10000)
+        queue: asyncio.Queue = asyncio.Queue(maxsize=100000)
         for et in event_types:
             etype_str = et.value if hasattr(et, "value") else str(et)
             self._subscribers.setdefault(etype_str, []).append(queue)
@@ -51,8 +51,9 @@ class AsyncEventBus:
         is_critical = event.event_type in _CRITICAL_EVENT_TYPES
         for queue in queues:
             try:
-                queue.put_nowait(event)
-            except asyncio.QueueFull:
+                # Add backpressure: wait up to 0.5s for queue to drain
+                await asyncio.wait_for(queue.put(event), timeout=0.5)
+            except asyncio.TimeoutError:
                 self._dropped_events += 1
                 if is_critical:
                     # For critical events, drop oldest to make room — log at ERROR
