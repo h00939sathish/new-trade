@@ -58,9 +58,11 @@ class Settings(BaseSettings):
     kill_switch_max_drawdown_pct: float = 0.05
     kill_switch_auto_reset: bool = True
 
-    consensus_threshold: float = 0.4
-    consensus_short_threshold: float = 0.5
+    consensus_threshold: float = 0.65
+    consensus_short_threshold: float = 0.70
     signal_cooldown_seconds: int = 120
+
+    reflection_mutation_enabled: bool = False
 
     portfolio_optimizer_regime: str = "risk_parity"
     portfolio_optimizer_max_weight: float = 0.40

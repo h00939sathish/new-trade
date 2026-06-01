@@ -394,6 +394,13 @@ class ReflectionEngineAgent(BaseAgent):
     async def _apply_mutation(
         self, hypothesis: dict[str, Any], result: Any,
     ) -> None:
+        if not settings.reflection_mutation_enabled:
+            self.logger.warning(
+                "Mutation blocked: TRA_REFLECTION_MUTATION_ENABLED is False. "
+                "Mutation will be created as a shadow candidate instead."
+            )
+            return
+
         strategy_name = hypothesis.get("strategy")
         param_changes = hypothesis.get("params", {})
         if not strategy_name or not param_changes:

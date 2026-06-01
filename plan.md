@@ -263,21 +263,21 @@ __pycache__/
 ### Phase 1 — Survival (1–2 weeks)
 *Goal: system is safe to run with real money structurally. Still paper-only.*
 
-- [ ] Delete all files in "Files to Delete" section
-- [ ] Fix BUG-1: asyncio.Lock on KillSwitch.check_limits
-- [ ] Fix BUG-2: Reject RISK_CHECK events without signal_event_id
-- [ ] Fix BUG-3: asyncio.Lock on SQLite order writes
-- [ ] Fix BUG-4: Pass system ref to kill-switch HTTP reset
-- [ ] Fix BUG-5: Wilder's EMA in RSIStrategy
-- [ ] Fix BUG-6: high/low midpoint in IchimokuStrategy
-- [ ] Fix BUG-7: Raise ValueError on untimstamped backtest data
-- [ ] Fix BUG-8: DecayDetector async task creation
-- [ ] Fix BUG-9: Pin Python 3.12, delete 3.14 bytecache
-- [ ] Fix BUG-10: Remove duplicate order_state.db
-- [ ] Raise consensus threshold from 0.4 → 0.65 in settings
-- [ ] Add regime broadcast on RegimeDetectionAgent.on_start
-- [ ] Disable ReflectionEngine mutations in live mode (env flag)
-- [ ] Update .gitignore
+- [x] Delete all files in "Files to Delete" section
+- [x] Fix BUG-1: asyncio.Lock on KillSwitch.check_limits
+- [x] Fix BUG-2: Reject RISK_CHECK events without signal_event_id
+- [x] Fix BUG-3: asyncio.Lock on SQLite order writes
+- [x] Fix BUG-4: Pass system ref to kill-switch HTTP reset
+- [x] Fix BUG-5: Wilder's EMA in RSIStrategy
+- [x] Fix BUG-6: high/low midpoint in IchimokuStrategy
+- [x] Fix BUG-7: Raise ValueError on untimstamped backtest data
+- [x] Fix BUG-8: DecayDetector async task creation
+- [x] Fix BUG-9: Pin Python 3.12, delete 3.14 bytecache
+- [x] Fix BUG-10: Remove duplicate order_state.db
+- [x] Raise consensus threshold from 0.4 → 0.65 in settings
+- [x] Add regime broadcast on RegimeDetectionAgent.on_start
+- [x] Disable ReflectionEngine mutations in live mode (env flag)
+- [x] Update .gitignore
 
 **Gate:** All existing tests pass. Paper system runs 5 days without crash.
 

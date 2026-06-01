@@ -22,6 +22,18 @@ class RegimeDetectionAgent(BaseAgent):
         self.logger.info("Regime Detection Agent starting")
         self.subscribe(EventType.OHLCV)
 
+        # Broadcast initial regime so StrategyGenAgent doesn't default to
+        # wrong weights after a restart (T8 fix from plan.md)
+        from src.schemas.events import Event, EventMetadata
+        initial_regime_event = Event(
+            event_type=EventType.SYSTEM_STATE,
+            stream="system.state",
+            data={"regime": self._current_regime, "instrument": "__startup__"},
+            metadata=EventMetadata(producer=self.name),
+        )
+        await self.emit(initial_regime_event)
+        self.logger.info("Broadcast initial regime: %s", self._current_regime)
+
     async def on_stop(self) -> None:
         self.logger.info("Regime Detection Agent stopping")
 
