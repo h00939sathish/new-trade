@@ -25,6 +25,7 @@ class RiskManagementAgent(BaseAgent):
         self._max_drawdown = settings.risk_max_drawdown_pct
         self._max_leverage = settings.risk_max_leverage
         self._max_order_value = settings.risk_max_order_value
+        self._per_trade_loss_cap_pct = settings.risk_per_trade_loss_cap_pct
         self._positions: dict[str, float] = {}
         self._orders_today: int = 0
         self._order_value_today: float = 0.0
@@ -141,6 +142,7 @@ class RiskManagementAgent(BaseAgent):
             await self._check_drawdown_risk(),
             await self._check_var_risk(instrument),
             await self._check_liquidity_risk(instrument),
+            await self._check_per_trade_risk(instrument, signal),
         ]
         # Only check exposure for orders that INCREASE position
         if not is_reducing:
@@ -254,6 +256,48 @@ class RiskManagementAgent(BaseAgent):
             "confidence": confidence,
         })
 
+    async def _check_per_trade_risk(self, instrument: str, signal: dict[str, Any]) -> dict[str, Any]:
+        from src.risk.kill_switch import KillSwitch
+        ks = KillSwitch()
+        capital = ks._initial_capital if ks._initial_capital else 1_000_000.0
+        max_loss_allowed = capital * self._per_trade_loss_cap_pct
+        
+        # Try to estimate potential loss from signal SL and quantity
+        price = signal.get("price")
+        if not price:
+            return self._check("per_trade_loss_cap", True, {"reason": "no_price"})
+            
+        features = signal.get("features", {})
+        atr = features.get("atr", None)
+        if atr is None and "votes" in features:
+            for strat_data in features["votes"].values():
+                strat_feat = strat_data.get("features", {})
+                if "atr" in strat_feat and strat_feat["atr"]:
+                    atr = strat_feat["atr"]
+                    break
+                    
+        sl_pct = 0.02
+        if atr is not None and price > 0:
+            sl_pct = min(max((2.0 * atr) / price, 0.005), 0.05)
+            
+        # Estimate quantity logic used by ExecutionAgent
+        volatility = atr if atr else price * 0.02
+        stop_distance = volatility * 2.0
+        risk_per_trade = capital * 0.01
+        
+        raw_qty = risk_per_trade / stop_distance if stop_distance > 0 else 0
+        max_qty = (capital * 0.05) / price
+        quantity = max(1, int(min(raw_qty, max_qty)))
+        
+        potential_loss = quantity * price * sl_pct
+        
+        return self._check("per_trade_loss_cap", potential_loss <= max_loss_allowed, {
+            "potential_loss": potential_loss,
+            "max_loss_allowed": max_loss_allowed,
+            "estimated_qty": quantity,
+            "estimated_sl_pct": sl_pct
+        })
+
     async def _check_exposure_risk(self, instrument: str) -> dict[str, Any]:
         total = self._get_total_exposure()
         return self._check("total_exposure", total < self._max_position_size, {
@@ -349,6 +393,11 @@ class RiskManagementAgent(BaseAgent):
             self._order_value_today = 0.0
             self._last_reset = now
             self.logger.info("Daily risk limits auto-reset for %s", now.date())
+            
+            # Piggyback the KillSwitch daily auto-reset
+            from src.risk.kill_switch import KillSwitch
+            system = getattr(self, "system", None)
+            KillSwitch().daily_auto_reset(system)
 
     async def reset_daily_limits(self) -> None:
         """Manual reset (kept for API compatibility)."""

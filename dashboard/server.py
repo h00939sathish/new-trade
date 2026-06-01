@@ -524,7 +524,13 @@ def create_app(system: Any = None, metrics: Any = None) -> FastAPI:
 
     @app.post("/api/control-plane/controls/emergency-stop")
     @app.post("/api/control-plane/controls/reset")
+    @app.post("/api/kill-switch/reset")
     async def api_control_action(request: Request):
+        path = request.url.path
+        if path.endswith("/reset"):
+            from src.risk.kill_switch import KillSwitch
+            KillSwitch().reset(_trading_system)
+            return JSONResponse({"status": "ok", "message": "Kill switch reset successfully"})
         return JSONResponse({"status": "ok", "message": "Action acknowledged"})
 
     @app.post("/api/control-plane/controls/approvals")

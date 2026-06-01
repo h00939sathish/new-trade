@@ -105,6 +105,14 @@ class TradingSystem:
             agent.system = self
 
     async def start(self) -> None:
+        from src.risk.kill_switch import KillSwitch
+        KillSwitch().setup(
+            daily_loss_pct=settings.kill_switch_daily_loss_pct,
+            max_drawdown_pct=settings.kill_switch_max_drawdown_pct,
+            initial_capital=settings.reflection_initial_capital,
+            auto_reset=settings.kill_switch_auto_reset,
+        )
+
         if self._kite_client is not None:
             try:
                 await self._kite_client.connect()

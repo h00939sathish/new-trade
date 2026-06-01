@@ -53,12 +53,17 @@ class StrategyGenAgent(BaseAgent):
         # Signal cooldown: track last signal emission time per instrument
         self._last_signal_time: dict[str, float] = {}
         self._current_macro_multiplier: float = 1.0
-        self.threshold = 0.3  # Increased from 0.1 to reduce noise
+        self.threshold = 0.4
+        self.short_threshold = 0.5
+        self._signal_cooldown_seconds = 120.0
+        self._regime_changes: list[float] = []
+        self._regime_instability_active = False
         if self._config_path:
             try:
-                from src.config.strategy_config import load_strategy_config
-                cfg = load_strategy_config(self._config_path)
-                self.threshold = cfg.get("consensus_threshold", 0.3)
+                from src.config.settings import settings
+                self.threshold = settings.consensus_threshold
+                self.short_threshold = settings.consensus_short_threshold
+                self._signal_cooldown_seconds = settings.signal_cooldown_seconds
             except Exception:
                 pass
 
@@ -100,20 +105,40 @@ class StrategyGenAgent(BaseAgent):
         regime = event.data.get("regime")
         if not regime:
             return
+
+        now = time.monotonic()
+        self._regime_changes.append(now)
+        # Keep only changes within the last 10 minutes (600s)
+        self._regime_changes = [t for t in self._regime_changes if now - t <= 600.0]
+
+        # Debounce: if > 3 changes in 10 minutes, activate instability mode
+        if len(self._regime_changes) > 3:
+            if not self._regime_instability_active:
+                self.logger.warning("Regime instability detected (>3 changes in 10m). Flattening weights and suppressing entries.")
+                self._regime_instability_active = True
+        else:
+            if self._regime_instability_active:
+                self.logger.info("Regime stabilized. Restoring regime-optimized weights.")
+                self._regime_instability_active = False
+
         self.logger.info("Regime change detected in strategy_gen: %s", regime)
         for name in list(self._strategy_weights.keys()):
-            if regime in ("trending_up", "trending_down"):
-                if "momentum" in name or "breakout" in name:
-                    self._strategy_weights[name] = 0.5
-                elif "reversion" in name or "rsi" in name or "bollinger" in name:
-                    self._strategy_weights[name] = 0.05
-            elif regime == "mean_reverting":
-                if "momentum" in name or "breakout" in name:
-                    self._strategy_weights[name] = 0.05
-                elif "reversion" in name or "rsi" in name or "bollinger" in name:
-                    self._strategy_weights[name] = 0.5
-            elif regime == "high_volatility":
-                self._strategy_weights[name] = 0.02
+            if self._regime_instability_active:
+                # Flat equal weights during choppy regime oscillation
+                self._strategy_weights[name] = 1.0 / len(self._strategy_weights)
+            else:
+                if regime in ("trending_up", "trending_down"):
+                    if "momentum" in name or "breakout" in name:
+                        self._strategy_weights[name] = 0.5
+                    elif "reversion" in name or "rsi" in name or "bollinger" in name:
+                        self._strategy_weights[name] = 0.05
+                elif regime == "mean_reverting":
+                    if "momentum" in name or "breakout" in name:
+                        self._strategy_weights[name] = 0.05
+                    elif "reversion" in name or "rsi" in name or "bollinger" in name:
+                        self._strategy_weights[name] = 0.5
+                elif regime == "high_volatility":
+                    self._strategy_weights[name] = 0.02
 
     async def _process_fill(self, event: Event) -> None:
         data = event.data
@@ -237,8 +262,14 @@ class StrategyGenAgent(BaseAgent):
         if votes:
             net_signal = sum(votes) * self._current_macro_multiplier
             abs_net = abs(net_signal)
-            if abs_net >= self.threshold:
-                direction = "long" if net_signal > 0 else "short"
+            direction = "long" if net_signal > 0 else "short"
+            req_threshold = self.short_threshold if direction == "short" else self.threshold
+
+            if abs_net >= req_threshold:
+                # Block new entries if regime is unstable
+                if self._regime_instability_active:
+                    return
+
                 confidence = min(abs_net, 0.95)
 
                 # Signal deduplication: skip if same direction as last signal
@@ -248,7 +279,7 @@ class StrategyGenAgent(BaseAgent):
                 # Signal cooldown: skip if too recent
                 now = time.monotonic()
                 last_time = self._last_signal_time.get(instrument, 0.0)
-                if now - last_time < _SIGNAL_COOLDOWN_SECONDS:
+                if now - last_time < self._signal_cooldown_seconds:
                     return
 
                 # Dynamic SL/TP based on ATR from strategy features
@@ -347,8 +378,14 @@ class StrategyGenAgent(BaseAgent):
         if votes:
             net_signal = sum(votes) * self._current_macro_multiplier
             abs_net = abs(net_signal)
-            if abs_net >= self.threshold:
-                direction = "long" if net_signal > 0 else "short"
+            direction = "long" if net_signal > 0 else "short"
+            req_threshold = self.short_threshold if direction == "short" else self.threshold
+
+            if abs_net >= req_threshold:
+                # Block new entries if regime is unstable
+                if self._regime_instability_active:
+                    return
+
                 confidence = min(abs_net, 0.95)
 
                 # Signal deduplication: skip if same direction as last signal
@@ -358,7 +395,7 @@ class StrategyGenAgent(BaseAgent):
                 # Signal cooldown: skip if too recent
                 now = time.monotonic()
                 last_time = self._last_signal_time.get(instrument, 0.0)
-                if now - last_time < _SIGNAL_COOLDOWN_SECONDS:
+                if now - last_time < self._signal_cooldown_seconds:
                     return
 
                 # Dynamic SL/TP based on ATR from strategy features

@@ -93,6 +93,13 @@ async def _handle_metrics_request(
         body = DASHBOARD_HTML.encode()
         ct = "text/html"
         status = "200 OK"
+    elif path == "/api/kill-switch/reset" and request_line.startswith("POST"):
+        from src.risk.kill_switch import KillSwitch
+        # Not easily able to pass system here, but it's okay for basic reset
+        KillSwitch().reset()
+        body = b'{"status": "ok", "message": "Kill switch reset"}'
+        ct = "application/json"
+        status = "200 OK"
     else:
         body = b"Not Found"
         ct = "text/plain"

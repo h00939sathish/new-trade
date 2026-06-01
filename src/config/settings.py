@@ -52,6 +52,15 @@ class Settings(BaseSettings):
     risk_max_drawdown_pct: float = 0.15
     risk_max_leverage: float = 3.0
     risk_max_order_value: float = 50_000.0
+    risk_per_trade_loss_cap_pct: float = 0.01
+
+    kill_switch_daily_loss_pct: float = 0.01
+    kill_switch_max_drawdown_pct: float = 0.05
+    kill_switch_auto_reset: bool = True
+
+    consensus_threshold: float = 0.4
+    consensus_short_threshold: float = 0.5
+    signal_cooldown_seconds: int = 120
 
     portfolio_optimizer_regime: str = "risk_parity"
     portfolio_optimizer_max_weight: float = 0.40
