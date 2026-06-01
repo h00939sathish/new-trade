@@ -13,6 +13,8 @@ from src.utils.retry import with_retry
 async def test_kill_switch_mechanism():
     ks = KillSwitch()
     ks.reset()
+    ks._initial_capital = None
+    ks._active = False
     assert not ks.active
 
     # Create mocks

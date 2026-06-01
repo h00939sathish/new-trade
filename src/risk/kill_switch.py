@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from src.schemas.events import EventType
@@ -14,6 +15,7 @@ class KillSwitch:
             cls._instance._reason = ""
             cls._instance._max_daily_loss = 5000.0  # Default fallback
             cls._instance._max_drawdown_pct = 0.05  # 5% max drawdown
+            cls._instance._lock = asyncio.Lock()
             cls._instance._initial_capital = None
             cls._instance._triggered_date = None
             cls._instance._auto_reset = True
@@ -63,22 +65,23 @@ class KillSwitch:
 
     async def check_limits(self, current_capital: float, current_pnl: float, peak_capital: float, system=None) -> bool:
         """Check daily PnL and drawdown limits. Trigger kill switch if breached."""
-        if self._active:
-            return True
-
-        # Check daily loss limit: PnL is realized daily PnL
-        if current_pnl < -self._max_daily_loss:
-            await self.trigger(f"Daily loss limit breached: {current_pnl} < -{self._max_daily_loss}", system)
-            return True
-
-        # Drawdown check: (peak_capital - current_capital) / peak_capital
-        if peak_capital > 0:
-            drawdown = (peak_capital - current_capital) / peak_capital
-            if drawdown > self._max_drawdown_pct:
-                await self.trigger(f"Drawdown limit breached: {drawdown * 100:.2f}% > {self._max_drawdown_pct * 100:.2f}%", system)
+        async with self._lock:
+            if self._active:
                 return True
-
-        return False
+    
+            # Check daily loss limit: PnL is realized daily PnL
+            if current_pnl < -self._max_daily_loss:
+                await self.trigger(f"Daily loss limit breached: {current_pnl} < -{self._max_daily_loss}", system)
+                return True
+    
+            # Drawdown check: (peak_capital - current_capital) / peak_capital
+            if peak_capital > 0:
+                drawdown = (peak_capital - current_capital) / peak_capital
+                if drawdown > self._max_drawdown_pct:
+                    await self.trigger(f"Drawdown limit breached: {drawdown * 100:.2f}% > {self._max_drawdown_pct * 100:.2f}%", system)
+                    return True
+    
+            return False
 
     async def trigger(self, reason: str, system=None) -> None:
         if self._active:

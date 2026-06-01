@@ -94,15 +94,11 @@ class BacktestEngine:
         last_event_offset = 0
         last_order_offset = 0
 
-        warned_synthetic = False
         for i, tick_data in enumerate(ticks):
-            # Parse or generate synthetic timestamp (Bug 5)
+            # Enforce real timestamps (BUG-7 fix)
             tick_timestamp = tick_data.get("timestamp")
             if not tick_timestamp:
-                if not warned_synthetic:
-                    logger.warning("Using synthetic (generated) timestamps for backtest data. This invalidates real-time fidelity.")
-                    warned_synthetic = True
-                tick_timestamp = base_time + timedelta(seconds=i)
+                raise ValueError(f"Tick data at index {i} is missing a timestamp. Synthetic timestamps are not allowed.")
             elif isinstance(tick_timestamp, str):
                 tick_timestamp = datetime.fromisoformat(tick_timestamp)
             elif isinstance(tick_timestamp, (int, float)):

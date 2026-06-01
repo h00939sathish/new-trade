@@ -211,13 +211,18 @@ class RSIStrategy(Strategy):
     ) -> dict[str, Any] | None:
         if len(prices) < self.window + 1:
             return None
-        gains, losses = [], []
-        for i in range(-self.window, 0):
-            change = prices[i] - prices[i - 1]
-            gains.append(max(change, 0))
-            losses.append(max(-change, 0))
-        avg_gain = sum(gains) / self.window
-        avg_loss = sum(losses) / self.window
+
+        # Initialize with simple average for the first window
+        avg_gain = sum(max(prices[i] - prices[i-1], 0) for i in range(1, self.window + 1)) / self.window
+        avg_loss = sum(max(prices[i-1] - prices[i], 0) for i in range(1, self.window + 1)) / self.window
+
+        # Apply Wilder's smoothing for the rest of the prices
+        for i in range(self.window + 1, len(prices)):
+            change = prices[i] - prices[i-1]
+            gain = max(change, 0)
+            loss = max(-change, 0)
+            avg_gain = (avg_gain * (self.window - 1) + gain) / self.window
+            avg_loss = (avg_loss * (self.window - 1) + loss) / self.window
         if avg_loss == 0:
             rsi = 100.0
         else:
@@ -378,8 +383,8 @@ class IchimokuStrategy(Strategy):
     ) -> dict[str, Any] | None:
         if len(prices) < self.lagging + self.displacement:
             return None
-        conv = self._midpoint(prices, self.conversion)
-        base = self._midpoint(prices, self.base)
+        conv = self._midpoint(prices, self.conversion, highs, lows)
+        base = self._midpoint(prices, self.base, highs, lows)
         if conv is None or base is None:
             return None
         current = prices[-1]
@@ -404,8 +409,10 @@ class IchimokuStrategy(Strategy):
         }
 
     @staticmethod
-    def _midpoint(prices: list[float], period: int) -> float | None:
+    def _midpoint(prices: list[float], period: int, highs: list[float] | None = None, lows: list[float] | None = None) -> float | None:
         if len(prices) < period:
             return None
+        if highs and lows and len(highs) >= period and len(lows) >= period:
+            return (max(highs[-period:]) + min(lows[-period:])) / 2
         segment = prices[-period:]
         return (max(segment) + min(segment)) / 2

@@ -21,12 +21,13 @@ system_metrics.start()
 
 
 async def metrics_http_server(
+    system=None,
     health_fn=None,
     host: str = "0.0.0.0",
     port: int = 8080,
 ):
     handler = await asyncio.start_server(
-        lambda r, w: _handle_metrics_request(r, w, health_fn), host, port,
+        lambda r, w: _handle_metrics_request(r, w, health_fn, system), host, port,
     )
     logger.info("Metrics server listening on %s:%d", host, port)
     async with handler:
@@ -37,6 +38,7 @@ async def _handle_metrics_request(
     reader: asyncio.StreamReader,
     writer: asyncio.StreamWriter,
     health_fn=None,
+    system=None,
 ) -> None:
     data = await reader.read(4096)
     request_text = data.decode("utf-8", errors="ignore")
@@ -95,8 +97,7 @@ async def _handle_metrics_request(
         status = "200 OK"
     elif path == "/api/kill-switch/reset" and request_line.startswith("POST"):
         from src.risk.kill_switch import KillSwitch
-        # Not easily able to pass system here, but it's okay for basic reset
-        KillSwitch().reset()
+        KillSwitch().reset(system=system)
         body = b'{"status": "ok", "message": "Kill switch reset"}'
         ct = "application/json"
         status = "200 OK"
@@ -138,7 +139,7 @@ async def main():
         metrics_task = None
     else:
         metrics_task = asyncio.create_task(
-            metrics_http_server(health_fn=system.health, port=metrics_port),
+            metrics_http_server(system=system, health_fn=system.health, port=metrics_port),
         )
 
     use_cli = os.getenv("TRA_DASHBOARD", "1") == "1"

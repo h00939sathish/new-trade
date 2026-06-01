@@ -83,6 +83,12 @@ class ExecutionAgent(BaseAgent):
         self._order_db_path = order_db_path or _ORDER_DB_PATH
         self._order_db: sqlite3.Connection | None = None
         self._twap_orders: dict[str, dict[str, Any]] = {}
+        self._db_lock = None
+
+    def _get_db_lock(self):
+        if self._db_lock is None:
+            self._db_lock = asyncio.Lock()
+        return self._db_lock
 
     async def on_start(self) -> None:
         self.logger.info("Execution Agent initializing (paper=%s)", self._paper_trading)
@@ -120,79 +126,86 @@ class ExecutionAgent(BaseAgent):
                 "Restored %d outstanding orders from disk — verify with broker", count,
             )
 
-    def _persist_order(self, order: OrderEvent, strategy: str = "unknown") -> None:
+    async def _persist_order(self, order: OrderEvent, strategy: str = "unknown") -> None:
         """Write order state to disk."""
         if self._order_db is None:
             return
-        try:
-            from datetime import UTC, datetime
-            now = datetime.now(UTC).isoformat()
-            self._order_db.execute(
-                """INSERT OR REPLACE INTO orders
+        async with self._get_db_lock():
+            try:
+                from datetime import UTC, datetime
+                now = datetime.now(UTC).isoformat()
+                self._order_db.execute(
+                    """INSERT OR REPLACE INTO orders
                    (event_id, instrument, exchange, side, order_type, quantity, price,
                     status, broker_order_id, strategy, created_at, updated_at, data_json)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    order.event_id,
-                    order.instrument,
-                    order.exchange.value if hasattr(order.exchange, "value") else str(order.exchange),
-                    order.side.value if hasattr(order.side, "value") else str(order.side),
-                    order.order_type.value if hasattr(order.order_type, "value") else str(order.order_type),
-                    order.quantity,
-                    order.price,
-                    order.data.get("status", "pending"),
-                    order.data.get("broker_order_id"),
-                    strategy,
-                    now,
-                    now,
-                    json.dumps(order.model_dump(), default=str),
-                ),
-            )
-            self._order_db.commit()
-        except Exception as e:
-            self.logger.error("Failed to persist order %s: %s", order.event_id, e)
+                    (
+                        order.event_id,
+                        order.instrument,
+                        order.exchange.value if hasattr(order.exchange, "value") else str(order.exchange),
+                        order.side.value if hasattr(order.side, "value") else str(order.side),
+                        order.order_type.value if hasattr(order.order_type, "value") else str(order.order_type),
+                        order.quantity,
+                        order.price,
+                        order.data.get("status", "pending"),
+                        order.data.get("broker_order_id"),
+                        strategy,
+                        now,
+                        now,
+                        json.dumps(order.model_dump(), default=str),
+                    ),
+                )
+                self._order_db.commit()
+            except Exception as e:
+                self.logger.error("Failed to persist order %s: %s", order.event_id, e)
 
-    def _update_order_status(self, event_id: str, status: str) -> None:
+    async def _update_order_status(self, event_id: str, status: str) -> None:
         """Update order status in persistent store."""
         if self._order_db is None:
             return
-        try:
-            from datetime import UTC, datetime
-            self._order_db.execute(
-                "UPDATE orders SET status = ?, updated_at = ? WHERE event_id = ?",
-                (status, datetime.now(UTC).isoformat(), event_id),
-            )
-            self._order_db.commit()
-        except Exception as e:
-            self.logger.error("Failed to update order status %s: %s", event_id, e)
+        async with self._get_db_lock():
+            try:
+                from datetime import UTC, datetime
+                self._order_db.execute(
+                    "UPDATE orders SET status = ?, updated_at = ? WHERE event_id = ?",
+                    (status, datetime.now(UTC).isoformat(), event_id),
+                )
+                self._order_db.commit()
+            except Exception as e:
+                self.logger.error("Failed to update order status %s: %s", event_id, e)
 
-    def _persist_fill(self, fill: FillEvent) -> None:
+    async def _persist_fill(self, fill: FillEvent) -> None:
         """Write fill to disk."""
         if self._order_db is None:
             return
-        try:
-            from datetime import UTC, datetime
-            self._order_db.execute(
-                """INSERT OR IGNORE INTO fills
+        async with self._get_db_lock():
+            try:
+                from datetime import UTC, datetime
+                self._order_db.execute(
+                    """INSERT OR IGNORE INTO fills
                    (fill_id, order_id, instrument, side, fill_price, fill_quantity, filled_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    fill.event_id,
-                    fill.data.get("order_id", ""),
-                    fill.data.get("instrument", ""),
-                    fill.data.get("side", ""),
-                    fill.data.get("fill_price", 0),
-                    fill.data.get("fill_quantity", 0),
-                    datetime.now(UTC).isoformat(),
-                ),
-            )
-            self._order_db.commit()
-            # Update corresponding order status
-            order_id = fill.data.get("order_id", "")
-            if order_id:
-                self._update_order_status(order_id, "filled")
-        except Exception as e:
-            self.logger.error("Failed to persist fill %s: %s", fill.event_id, e)
+                    (
+                        fill.event_id,
+                        fill.data.get("order_id", ""),
+                        fill.data.get("instrument", ""),
+                        fill.data.get("side", ""),
+                        fill.data.get("fill_price", 0),
+                        fill.data.get("fill_quantity", 0),
+                        datetime.now(UTC).isoformat(),
+                    ),
+                )
+                self._order_db.commit()
+                # Update corresponding order status
+                order_id = fill.data.get("order_id", "")
+                if order_id:
+                    self._order_db.execute(
+                        "UPDATE orders SET status = ?, updated_at = ? WHERE event_id = ?",
+                        ("filled", datetime.now(UTC).isoformat(), order_id)
+                    )
+                    self._order_db.commit()
+            except Exception as e:
+                self.logger.error("Failed to persist fill %s: %s", fill.event_id, e)
 
     async def on_event(self, event: Event) -> None:
         match event.event_type:
@@ -276,7 +289,7 @@ class ExecutionAgent(BaseAgent):
 
             await self.emit(order_event)
             self._open_orders[order_event.event_id] = order_event
-            self._persist_order(order_event, strategy=signal.get("strategy", "exit"))
+            await self._persist_order(order_event, strategy=signal.get("strategy", "exit"))
             if self._paper_trading:
                 await self._simulate_fill(order_event)
             return
@@ -312,19 +325,14 @@ class ExecutionAgent(BaseAgent):
         signal_data = details.get("signal", {})
         signal_event_id = signal_data.get("_signal_event_id")
 
+        if not signal_event_id:
+            self.logger.warning("Risk check event missing _signal_event_id, dropping.")
+            return
+
         # Try to find the matching pending signal
         pending = None
-        if signal_event_id and signal_event_id in self._pending_signals:
+        if signal_event_id in self._pending_signals:
             pending = self._pending_signals.pop(signal_event_id)
-        else:
-            # Fallback: match by instrument + direction from signal data
-            instrument = signal_data.get("instrument", "")
-            direction = signal_data.get("direction", "")
-            for sid, pdata in list(self._pending_signals.items()):
-                psig = pdata["signal"]
-                if psig.get("instrument") == instrument and psig.get("direction") == direction:
-                    pending = self._pending_signals.pop(sid)
-                    break
 
         if not passed:
             instrument = signal_data.get("instrument", "unknown")
@@ -430,7 +438,7 @@ class ExecutionAgent(BaseAgent):
             self.logger.info("Broker order: %s (id=%s)", instrument, broker_id)
         await self.emit(order_event)
         self._open_orders[order_event.event_id] = order_event
-        self._persist_order(order_event, strategy=signal.get("strategy", "unknown"))
+        await self._persist_order(order_event, strategy=signal.get("strategy", "unknown"))
         self.logger.info(
             "Order APPROVED and placed: %s %s %d @ %.2f",
             side.value, instrument, quantity, price or 0,
@@ -538,7 +546,7 @@ class ExecutionAgent(BaseAgent):
 
                         await self.emit(order_event)
                         self._open_orders[order_event.event_id] = order_event
-                        self._persist_order(order_event, strategy=twap["signal"].get("strategy", "unknown"))
+                        await self._persist_order(order_event, strategy=twap["signal"].get("strategy", "unknown"))
 
                         twap["executed"] += chunk_qty
                         twap["last_executed_at"] = now
@@ -640,7 +648,7 @@ class ExecutionAgent(BaseAgent):
             except Exception:
                 pass
             await self.emit(order)
-            self._update_order_status(order_id, "cancelled")
+            await self._update_order_status(order_id, "cancelled")
             self.logger.info("Order cancelled: %s", order_id)
 
     def set_paper_trading(self, enabled: bool) -> None:
@@ -707,7 +715,7 @@ class ExecutionAgent(BaseAgent):
             pass
         await asyncio.sleep(0.1)
         await self.emit(fill_event)
-        self._persist_fill(fill_event)
+        await self._persist_fill(fill_event)
         if order.event_id in self._open_orders:
             del self._open_orders[order.event_id]
         if order.event_id not in self._filled_orders:

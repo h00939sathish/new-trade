@@ -10,6 +10,7 @@ class EventType(StrEnum):
     TICK = "market.tick"
     OHLCV = "market.ohlcv"
     SIGNAL = "signal.generated"
+    CANDIDATE_SIGNAL = "signal.candidate"
     ORDER_CREATED = "order.created"
     ORDER_ACCEPTED = "order.accepted"
     ORDER_REJECTED = "order.rejected"

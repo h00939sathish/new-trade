@@ -2,6 +2,8 @@ import json
 import logging
 import os
 import re
+import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -42,12 +44,44 @@ class ReflectionEngineAgent(BaseAgent):
         self._last_evaluation_pnl = 0.0
         self._last_baseline_result: Any = None
         self._pending_mutation: dict[str, Any] | None = None
+        
+        self._candidates: dict[str, Any] = {}
+        self._candidates_path = Path("config/candidates.yaml")
+        self._load_candidates()
+
+    def _load_candidates(self) -> None:
+        if self._candidates_path.exists():
+            with self._candidates_path.open() as f:
+                self._candidates = yaml.safe_load(f) or {}
+            self.logger.info("Loaded %d shadow candidates", len(self._candidates))
+            
+    def _save_candidates(self) -> None:
+        self._candidates_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self._candidates_path.with_suffix(".yaml.tmp")
+        with tmp.open("w") as f:
+            yaml.dump(self._candidates, f, default_flow_style=False, sort_keys=False)
+        tmp.rename(self._candidates_path)
+
+    def _inject_candidates(self) -> None:
+        system = getattr(self, "system", None)
+        if not system or not hasattr(system, "strategy_gen"):
+            return
+        from src.config.strategy_config import STRATEGY_REGISTRY
+        for cand_id, cand_data in self._candidates.items():
+            if cand_data.get("status") == "active":
+                strat_name = cand_data.get("strategy")
+                strat_class = STRATEGY_REGISTRY.get(strat_name)
+                if strat_class:
+                    strat = strat_class(name=cand_id, **cand_data.get("params", {}))
+                    system.strategy_gen.register_candidate_strategy(strat)
 
     async def on_start(self) -> None:
         self.logger.info("Reflection Engine Agent initializing")
         self.subscribe(EventType.FILL)
         self.subscribe(EventType.PORTFOLIO_UPDATE)
+        self.subscribe(EventType.CANDIDATE_SIGNAL)
         self.subscribe_system()
+        self._inject_candidates()
         self.logger.info("Evaluation window: %d fills", settings.reflection_eval_window)
 
     async def on_stop(self) -> None:
@@ -59,6 +93,8 @@ class ReflectionEngineAgent(BaseAgent):
                 await self._on_fill(event)
             case EventType.PORTFOLIO_UPDATE:
                 self._baseline_pnl = event.data.get("pnl", 0.0)
+            case EventType.CANDIDATE_SIGNAL:
+                await self._on_candidate_signal(event)
             case EventType.SYSTEM_HEALTH:
                 pass
 
@@ -73,6 +109,58 @@ class ReflectionEngineAgent(BaseAgent):
         if len(self._fill_buffer) >= settings.reflection_eval_window:
             await self._run_reflection_cycle()
 
+    async def _on_candidate_signal(self, event: Event) -> None:
+        cand_id = event.data.get("strategy")
+        if not cand_id or cand_id not in self._candidates:
+            return
+        
+        cand = self._candidates[cand_id]
+        if cand.get("status") != "active":
+            return
+            
+        direction = event.data.get("direction")
+        price = event.data.get("price")
+        if not price or direction == "neutral":
+            return
+            
+        current_pos = cand.get("position", 0)
+        from src.risk.costs import TransactionCostModel
+        # Basic flat model for estimation
+        cost_model = TransactionCostModel(brokerage_pct=0.0003, slippage_bps=5.0)
+        
+        # Simple stop-and-reverse shadow execution
+        qty = 100 # fixed paper trade quantity for evaluation
+        
+        if direction == "long" and current_pos <= 0:
+            if current_pos < 0:
+                # Cover short
+                entry_price = cand.get("avg_price", price)
+                pnl = (entry_price - price) * abs(current_pos)
+                cost = cost_model.total_cost("buy", abs(current_pos), price)
+                cand["realized_pnl"] = cand.get("realized_pnl", 0.0) + pnl - cost
+                cand["trades"] = cand.get("trades", 0) + 1
+            # Go long
+            cand["position"] = qty
+            cand["avg_price"] = price
+            cand["realized_pnl"] -= cost_model.total_cost("buy", qty, price)
+            self._save_candidates()
+            self.logger.info("Candidate %s went LONG at %.2f", cand_id, price)
+            
+        elif direction == "short" and current_pos >= 0:
+            if current_pos > 0:
+                # Sell long
+                entry_price = cand.get("avg_price", price)
+                pnl = (price - entry_price) * abs(current_pos)
+                cost = cost_model.total_cost("sell", abs(current_pos), price)
+                cand["realized_pnl"] = cand.get("realized_pnl", 0.0) + pnl - cost
+                cand["trades"] = cand.get("trades", 0) + 1
+            # Go short
+            cand["position"] = -qty
+            cand["avg_price"] = price
+            cand["realized_pnl"] -= cost_model.total_cost("sell", qty, price)
+            self._save_candidates()
+            self.logger.info("Candidate %s went SHORT at %.2f", cand_id, price)
+
     def _to_fill_event(self, event: Event) -> FillEvent:
         return FillEvent(**event.model_dump())
 
@@ -82,6 +170,8 @@ class ReflectionEngineAgent(BaseAgent):
             len(self._fill_buffer),
         )
         self._fill_buffer = self._fill_buffer[settings.reflection_eval_window:]
+
+        self._evaluate_candidates()
 
         current_result = await self._run_backtest()
         if not current_result:
@@ -108,27 +198,47 @@ class ReflectionEngineAgent(BaseAgent):
         )
 
         mutated_result = hypothesis.pop("result")
+        improvement = mutated_result.sharpe_ratio - current_result.sharpe_ratio
 
-        # SAFETY: Do NOT auto-apply mutations. Log the proposal for human review.
-        self._mutation_history.append({
-            "hypothesis": hypothesis,
-            "baseline": self._result_to_dict(current_result),
-            "mutated": self._result_to_dict(mutated_result),
-            "applied": False,
-            "status": "pending_approval",
-        })
-        self.logger.warning(
-            "MUTATION PROPOSED (requires manual approval): strategy=%s params=%s "
-            "baseline_sharpe=%.3f -> proposed_sharpe=%.3f. "
-            "Use reflection.approve_last_mutation() to apply.",
-            hypothesis.get("strategy"), hypothesis.get("params"),
-            current_result.sharpe_ratio, mutated_result.sharpe_ratio,
-        )
-        self._pending_mutation = {
-            "hypothesis": hypothesis,
-            "result": mutated_result,
+        cand_id = f"{hypothesis.get('strategy')}_cand_{int(time.time())}"
+        candidate = {
+            "strategy": hypothesis.get("strategy"),
+            "params": hypothesis.get("params"),
+            "start_date": datetime.now(UTC).isoformat(),
+            "end_date": (datetime.now(UTC) + timedelta(days=30)).isoformat(),
+            "position": 0,
+            "avg_price": 0.0,
+            "realized_pnl": 0.0,
+            "trades": 0,
+            "status": "active",
+            "backtest_improvement": improvement
         }
+        self._candidates[cand_id] = candidate
+        self._save_candidates()
+        
+        self.logger.warning(
+            "CANDIDATE CREATED for 30-day shadow testing: %s. "
+            "baseline_sharpe=%.3f -> proposed_sharpe=%.3f. ",
+            cand_id, current_result.sharpe_ratio, mutated_result.sharpe_ratio,
+        )
+        self._inject_candidates()
         self._last_baseline_result = current_result
+
+    def _evaluate_candidates(self) -> None:
+        now = datetime.now(UTC)
+        updated = False
+        for cand_id, cand in self._candidates.items():
+            if cand.get("status") == "active":
+                end_date_str = cand.get("end_date")
+                if end_date_str:
+                    end_date = datetime.fromisoformat(end_date_str)
+                    if now >= end_date:
+                        cand["status"] = "pending_live_approval" if cand.get("realized_pnl", 0) > 0 else "rejected"
+                        updated = True
+                        self.logger.warning("Candidate %s finished 30-day evaluation. Final PnL: %.2f. Status: %s", 
+                                            cand_id, cand.get("realized_pnl", 0), cand["status"])
+        if updated:
+            self._save_candidates()
 
     async def _find_best_mutation(self, baseline_result: Any) -> dict[str, Any] | None:
         from src.config.strategy_config import load_strategy_config
@@ -322,42 +432,58 @@ class ReflectionEngineAgent(BaseAgent):
         base.update({
             "fill_buffer_size": len(self._fill_buffer),
             "eval_window": settings.reflection_eval_window,
-            "mutation_count": len(self._mutation_history),
+            "active_candidates": sum(1 for c in self._candidates.values() if c.get("status") == "active"),
+            "pending_candidates": sum(1 for c in self._candidates.values() if c.get("status") == "pending_live_approval"),
             "baseline_pnl": self._baseline_pnl,
-            "pending_mutation": self._pending_mutation is not None,
         })
         return base
 
-    async def approve_last_mutation(self) -> bool:
-        """Manually approve and apply the last proposed mutation."""
-        if self._pending_mutation is None:
-            self.logger.warning("No pending mutation to approve")
+    async def approve_candidate(self, candidate_id: str) -> bool:
+        """Manually approve a shadow candidate and apply its params to live trading."""
+        cand = self._candidates.get(candidate_id)
+        if not cand:
+            self.logger.warning("Candidate %s not found", candidate_id)
             return False
-        hypothesis = self._pending_mutation["hypothesis"]
-        result = self._pending_mutation["result"]
-        await self._apply_mutation(hypothesis, result)
-        # Update history to mark as applied
-        for entry in reversed(self._mutation_history):
-            if entry.get("status") == "pending_approval":
-                entry["applied"] = True
-                entry["status"] = "approved"
-                break
-        self._pending_mutation = None
-        self.logger.info("Mutation APPROVED and applied: %s", hypothesis.get("strategy"))
-        return True
+        
+        if cand.get("status") != "pending_live_approval":
+            self.logger.warning("Candidate %s is not pending approval (status: %s)", candidate_id, cand.get("status"))
+            return False
+            
+        strategy_name = cand.get("strategy")
+        param_changes = cand.get("params", {})
+        
+        self.logger.info("Approving Candidate %s -> %s params=%s", candidate_id, strategy_name, param_changes)
+        
+        cfg = load_yaml_config(self._strategy_config_path)
+        if strategy_name in cfg.get("strategies", {}):
+            cfg["strategies"][strategy_name]["params"].update(param_changes)
+            save_yaml_config(self._strategy_config_path, cfg)
+            
+            cand["status"] = "approved"
+            self._save_candidates()
+            
+            await self.emit(SystemEvent.health(
+                component=self.name,
+                status="candidate_approved",
+                details={"candidate_id": candidate_id, "strategy": strategy_name}
+            ))
+            return True
+        return False
 
-    async def reject_last_mutation(self) -> bool:
-        """Reject the pending mutation."""
-        if self._pending_mutation is None:
-            self.logger.warning("No pending mutation to reject")
+    async def reject_candidate(self, candidate_id: str) -> bool:
+        """Reject a pending shadow candidate."""
+        cand = self._candidates.get(candidate_id)
+        if not cand:
+            self.logger.warning("Candidate %s not found", candidate_id)
             return False
-        strategy = self._pending_mutation["hypothesis"].get("strategy")
-        for entry in reversed(self._mutation_history):
-            if entry.get("status") == "pending_approval":
-                entry["status"] = "rejected"
-                break
-        self._pending_mutation = None
-        self.logger.info("Mutation REJECTED: %s", strategy)
+            
+        if cand.get("status") != "pending_live_approval":
+            self.logger.warning("Candidate %s is not pending approval", candidate_id)
+            return False
+            
+        cand["status"] = "rejected"
+        self._save_candidates()
+        self.logger.info("Candidate REJECTED: %s", candidate_id)
         return True
 
     @staticmethod

@@ -40,6 +40,7 @@ class StrategyGenAgent(BaseAgent):
         super().__init__("strategy_gen", event_store=event_store)
         self._strategies: dict[str, Strategy] = {}
         self._strategy_weights: dict[str, float] = {}
+        self._candidate_strategies: dict[str, Strategy] = {}
         self._tick_prices: dict[str, deque[float]] = {}
         self._candle_prices: dict[str, dict[str, deque[float]]] = {}
         self._candle_volumes: dict[str, dict[str, deque[float]]] = {}
@@ -79,6 +80,10 @@ class StrategyGenAgent(BaseAgent):
         self._strategies[strategy.name] = strategy
         self._strategy_weights[strategy.name] = weight
         self.logger.info("Registered strategy: %s (weight=%.1f)", strategy.name, weight)
+
+    def register_candidate_strategy(self, strategy: "Strategy") -> None:
+        self._candidate_strategies[strategy.name] = strategy
+        self.logger.info("Registered CANDIDATE strategy for shadow trading: %s", strategy.name)
 
     async def on_event(self, event: Event) -> None:
         match event.event_type:
@@ -239,6 +244,15 @@ class StrategyGenAgent(BaseAgent):
 
         await self._check_sl_tp(instrument, float(price), event.timestamp, exchange)
 
+        # 1. Evaluate candidate strategies (shadow trading)
+        for candidate in self._candidate_strategies.values():
+            if getattr(candidate, "data_type", "any") in ("tick", "any"):
+                prices_list = list(self._tick_prices[instrument])
+                signal = await candidate.evaluate(instrument, prices_list)
+                if signal is not None:
+                    await self._emit_candidate_signal(instrument, candidate.name, signal, exchange, event.timestamp)
+
+        # 2. Evaluate live strategies
         votes = []
         features_all = {}
         for strategy in self._strategies.values():
@@ -343,6 +357,22 @@ class StrategyGenAgent(BaseAgent):
 
         await self._check_sl_tp(instrument, float(close), event.timestamp, exchange)
 
+        # 1. Evaluate candidate strategies (shadow trading)
+        for candidate in self._candidate_strategies.values():
+            strategy_data_type = getattr(candidate, "data_type", "any")
+            strategy_timeframe = getattr(candidate, "timeframe", "minute")
+            norm_strat = strategy_timeframe.replace("minute", "m").replace("1m", "minute")
+            norm_event = interval.replace("minute", "m").replace("1m", "minute")
+            if strategy_data_type in ("candle", "any") and (norm_strat == norm_event or strategy_timeframe == interval):
+                prices_list = list(self._candle_prices[instrument][interval])
+                volumes_list = list(self._candle_volumes[instrument][interval])
+                highs_list = list(self._candle_highs.get(instrument, {}).get(interval, []))
+                lows_list = list(self._candle_lows.get(instrument, {}).get(interval, []))
+                signal = await candidate.evaluate(instrument, prices_list, volumes=volumes_list, highs=highs_list, lows=lows_list)
+                if signal is not None:
+                    await self._emit_candidate_signal(instrument, candidate.name, signal, exchange, event.timestamp)
+
+        # 2. Evaluate live strategies
         votes = []
         features_all = {}
         for strategy in self._strategies.values():
@@ -454,6 +484,32 @@ class StrategyGenAgent(BaseAgent):
             system_metrics.count_signal(strategy, signal["direction"])
         except Exception:
             pass
+        await self.emit(event)
+
+    async def _emit_candidate_signal(
+        self,
+        instrument: str,
+        strategy: str,
+        signal: dict[str, Any],
+        exchange: Exchange,
+        timestamp: datetime,
+    ) -> None:
+        """Emit a signal from a shadow candidate strategy. This is caught ONLY by the reflection engine."""
+        event = SignalEvent.create(
+            instrument=instrument,
+            strategy=strategy,
+            direction=signal["direction"],
+            confidence=signal["confidence"],
+            price=signal.get("price"),
+            features=signal.get("features"),
+            exchange=exchange,
+            producer=self.name,
+            timestamp=timestamp,
+        )
+        # Override event type to CANDIDATE_SIGNAL
+        event.event_type = EventType.CANDIDATE_SIGNAL
+        event.stream = f"signal.candidate.{strategy}.{instrument}"
+        self.logger.debug("Candidate Signal: %s %s %.2f%% from %s", instrument, signal["direction"], signal["confidence"] * 100, strategy)
         await self.emit(event)
 
     def _register_default_strategies(self) -> None:

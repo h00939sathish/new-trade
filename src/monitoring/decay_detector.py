@@ -60,9 +60,17 @@ class PerformanceDecayDetector:
                     },
                     metadata=EventMetadata(producer="decay_detector")
                 )
-                asyncio = __import__("asyncio")
+                import asyncio
                 if hasattr(self.system, "market_intel") and self.system.market_intel:
-                    # Emit to event bus
-                    asyncio.create_task(self.system.market_intel.emit(decay_event))
+                    # Emit to event bus safely
+                    try:
+                        loop = asyncio.get_running_loop()
+                        loop.create_task(self.system.market_intel.emit(decay_event))
+                    except RuntimeError:
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            asyncio.run_coroutine_threadsafe(self.system.market_intel.emit(decay_event), loop)
+                        else:
+                            logger.error("No running event loop to emit decay event")
             except Exception as e:
                 logger.error("Failed to emit strategy decay event: %s", e)

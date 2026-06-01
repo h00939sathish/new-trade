@@ -1,1 +1,0 @@
-- generic [ref=e2]: "{\"status\":\"ok\",\"pending_orders\":0,\"approvals_paused\":false,\"emergency_stop_active\":false,\"broker_health\":{\"available\":true,\"status\":\"simulated\"},\"reconciliation\":{\"matched\":true,\"broker\":\"simulated\",\"cash_delta\":0,\"portfolio_value_delta\":0,\"share_deltas\":{}}}"
