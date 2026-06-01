@@ -179,6 +179,8 @@ class BacktestDataProvider:
 
 
 def generate_synthetic_ticks(n: int = 5000) -> list[dict[str, Any]]:
+    from datetime import UTC, datetime, timedelta
+    base_time = datetime(2026, 5, 25, 9, 15, 0, tzinfo=UTC)
     ticks = []
     price = 100.0
     for i in range(n):
@@ -191,5 +193,6 @@ def generate_synthetic_ticks(n: int = 5000) -> list[dict[str, Any]]:
             "exchange": "NSE",
             "price": round(price, 2),
             "volume": 1000 + i % 5000,
+            "timestamp": base_time + timedelta(seconds=i),
         })
     return ticks

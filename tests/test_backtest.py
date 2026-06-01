@@ -1,7 +1,11 @@
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from src.agents.strategy_gen import MomentumStrategy
 from src.backtest.engine import BacktestEngine
+
+_BASE_TIME = datetime(2026, 5, 25, 9, 15, 0, tzinfo=UTC)
 
 
 @pytest.mark.asyncio
@@ -20,7 +24,7 @@ async def test_backtest_with_momentum_strategy():
         initial_capital=100_000.0,
     )
     ticks = [
-        {"instrument": "TEST", "price": 100.0 + i * 0.5, "volume": 1000}
+        {"instrument": "TEST", "price": 100.0 + i * 0.5, "volume": 1000, "timestamp": _BASE_TIME + timedelta(seconds=i)}
         for i in range(30)
     ]
     result = await engine.run(ticks)
@@ -35,7 +39,7 @@ async def test_backtest_sharpe_ratio():
     strategy = MomentumStrategy(short_window=3, long_window=10, threshold=0.02)
     engine = BacktestEngine(strategies=[strategy], initial_capital=100_000.0)
     ticks = [
-        {"instrument": "TEST", "price": 100.0 + (i % 5) * 2.0, "volume": 1000}
+        {"instrument": "TEST", "price": 100.0 + (i % 5) * 2.0, "volume": 1000, "timestamp": _BASE_TIME + timedelta(seconds=i)}
         for i in range(50)
     ]
     result = await engine.run(ticks)
@@ -48,7 +52,7 @@ async def test_backtest_equity_curve():
     strategy = MomentumStrategy(short_window=3, long_window=10, threshold=0.005)
     engine = BacktestEngine(strategies=[strategy], initial_capital=100_000.0)
     ticks = [
-        {"instrument": "TEST", "price": 100.0 + i * 2.0, "volume": 1000}
+        {"instrument": "TEST", "price": 100.0 + i * 2.0, "volume": 1000, "timestamp": _BASE_TIME + timedelta(seconds=i)}
         for i in range(30)
     ]
     result = await engine.run(ticks)

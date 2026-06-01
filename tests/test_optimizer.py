@@ -1,14 +1,18 @@
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from src.agents.strategy_gen import MomentumStrategy
 from src.backtest.optimizer import OptimizationResult, grid_search
+
+_BASE_TIME = datetime(2026, 5, 25, 9, 15, 0, tzinfo=UTC)
 
 
 def _make_ticks(count: int = 60) -> list[dict]:
     ticks = []
     for i in range(count):
         price = 100.0 + (i * 0.5) if i > 20 else 100.0
-        ticks.append({"instrument": "TEST", "price": price, "volume": 1000})
+        ticks.append({"instrument": "TEST", "price": price, "volume": 1000, "timestamp": _BASE_TIME + timedelta(seconds=i)})
     return ticks
 
 
