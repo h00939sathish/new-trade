@@ -4,7 +4,7 @@ from src.schemas.events import RiskCheckEvent
 
 logger = logging.getLogger("risk.reconciliation")
 
-async def reconcile_positions(system) -> None:
+async def reconcile_positions(system) -> bool:
     """Compare broker positions against local portfolio agent tracked positions.
 
     Broker is the source of truth. If a mismatch is found, we log a RISK_BREACH event,
@@ -13,12 +13,12 @@ async def reconcile_positions(system) -> None:
     exec_agent = getattr(system, "execution", None)
     portfolio_agent = getattr(system, "portfolio_opt", None)
     if not exec_agent or not portfolio_agent:
-        return
+        return True
 
     broker = exec_agent._broker
     if not broker:
         # Paper trading or no broker connected: skip reconciliation
-        return
+        return True
 
     try:
         broker_positions_raw = await broker.get_positions()
@@ -36,7 +36,7 @@ async def reconcile_positions(system) -> None:
                 broker_positions[symbol] = qty
     except Exception as e:
         logger.error("Reconciliation: Failed to get broker positions: %s", e)
-        return
+        return False
 
     # Local positions
     local_positions = {}
@@ -88,5 +88,10 @@ async def reconcile_positions(system) -> None:
 
             # Emit portfolio update to sync with execution and other agents
             await portfolio_agent._emit_portfolio_update(symbol, "buy" if b_qty > 0 else "sell")
+            
+        from src.risk.position_registry import position_registry
+        await position_registry.sync_from_portfolio(portfolio_agent._positions)
+        return False
     else:
         logger.info("Reconciliation: Local positions match broker positions successfully.")
+        return True

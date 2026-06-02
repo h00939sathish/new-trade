@@ -1,3 +1,4 @@
+import time
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
@@ -61,7 +62,7 @@ class RiskManagementAgent(BaseAgent):
                 self._track_price(event)
             case EventType.SIGNAL:
                 await self._validate_signal(event)
-            case EventType.ORDER_CREATED:
+            case EventType.ORDER_PROPOSED:
                 await self._validate_order(event)
             case EventType.FILL:
                 self._update_position(event)
@@ -70,9 +71,9 @@ class RiskManagementAgent(BaseAgent):
             case EventType.RISK_BREACH:
                 self.logger.warning("Risk breach: %s", event.data)
 
-    def _is_market_hours(self) -> bool:
+    def _is_market_hours(self, current_time: datetime | None = None) -> bool:
         """Check if current time is within NSE trading hours (9:15-15:30 IST)."""
-        now_ist = datetime.now(_IST)
+        now_ist = current_time.astimezone(_IST) if current_time else datetime.now(_IST)
         market_open = now_ist.replace(
             hour=_MARKET_OPEN_HOUR, minute=_MARKET_OPEN_MIN, second=0, microsecond=0,
         )
@@ -81,9 +82,9 @@ class RiskManagementAgent(BaseAgent):
         )
         return market_open <= now_ist <= market_close
 
-    def _is_square_off_window(self) -> bool:
+    def _is_square_off_window(self, current_time: datetime | None = None) -> bool:
         """Check if we're in the auto-square-off window (15:15-15:30 IST)."""
-        now_ist = datetime.now(_IST)
+        now_ist = current_time.astimezone(_IST) if current_time else datetime.now(_IST)
         square_off = now_ist.replace(
             hour=_SQUARE_OFF_HOUR, minute=_SQUARE_OFF_MIN, second=0, microsecond=0,
         )
@@ -94,14 +95,13 @@ class RiskManagementAgent(BaseAgent):
 
     async def _validate_signal(self, event: Event) -> None:
         start_time = time.monotonic()
-        import time
         signal = event.data
         instrument = signal.get("instrument", "")
         direction = signal.get("direction", "neutral")
         confidence = signal.get("confidence", 0.0)
 
         # Market hours enforcement: block new entries outside trading hours
-        if direction != "neutral" and not self._is_market_hours():
+        if direction != "neutral" and not self._is_market_hours(event.timestamp):
             self.logger.warning(
                 "Signal REJECTED: outside market hours (%s %s)", instrument, direction,
             )
@@ -119,7 +119,8 @@ class RiskManagementAgent(BaseAgent):
             return
 
         # Warn during square-off window — only allow closing positions
-        if direction != "neutral" and self._is_square_off_window():
+        # 3. Auto square-off check
+        if self._is_square_off_window(event.timestamp):
             self.logger.warning(
                 "Signal REJECTED: in square-off window (15:15-15:30). Only exits allowed. %s %s",
                 instrument, direction,
@@ -212,8 +213,9 @@ class RiskManagementAgent(BaseAgent):
         ]
         # Only check exposure for orders that INCREASE position
         if not is_reducing:
-            checks.append(self._check("exposure", self._get_total_exposure() + order_value <= self._max_position_size, {
-                "total_exposure": self._get_total_exposure() + order_value, "max": self._max_position_size,
+            max_exposure = self._capital * self._max_leverage
+            checks.append(self._check("exposure", self._get_total_exposure() + order_value <= max_exposure, {
+                "total_exposure": self._get_total_exposure() + order_value, "max": max_exposure,
             }))
 
         all_passed = all(c["passed"] for c in checks)
@@ -231,13 +233,9 @@ class RiskManagementAgent(BaseAgent):
             self.logger.info("Order APPROVED: %s", order_data.get("order_id", "unknown"))
 
     def _update_position(self, event: Event) -> None:
-        instrument = event.data.get("instrument", "")
-        quantity = event.data.get("fill_quantity", 0)
-        side = event.data.get("side", "buy")
-        if side == "buy":
-            self._positions[instrument] = self._positions.get(instrument, 0) + quantity
-        else:
-            self._positions[instrument] = self._positions.get(instrument, 0) - quantity
+        # Position tracking is centralized in PositionRegistry
+        # StrategyGenAgent updates the registry on FILL events
+        pass
 
     def _update_portfolio(self, event: Event) -> None:
         self._current_value = event.data.get("total_value")
@@ -245,10 +243,23 @@ class RiskManagementAgent(BaseAgent):
             self._peak_value = self._current_value
 
     def get_position(self, instrument: str) -> float:
-        return self._positions.get(instrument, 0.0)
+        from src.risk.position_registry import position_registry
+        return float(position_registry.get_quantity(instrument))
 
     def get_total_exposure(self) -> float:
-        return sum(abs(v) for v in self._positions.values())
+        from src.risk.position_registry import position_registry
+        total = 0.0
+        for instrument, pos in position_registry.get_all_positions().items():
+            qty = pos.get("quantity", 0)
+            if qty == 0:
+                continue
+            latest_price = 0.0
+            if hasattr(self, "_price_history") and instrument in self._price_history and len(self._price_history[instrument]) > 0:
+                latest_price = self._price_history[instrument][-1]
+            else:
+                latest_price = pos.get("avg_price", 0.0)
+            total += abs(qty) * latest_price
+        return total
 
     def _get_total_exposure(self) -> float:
         return self.get_total_exposure()
@@ -259,10 +270,18 @@ class RiskManagementAgent(BaseAgent):
         direction: str,
         confidence: float,
     ) -> dict[str, Any]:
-        current_pos = abs(self._positions.get(instrument, 0))
-        return self._check("instrument_exposure", current_pos < self._max_position_size, {
+        from src.risk.position_registry import position_registry
+        current_qty = abs(position_registry.get_quantity(instrument))
+        
+        latest_price = 0.0
+        if hasattr(self, "_price_history") and instrument in self._price_history and len(self._price_history[instrument]) > 0:
+            latest_price = self._price_history[instrument][-1]
+        
+        current_pos_value = current_qty * latest_price
+        
+        return self._check("instrument_exposure", current_pos_value < self._max_position_size, {
             "instrument": instrument,
-            "current_position": current_pos,
+            "current_position_value": current_pos_value,
             "max": self._max_position_size,
             "signal_direction": direction,
             "confidence": confidence,
@@ -312,9 +331,14 @@ class RiskManagementAgent(BaseAgent):
 
     async def _check_exposure_risk(self, instrument: str) -> dict[str, Any]:
         total = self._get_total_exposure()
-        return self._check("total_exposure", total < self._max_position_size, {
+        from src.risk.kill_switch import KillSwitch
+        ks = KillSwitch()
+        capital = ks._initial_capital if ks._initial_capital else 1_000_000.0
+        max_total_exposure = capital * self._max_leverage
+        
+        return self._check("total_exposure", total <= max_total_exposure, {
             "total_exposure": total,
-            "max": self._max_position_size,
+            "max_total_exposure": max_total_exposure,
         })
 
     async def _check_drawdown_risk(self) -> dict[str, Any]:
@@ -360,21 +384,29 @@ class RiskManagementAgent(BaseAgent):
 
     async def _check_liquidity_risk(self, instrument: str) -> dict[str, Any]:
         """Check if instrument has sufficient recent volume/liquidity."""
+        require_volume = getattr(settings, "risk_require_volume_data", False)
+        min_volume = 5000.0  # Realistic threshold for large-cap
+        
         if not hasattr(self, "_volume_history") or instrument not in self._volume_history:
-            # Pass by default if no volume data is available yet
-            return self._check("liquidity", True, {"reason": "no_data"})
+            if require_volume:
+                return self._check("liquidity", False, {"reason": "no_data_but_required"})
+            return self._check("liquidity", True, {"reason": "no_data_not_required"})
 
-        vols = self._volume_history[instrument]
+        vols = [v for v in self._volume_history[instrument] if v is not None and v > 0]
         if not vols:
-            return self._check("liquidity", True, {"reason": "no_data"})
+            if require_volume:
+                return self._check("liquidity", False, {"reason": "no_valid_data_but_required"})
+            return self._check("liquidity", True, {"reason": "no_valid_data_not_required"})
 
         avg_vol = sum(vols) / len(vols)
-        # Threshold would ideally be configurable; using 1000 for demonstration
-        passed = avg_vol > 1000.0 or len(vols) < 10
+        passed = avg_vol > min_volume
+        if not passed and not require_volume and len(vols) < 10:
+             # Allow if we don't have enough data AND we don't strictly require it
+             passed = True
 
         return self._check("liquidity", passed, {
             "avg_volume": avg_vol,
-            "threshold": 1000.0,
+            "threshold": min_volume,
             "samples": len(vols)
         })
 
@@ -385,11 +417,12 @@ class RiskManagementAgent(BaseAgent):
         if direction == "neutral":
             return self._check("max_open_positions", True)
             
-        current_qty = self._positions.get(instrument, 0.0)
-        is_new_position = (current_qty == 0.0)
+        from src.risk.position_registry import position_registry
+        current_qty = position_registry.get_quantity(instrument)
+        is_new_position = (current_qty == 0)
         
         if is_new_position:
-            active_positions = [k for k, v in self._positions.items() if v != 0.0]
+            active_positions = list(position_registry.get_all_positions().keys())
             if len(active_positions) >= settings.risk_max_open_positions:
                 return self._check("max_open_positions", False, {
                     "reason": f"Maximum open positions limit reached ({settings.risk_max_open_positions})",
@@ -408,24 +441,33 @@ class RiskManagementAgent(BaseAgent):
         return self._check("earnings_calendar", True)
 
     async def _check_correlation_risk(self, instrument: str) -> dict[str, Any]:
-        active_positions = [k for k, v in self._positions.items() if v != 0.0 and k != instrument]
+        from src.risk.position_registry import position_registry
+        active_positions = [k for k, v in position_registry.get_all_positions().items() if v.get("quantity", 0) != 0 and k != instrument]
         if not active_positions:
             return self._check("correlation", True)
             
         system = getattr(self, "system", None)
-        if not system or not hasattr(system, "market_intel") or not hasattr(system.market_intel, "_candle_prices"):
+        if not system or not hasattr(system, "strategy_gen") or not hasattr(system.strategy_gen, "_candle_prices"):
             return self._check("correlation", True)
             
-        prices_new = list(system.market_intel._candle_prices.get(instrument, {}).get("minute", []))
+        prices_new = list(system.strategy_gen._candle_prices.get(instrument, {}).get("minute", []))
+        if not prices_new:
+            prices_new = list(system.strategy_gen._candle_prices.get(instrument, {}).get("1m", []))
+            
         if len(prices_new) < 30:
             return self._check("correlation", True)
             
         import numpy as np
         
-        rets_new = np.diff(prices_new) / prices_new[:-1]
+        # Guard against zero prices to avoid division by zero
+        prices_new_arr = np.array(prices_new)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            rets_new = np.where(prices_new_arr[:-1] != 0, np.diff(prices_new_arr) / prices_new_arr[:-1], 0)
         
         for pos_sym in active_positions:
-            prices_pos = list(system.market_intel._candle_prices.get(pos_sym, {}).get("minute", []))
+            prices_pos = list(system.strategy_gen._candle_prices.get(pos_sym, {}).get("minute", []))
+            if not prices_pos:
+                prices_pos = list(system.strategy_gen._candle_prices.get(pos_sym, {}).get("1m", []))
             if len(prices_pos) < 30:
                 continue
                 
@@ -433,8 +475,9 @@ class RiskManagementAgent(BaseAgent):
             aligned_new = np.array(prices_new[-min_len:])
             aligned_pos = np.array(prices_pos[-min_len:])
             
-            r_new = np.diff(aligned_new) / aligned_new[:-1]
-            r_pos = np.diff(aligned_pos) / aligned_pos[:-1]
+            with np.errstate(divide='ignore', invalid='ignore'):
+                r_new = np.where(aligned_new[:-1] != 0, np.diff(aligned_new) / aligned_new[:-1], 0)
+                r_pos = np.where(aligned_pos[:-1] != 0, np.diff(aligned_pos) / aligned_pos[:-1], 0)
             
             if np.std(r_new) == 0 or np.std(r_pos) == 0:
                 continue

@@ -122,6 +122,14 @@ async def main():
     watchlist = os.getenv("TRA_WATCHLIST", "RELIANCE,TCS,INFY,HDFCBANK").split(",")
     system.set_watchlist(watchlist)
     logger.info("Watchlist: %s", watchlist)
+    if settings.live_trading_enabled:
+        if not settings.kite_api_key or not settings.kite_access_token:
+            raise RuntimeError(
+                "CRITICAL: TRA_LIVE_TRADING_ENABLED is True but Kite credentials (TRA_KITE_API_KEY/TRA_KITE_ACCESS_TOKEN) are missing! "
+                "Refusing to start in live mode without valid broker credentials."
+            )
+        logger.warning("!!! WARNING: SYSTEM STARTING IN LIVE TRADING MODE !!!")
+
     await system.start()
 
     dashboard_type = os.getenv("TRA_DASHBOARD_TYPE", "http")

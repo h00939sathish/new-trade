@@ -148,6 +148,22 @@ class PositionRegistry:
                 elif pos["side"] == "short" and (new_sl < pos["stop_loss"] or pos["stop_loss"] == 0.0):
                     pos["stop_loss"] = new_sl
 
+    async def sync_from_portfolio(self, portfolio_positions: dict[str, dict[str, Any]]) -> None:
+        """Synchronize positions from the PortfolioAgent's internal state."""
+        async with self._get_lock():
+            self._positions.clear()
+            for instrument, data in portfolio_positions.items():
+                if data.get("quantity", 0) != 0:
+                    self._positions[instrument] = {
+                        "quantity": data["quantity"],
+                        "avg_price": data.get("avg_cost", 0.0),
+                        "side": "long" if data["quantity"] > 0 else "short",
+                        "stop_loss": 0.0,
+                        "take_profit": 0.0,
+                        "stop_loss_pct": 0.0,
+                        "take_profit_pct": 0.0,
+                    }
+
     def reset(self) -> None:
         """Clear all positions (used in testing)."""
         self._positions.clear()

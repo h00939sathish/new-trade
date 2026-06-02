@@ -1,6 +1,6 @@
 import pytest
 
-from src.agents.strategy_gen import (
+from src.strategies.technical import (
     IchimokuStrategy,
     MACDStrategy,
     VolumeStrategy,

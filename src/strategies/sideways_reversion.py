@@ -57,6 +57,9 @@ class SidewaysReversionStrategy(Strategy):
         if len(prices) < max(self.bb_window, self.rsi_window, self.ema_filter.period + self.ema_filter.slope_lookback, self.atr_window):
             return None
             
+        if not highs or not lows or len(highs) < len(prices) or len(lows) < len(prices):
+            return None
+            
         # Check regime
         regime = self.ema_filter.evaluate(prices)
         if regime != RegimeState.MEAN_REVERSION_ONLY:

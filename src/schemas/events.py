@@ -11,6 +11,7 @@ class EventType(StrEnum):
     OHLCV = "market.ohlcv"
     SIGNAL = "signal.generated"
     CANDIDATE_SIGNAL = "signal.candidate"
+    ORDER_PROPOSED = "order.proposed"
     ORDER_CREATED = "order.created"
     ORDER_ACCEPTED = "order.accepted"
     ORDER_REJECTED = "order.rejected"
@@ -40,6 +41,7 @@ class OrderType(StrEnum):
 
 
 class OrderStatus(StrEnum):
+    PROPOSED = "proposed"
     PENDING = "pending"
     ACCEPTED = "accepted"
     REJECTED = "rejected"
@@ -65,7 +67,7 @@ class Exchange(StrEnum):
 class EventMetadata(BaseModel):
     producer: str
     agent_id: str | None = None
-    correlation_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    correlation_id: str | None = Field(default_factory=lambda: uuid.uuid4().hex)
     trace_id: str | None = None
     version: int = 1
 

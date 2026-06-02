@@ -12,16 +12,24 @@ class KiteClient:
         self.access_token = access_token or settings.kite_access_token
         self._kite: Any = None
         self._connected = False
+        self._placeholder_mode = False
         self.connection_error: str | None = None
 
     @property
     def is_connected(self) -> bool:
         return self._connected
 
+    @property
+    def is_placeholder_mode(self) -> bool:
+        return self._placeholder_mode
+
     async def connect(self) -> None:
         if not self.api_key or not self.access_token:
+            if settings.live_trading_enabled:
+                raise ConnectionError("Kite credentials are required when live trading is enabled")
             logger.warning("Kite credentials not configured; using placeholder mode")
             self._connected = True
+            self._placeholder_mode = True
             return
         try:
             import kiteconnect
@@ -34,18 +42,24 @@ class KiteClient:
                 exceptions=(Exception,)
             )
             self._connected = True
+            self._placeholder_mode = False
             logger.info("Connected to Kite: %s", profile.get("user_id", "unknown"))
         except ImportError:
+            if settings.live_trading_enabled:
+                raise
             logger.warning("kiteconnect not installed; using placeholder mode")
             self._connected = True
+            self._placeholder_mode = True
         except Exception as e:
             self._connected = False
+            self._placeholder_mode = False
             self.connection_error = str(e)
             logger.warning("Kite connection failed (will use paper mode): %s", e)
 
     async def disconnect(self) -> None:
         self._kite = None
         self._connected = False
+        self._placeholder_mode = False
         logger.info("Kite client disconnected")
 
     def get_profile(self) -> dict[str, Any]:

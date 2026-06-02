@@ -29,6 +29,8 @@ async def test_regime_detection_and_reweighting():
     # To trigger trending up: price needs to go up steadily and trend_strength > 25
     # Let's inject 10 ticks going up
     from src.schemas.events import OHLCVEvent
+    from datetime import datetime, timezone, timedelta
+    base_time = datetime.now(timezone.utc)
     for i in range(12):
         close_price = 100.0 + i * 2.0
         event = OHLCVEvent.create(
@@ -42,6 +44,7 @@ async def test_regime_detection_and_reweighting():
             volume=5000.0,
             producer="test"
         )
+        event.timestamp = base_time + timedelta(seconds=i * 60)
         await regime_agent.on_event(event)
 
     # Check if regime changed
@@ -64,5 +67,6 @@ async def test_regime_detection_and_reweighting():
     await strat_agent.on_event(event_change)
 
     # Momentum weight should scale up, mean_reversion should scale down
-    assert strat_agent._strategy_weights["momentum"] == 0.5
-    assert strat_agent._strategy_weights["mean_reversion"] == 0.05
+    # (Values are normalized to sum to 1.0)
+    assert strat_agent._strategy_weights["momentum"] == pytest.approx(10/11)
+    assert strat_agent._strategy_weights["mean_reversion"] == pytest.approx(1/11)

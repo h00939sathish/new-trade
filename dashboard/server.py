@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
+import os
+import secrets
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -21,6 +22,8 @@ FRONTEND_DIR = BASE_DIR / "dist"
 _dashboard_app: FastAPI | None = None
 _trading_system: Any = None
 _metrics_collector: Any = None
+
+CONTROL_AUTH_ENV = "TRA_HTTP_AUTH_TOKEN"
 
 
 def _agent_health_summary(health_data: dict[str, Any]) -> tuple[int, int, str]:
@@ -73,6 +76,37 @@ def _metrics_text() -> str:
     return ""
 
 
+def _configured_operator_token() -> str:
+    return os.environ.get(CONTROL_AUTH_ENV, "").strip()
+
+
+async def _require_operator_auth(request: Request) -> None:
+    token = _configured_operator_token()
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"{CONTROL_AUTH_ENV} is required for control-plane actions",
+        )
+
+    scheme, _, credential = request.headers.get("authorization", "").partition(" ")
+    if scheme.lower() != "bearer" or not credential or not secrets.compare_digest(credential, token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+async def _json_body(request: Request) -> dict[str, Any]:
+    if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
+        return {}
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return {}
+    return body if isinstance(body, dict) else {}
+
+
 async def _health_payload() -> dict[str, Any]:
     health = {}
     if _trading_system is not None:
@@ -101,7 +135,7 @@ async def _health_payload() -> dict[str, Any]:
         },
         "reconciliation": {
             "available": exec_state["broker_available"],
-            "matched": True if exec_state["broker_available"] else None,
+            "matched": health.get("portfolio_opt", {}).get("reconciliation_matched", True) if exec_state["broker_available"] else None,
             "broker": exec_state["broker_name"],
             "cash_delta": 0 if exec_state["broker_available"] else None,
             "portfolio_value_delta": 0 if exec_state["broker_available"] else None,
@@ -210,6 +244,18 @@ async def _build_paper_report(source: str = "paper") -> dict[str, Any]:
                     "error_message": None,
                     "created_at": fill.timestamp.isoformat(),
                 })
+                recent_trades.append({
+                    "symbol": fill.instrument,
+                    "action": fill.side.value.upper(),
+                    "shares": fill.fill_quantity,
+                    "price": fill.fill_price,
+                    "execution_price": fill.fill_price,
+                    "slippage": 0.0,
+                    "commission": 0.0,
+                    "strategy": "consensus",
+                    "pnl": 0.0,
+                    "timestamp": fill.timestamp.isoformat(),
+                })
                 
         if hasattr(exec_agent, "_twap_orders"):
             for twap_id, twap_state in exec_agent._twap_orders.items():
@@ -230,18 +276,6 @@ async def _build_paper_report(source: str = "paper") -> dict[str, Any]:
                         "error_message": None,
                         "created_at": event.timestamp.isoformat()
                     })
-                recent_trades.append({
-                    "symbol": fill.instrument,
-                    "action": fill.side.value.upper(),
-                    "shares": fill.fill_quantity,
-                    "price": fill.fill_price,
-                    "execution_price": fill.fill_price,
-                    "slippage": 0.0,
-                    "commission": 0.0,
-                    "strategy": "consensus",
-                    "pnl": 0.0,
-                    "timestamp": fill.timestamp.isoformat(),
-                })
 
     recent_orders = sorted(recent_orders, key=lambda x: x["created_at"], reverse=True)[:20]
     recent_trades = sorted(recent_trades, key=lambda x: x["timestamp"], reverse=True)[:20]
@@ -315,7 +349,7 @@ async def _build_paper_report(source: str = "paper") -> dict[str, Any]:
         },
         "reconciliation": {
             "available": exec_state["broker_available"],
-            "matched": True if exec_state["broker_available"] else None,
+            "matched": health_data.get("portfolio_opt", {}).get("reconciliation_matched", True) if exec_state["broker_available"] else None,
             "broker": exec_state["broker_name"],
             "cash_delta": 0 if exec_state["broker_available"] else None,
             "portfolio_value_delta": 0 if exec_state["broker_available"] else None,
@@ -445,7 +479,20 @@ def create_app(system: Any = None, metrics: Any = None) -> FastAPI:
 
     @app.get("/api/orders/pending")
     async def api_orders_pending():
-        return JSONResponse({"orders": [], "total": 0})
+        orders = []
+        exec_agent = getattr(_trading_system, "execution", None)
+        if exec_agent:
+            for order_id, order in exec_agent._open_orders.items():
+                orders.append({
+                    "order_ref": order_id,
+                    "symbol": order.data.get("instrument", ""),
+                    "side": order.data.get("side", "").upper(),
+                    "quantity": order.data.get("quantity", 0),
+                    "status": order.data.get("status", ""),
+                    "created_at": order.timestamp.isoformat(),
+                })
+        orders.sort(key=lambda item: item["created_at"], reverse=True)
+        return JSONResponse({"orders": orders, "total": len(orders)})
 
     @app.get("/api/control-plane/strategies")
     async def api_strategies():
@@ -506,7 +553,7 @@ def create_app(system: Any = None, metrics: Any = None) -> FastAPI:
                 "pending_orders": exec_state["pending_orders"],
                 "queue_total": 0,
                 "broker_health": {"available": exec_state["broker_available"], "status": exec_state["broker_name"]},
-                "reconciliation": {"available": exec_state["broker_available"], "matched": True if exec_state["broker_available"] else None, "broker": exec_state["broker_name"]},
+                "reconciliation": {"available": exec_state["broker_available"], "matched": health.get("portfolio_opt", {}).get("reconciliation_matched", True) if exec_state["broker_available"] else None, "broker": exec_state["broker_name"]},
             },
             "telemetry": _telemetry_summary(exec_state, metrics),
             "outputs": {"analysis_timestamp": datetime.now(timezone.utc).isoformat(), "validation_alpha_pct": 2.3},
@@ -531,7 +578,7 @@ def create_app(system: Any = None, metrics: Any = None) -> FastAPI:
         return JSONResponse({"candidates": candidates})
 
     @app.post("/api/candidates/approve/{candidate_id}")
-    async def api_approve_candidate(candidate_id: str):
+    async def api_approve_candidate(candidate_id: str, _operator: None = Depends(_require_operator_auth)):
         if _trading_system and hasattr(_trading_system, "reflection_engine"):
             re = _trading_system.reflection_engine
             success = await re.approve_candidate(candidate_id)
@@ -541,7 +588,7 @@ def create_app(system: Any = None, metrics: Any = None) -> FastAPI:
         return JSONResponse({"status": "error", "message": "Reflection Engine not running"}, status_code=503)
 
     @app.post("/api/candidates/reject/{candidate_id}")
-    async def api_reject_candidate(candidate_id: str):
+    async def api_reject_candidate(candidate_id: str, _operator: None = Depends(_require_operator_auth)):
         if _trading_system and hasattr(_trading_system, "reflection_engine"):
             re = _trading_system.reflection_engine
             success = await re.reject_candidate(candidate_id)
@@ -553,26 +600,37 @@ def create_app(system: Any = None, metrics: Any = None) -> FastAPI:
     @app.post("/api/control-plane/controls/emergency-stop")
     @app.post("/api/control-plane/controls/reset")
     @app.post("/api/kill-switch/reset")
-    async def api_control_action(request: Request):
+    async def api_control_action(request: Request, _operator: None = Depends(_require_operator_auth)):
         path = request.url.path
+        body = await _json_body(request)
+        from src.risk.kill_switch import KillSwitch
+
+        kill_switch = KillSwitch()
         if path.endswith("/reset"):
-            from src.risk.kill_switch import KillSwitch
-            KillSwitch().reset(_trading_system)
-            return JSONResponse({"status": "ok", "message": "Kill switch reset successfully"})
-        return JSONResponse({"status": "ok", "message": "Action acknowledged"})
+            if not kill_switch.active:
+                return JSONResponse(
+                    {"status": "error", "message": "Kill switch is not active; reset refused"},
+                    status_code=409,
+                )
+            kill_switch.reset(_trading_system)
+            return JSONResponse({"status": "ok", "message": "Kill switch reset successfully", "active": False})
+
+        reason = str(body.get("reason") or "dashboard emergency stop").strip() or "dashboard emergency stop"
+        await kill_switch.trigger(reason, _trading_system)
+        return JSONResponse({"status": "ok", "message": "Kill switch triggered", "active": kill_switch.active, "reason": kill_switch.reason})
 
     @app.post("/api/control-plane/controls/approvals")
-    async def api_approvals(request: Request):
+    async def api_approvals(request: Request, _operator: None = Depends(_require_operator_auth)):
         return JSONResponse({"status": "ok", "message": "Approval toggle acknowledged"})
 
     @app.post("/api/orders/approve")
     @app.post("/api/orders/reject")
-    async def api_order_action(request: Request):
+    async def api_order_action(request: Request, _operator: None = Depends(_require_operator_auth)):
         return JSONResponse({"status": "ok", "message": "Order action acknowledged"})
 
     @app.post("/api/trade/execute")
-    async def api_trade_execute(request: Request):
-        body = await request.json() if request.headers.get("content-type") == "application/json" else {}
+    async def api_trade_execute(request: Request, _operator: None = Depends(_require_operator_auth)):
+        body = await _json_body(request)
         symbol = str(body.get("symbol", "")).strip().upper()
         side = str(body.get("side", "")).strip().upper()
         return JSONResponse({

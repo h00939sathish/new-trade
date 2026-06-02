@@ -51,8 +51,9 @@ async def run(days: int):
         sync_bus.register_agent(agent)
         
         original_start = agent.start
-        async def patched_start():
-            return await original_start(run_background_loop=False)
+        import functools
+        async def patched_start(*args, orig=original_start, **kwargs):
+            return await orig(run_background_loop=False)
         agent.start = patched_start
 
     # 4. Start system (this now uses patched start and sync bus)
@@ -98,9 +99,20 @@ async def run(days: int):
     logger.info("=== SIMULATION COMPLETE ===")
     logger.info(f"Total Ticks Processed: {ticks_processed}")
     
-    fills = system.execution._filled_orders
-    total_fills = sum(len(f) for f in fills.values())
-    logger.info(f"Total Trade Fills Generated: {total_fills}")
+    exec_agent = system.get_agent("execution")
+    if exec_agent:
+        fills = getattr(exec_agent, "_filled_orders", {})
+        total_fills = sum(len(f) for f in fills.values())
+        logger.info(f"Total Trade Fills Generated: {total_fills}")
+        
+    portfolio = system.get_agent("portfolio_opt")
+    if portfolio:
+        health = await portfolio.health()
+        logger.info(f"Total P&L: {health.get('total_pnl', 0.0):.2f}")
+        logger.info(f"Current Capital: {health.get('current_capital', 0.0):.2f}")
+        logger.info(f"Total Positions: {health.get('total_positions', 0)}")
+        
+    logger.info("Stopping trading system gracefully...")
     
     # Stop cleanly
     await system.stop()

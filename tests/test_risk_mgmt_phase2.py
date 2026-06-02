@@ -3,6 +3,7 @@ from datetime import UTC, datetime, date
 from src.agents.risk_mgmt import RiskManagementAgent
 from src.config.settings import settings
 from src.schemas.events import Event, EventType, Exchange, SignalEvent
+from src.risk.position_registry import position_registry
 
 
 @pytest.mark.asyncio
@@ -11,10 +12,12 @@ async def test_risk_mgmt_max_open_positions():
     settings.risk_max_open_positions = 1
     
     agent = RiskManagementAgent()
-    agent._is_market_hours = lambda: True
-    agent._is_square_off_window = lambda: False
-    # Emulate having an open position in RELIANCE
-    agent._positions["RELIANCE"] = 50.0
+    agent._is_market_hours = lambda *args, **kwargs: True
+    agent._is_square_off_window = lambda *args, **kwargs: False
+    
+    # Emulate having an open position in RELIANCE using PositionRegistry
+    position_registry.reset()
+    await position_registry.update_from_fill("RELIANCE", "buy", 50, 100.0)
     
     # Try sending signal for TCS (new position)
     event_tcs = SignalEvent.create(
@@ -46,8 +49,8 @@ async def test_risk_mgmt_max_open_positions():
 @pytest.mark.asyncio
 async def test_risk_mgmt_earnings_filter():
     agent = RiskManagementAgent()
-    agent._is_market_hours = lambda: True
-    agent._is_square_off_window = lambda: False
+    agent._is_market_hours = lambda *args, **kwargs: True
+    agent._is_square_off_window = lambda *args, **kwargs: False
     
     # Mock earnings calendar filter to say TCS has earnings today
     today = date.today()
@@ -83,14 +86,15 @@ async def test_risk_mgmt_earnings_filter():
 @pytest.mark.asyncio
 async def test_risk_mgmt_correlation_risk():
     agent = RiskManagementAgent()
-    agent._is_market_hours = lambda: True
-    agent._is_square_off_window = lambda: False
+    agent._is_market_hours = lambda *args, **kwargs: True
+    agent._is_square_off_window = lambda *args, **kwargs: False
     
-    # Emulate having an open position in INFY
-    agent._positions["INFY"] = 100.0
+    # Emulate having an open position in INFY using PositionRegistry
+    position_registry.reset()
+    await position_registry.update_from_fill("INFY", "buy", 100, 100.0)
     
-    # Mock system and market_intel to supply highly correlated returns for INFY and TCS
-    class MockMarketIntel:
+    # Mock system and strategy_gen to supply highly correlated returns for INFY and TCS
+    class MockStrategyGen:
         def __init__(self):
             # Perfect positive correlation price series
             self._candle_prices = {
@@ -99,7 +103,7 @@ async def test_risk_mgmt_correlation_risk():
             }
     class MockSystem:
         def __init__(self):
-            self.market_intel = MockMarketIntel()
+            self.strategy_gen = MockStrategyGen()
             
     agent.system = MockSystem()
     

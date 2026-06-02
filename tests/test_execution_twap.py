@@ -26,10 +26,9 @@ async def test_twap_order_slicing():
     twap_id = list(agent._twap_orders.keys())[0]
     twap = agent._twap_orders[twap_id]
 
-    # Slicing logic: min(100, max(10, 1000//5)) = 100 per chunk
-    # 1000 / 100 = 10 chunks
-    assert len(twap["chunks"]) == 10
-    assert all(c == 100 for c in twap["chunks"])
+    # Slicing respects risk_max_order_value: 50_000 / 2500 = 20 per chunk.
+    assert len(twap["chunks"]) == 50
+    assert all(c == 20 for c in twap["chunks"])
 
     # Run twap loop step manually to execute first chunk
     # Temporarily set interval to 0 so it executes immediately
@@ -55,8 +54,8 @@ async def test_twap_order_slicing():
     await single_step_loop()
 
     assert len(emitted) == 1
-    assert emitted[0].data["quantity"] == 100
-    assert twap["executed"] == 100
-    assert len(twap["chunks"]) == 9
+    assert emitted[0].data["quantity"] == 20
+    assert twap["executed"] == 20
+    assert len(twap["chunks"]) == 49
 
     await agent.stop()

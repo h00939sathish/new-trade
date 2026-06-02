@@ -20,6 +20,12 @@ class MockBroker:
         self.orders.append(order)
         return f"mock_{len(self.orders)}"
 
+    async def get_orders(self):
+        return []
+
+    async def get_positions(self):
+        return []
+
 @pytest.mark.asyncio
 async def test_twap_iceberg_execution():
     broker = MockBroker()
@@ -36,10 +42,9 @@ async def test_twap_iceberg_execution():
     }
 
     # Quantity 1500 triggers TWAP (>= 500) and Iceberg (>= 1000)
-    # _start_twap chunking: max(10, 1500 // 5) = 300
-    # chunk_size = min(100, 300) = 100
-    # 15 chunks of 100
-    # iceberg disclosed_qty = max(1, 100 // 10) = 10
+    # _start_twap chunking respects risk_max_order_value:
+    # 50_000 / 2500 = 20 shares per chunk.
+    # iceberg disclosed_qty = max(1, 20 // 10) = 2
     await agent._start_twap(signal, total_quantity=1500, side=OrderSide.BUY, price=2500.0, iceberg=True)
 
     # Force one execution of the twap loop (it runs every 30s by default)
@@ -56,7 +61,7 @@ async def test_twap_iceberg_execution():
     first_order = broker.orders[0]
 
     assert first_order["tradingsymbol"] == "RELIANCE"
-    assert first_order["quantity"] == 100
-    assert first_order["disclosed_quantity"] == 10
+    assert first_order["quantity"] == 20
+    assert first_order["disclosed_quantity"] == 2
 
-    await agent.on_stop()
+    await agent.stop()

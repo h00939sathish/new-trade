@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -17,44 +18,58 @@ class PostgresEventStore(EventStore):
     def __init__(self, dsn: str):
         self.dsn = dsn.replace("postgresql+asyncpg://", "postgresql://")
         self._pool: asyncpg.Pool | None = None
+        self._connect_lock = asyncio.Lock()
 
     async def connect(self) -> None:
-        self._pool = await asyncpg.create_pool(self.dsn, min_size=2, max_size=10)
-        async with self._pool.acquire() as conn:
-            await conn.execute("""
-                CREATE TABLE IF NOT EXISTS events (
-                    position BIGSERIAL PRIMARY KEY,
-                    event_id TEXT NOT NULL UNIQUE,
-                    event_type TEXT NOT NULL,
-                    stream TEXT NOT NULL,
-                    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    data JSONB NOT NULL,
-                    metadata JSONB NOT NULL
-                )
-            """)
-            await conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_events_stream
-                ON events(stream, position)
-            """)
-            await conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_events_timestamp
-                ON events(timestamp)
-            """)
-            await conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_events_type
-                ON events(event_type)
-            """)
-            if settings.timescaledb_enabled:
-                try:
+        if self._pool and not self._pool.is_closing():
+            return
+
+        async with self._connect_lock:
+            if self._pool and not self._pool.is_closing():
+                return
+
+            pool = await asyncpg.create_pool(self.dsn, min_size=2, max_size=10)
+            try:
+                async with pool.acquire() as conn:
                     await conn.execute("""
-                        SELECT create_hypertable('events', 'timestamp',
-                            if_not_exists => TRUE)
+                        CREATE TABLE IF NOT EXISTS events (
+                            position BIGSERIAL PRIMARY KEY,
+                            event_id TEXT NOT NULL UNIQUE,
+                            event_type TEXT NOT NULL,
+                            stream TEXT NOT NULL,
+                            timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            data JSONB NOT NULL,
+                            metadata JSONB NOT NULL
+                        )
                     """)
-                except Exception as e:
-                    logger.warning(
-                        "Failed to create TimescaleDB hypertable (extension might be missing): %s. "
-                        "Continuing with standard Postgres table.", e
-                    )
+                    await conn.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_events_stream
+                        ON events(stream, position)
+                    """)
+                    await conn.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_events_timestamp
+                        ON events(timestamp)
+                    """)
+                    await conn.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_events_type
+                        ON events(event_type)
+                    """)
+                    if settings.timescaledb_enabled:
+                        try:
+                            await conn.execute("""
+                                SELECT create_hypertable('events', 'timestamp',
+                                    if_not_exists => TRUE)
+                            """)
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to create TimescaleDB hypertable (extension might be missing): %s. "
+                                "Continuing with standard Postgres table.", e
+                            )
+            except Exception:
+                await pool.close()
+                raise
+
+            self._pool = pool
 
     async def disconnect(self) -> None:
         if self._pool:
@@ -62,7 +77,7 @@ class PostgresEventStore(EventStore):
             self._pool = None
 
     def _get_pool(self) -> asyncpg.Pool:
-        if self._pool is None:
+        if self._pool is None or self._pool.is_closing():
             msg = "Event store not connected. Call connect() first."
             raise RuntimeError(msg)
         return self._pool

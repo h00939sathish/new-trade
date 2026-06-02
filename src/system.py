@@ -41,10 +41,14 @@ class TradingSystem:
                 from src.connectors.groww import GrowwMarketDataProvider
                 self._groww_provider = GrowwMarketDataProvider()
 
-            if settings.kite_api_key and settings.kite_access_token:
+            if settings.live_trading_enabled and settings.kite_api_key and settings.kite_access_token:
                 from src.connectors.kite import KiteBroker, KiteClient
                 self._kite_client = KiteClient()
                 self._kite_broker = KiteBroker(self._kite_client)
+            elif settings.kite_api_key or settings.kite_access_token:
+                logging.getLogger("system").warning(
+                    "Kite credentials are configured but TRA_LIVE_TRADING_ENABLED is false; starting in paper mode."
+                )
 
         if not self._angel_provider and not self._groww_provider:
             from src.connectors.jugaad import JugaadMarketDataProvider
@@ -69,6 +73,7 @@ class TradingSystem:
         )
         self.regime_detection = RegimeDetectionAgent(
             event_store=self._event_store,
+            min_stable_seconds=240,
         )
         self.alert = AlertAgent(event_store=self._event_store)
         self.reconciliation = ReconciliationAgent(
@@ -94,20 +99,37 @@ class TradingSystem:
             alternative_data_provider=None, # Will auto-init
             poll_interval=3600,
         )
-        self._agents = [
-            self.market_intel,
-            self.strategy_gen,
-            self.risk_mgmt,
-            self.execution,
+        self._agents = []
+        if settings.agent_market_intel_enabled:
+            self._agents.append(self.market_intel)
+        if settings.agent_strategy_gen_enabled:
+            self._agents.append(self.strategy_gen)
+        if settings.agent_risk_mgmt_enabled:
+            self._agents.append(self.risk_mgmt)
+        if settings.agent_execution_enabled:
+            self._agents.append(self.execution)
+        if settings.agent_alert_enabled:
+            self._agents.append(self.alert)
+        if settings.agent_reflection_enabled:
+            self._agents.append(self.reflection)
+            
+        # These agents are always enabled since they lack settings toggle
+        self._agents.extend([
             self.portfolio_opt,
             self.regime_detection,
-            self.alert,
             self.reconciliation,
-            self.reflection,
             self.personas,
-        ]
+        ])
+
         for agent in self._agents:
             agent.system = self
+
+    def get_agent(self, name: str):
+        """Retrieve an active agent by name."""
+        for agent in self._agents:
+            if agent.name == name:
+                return agent
+        return None
 
     async def start(self) -> None:
         from src.risk.kill_switch import KillSwitch
@@ -118,6 +140,15 @@ class TradingSystem:
             auto_reset=settings.kill_switch_auto_reset,
         )
 
+        if self._kite_broker is not None and not settings.live_trading_enabled:
+            logging.getLogger("system").warning(
+                "Live broker object supplied while TRA_LIVE_TRADING_ENABLED is false; forcing paper trading."
+            )
+            self._kite_broker = None
+            self.execution._paper_trading = True
+            self.execution._broker = None
+            self._kite_client = None
+
         if self._kite_client is not None:
             try:
                 await self._kite_client.connect()
@@ -127,9 +158,10 @@ class TradingSystem:
                     )
             except Exception as e:
                 _logger = logging.getLogger("system")
-                _logger.warning(
-                    "Broker connection failed, falling back to paper trading: %s", e,
-                )
+                if settings.live_trading_enabled:
+                    _logger.critical("Broker connection failed; live trading startup refused: %s", e)
+                    raise
+                _logger.warning("Broker connection failed, falling back to paper trading: %s", e)
                 self._kite_broker = None
                 self.execution._paper_trading = True
                 self.execution._broker = None

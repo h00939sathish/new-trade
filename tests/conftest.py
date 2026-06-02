@@ -13,3 +13,11 @@ def pytest_sessionstart():
     shm = Path("trading_events.db-shm")
     if shm.exists():
         shm.unlink()
+
+    import shutil
+    cache_dir = Path("data/historical")
+    if cache_dir.exists():
+        try:
+            shutil.rmtree(cache_dir)
+        except Exception:
+            pass

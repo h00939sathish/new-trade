@@ -74,6 +74,7 @@ async def test_market_intel_builder():
 async def test_strategy_gen_start_stop(strategy_gen: StrategyGenAgent):
     await strategy_gen.start()
     assert strategy_gen.status.value == "running"
+    assert strategy_gen._strategies
     await strategy_gen.stop()
     assert strategy_gen.status.value == "stopped"
 

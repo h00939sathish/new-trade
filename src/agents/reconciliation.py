@@ -47,7 +47,7 @@ class ReconciliationAgent(BaseAgent):
     async def _run_reconciliation(self) -> None:
         try:
             # 1. Fetch live open positions
-            live_positions = self._broker.get_positions()
+            live_positions = await self._broker.get_positions()
             
             # 2. Compare against position registry
             internal_positions = position_registry.get_all_positions()

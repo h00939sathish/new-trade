@@ -11,7 +11,7 @@ from src.schemas.events import Event, EventType
 logger = logging.getLogger("agent.regime")
 
 class RegimeDetectionAgent(BaseAgent):
-    def __init__(self, event_store=None, window: int = 20, min_stable_seconds: int = 240):
+    def __init__(self, event_store=None, window: int = 20, min_stable_seconds: int = 0):
         super().__init__(name="regime_detection", event_store=event_store)
         self._window = window
         self._prices: dict[str, deque[float]] = {}
@@ -99,26 +99,26 @@ class RegimeDetectionAgent(BaseAgent):
         else:
             new_regime = "mean_reverting"
 
+        now_ts = event.timestamp.timestamp()
         if new_regime != self._current_regime:
-            now = time.monotonic()
-            self._pending_regime = new_regime
-            self._pending_since = now
-            self.logger.info(
-                "Pending regime %s for %s (strength=%.1f, atr=%.2f, atr_ma=%.2f)",
-                new_regime,
-                instrument,
-                trend_strength,
-                atr,
-                atr_ma,
-            )
-            return
+            if self._pending_regime != new_regime:
+                self._pending_regime = new_regime
+                self._pending_since = now_ts
+                self.logger.info(
+                    "Pending regime %s for %s (strength=%.1f, atr=%.2f, atr_ma=%.2f)",
+                    new_regime,
+                    instrument,
+                    trend_strength,
+                    atr,
+                    atr_ma,
+                )
 
-        now_ts = time.monotonic()
-        if (
-            self._pending_regime == new_regime
-            and self._pending_since is not None
-            and (now_ts - self._pending_since) >= self._min_stable_seconds
-        ):
+            if (
+                self._pending_since is None
+                or (now_ts - self._pending_since) < self._min_stable_seconds
+            ):
+                return
+
             last_emit = self._last_emit_ts.get(instrument, 0.0)
             if now_ts - last_emit < self._min_stable_seconds:
                 return
@@ -135,6 +135,10 @@ class RegimeDetectionAgent(BaseAgent):
             await self.emit(regime_event)
             self._pending_regime = None
             self._pending_since = None
+            return
+
+        self._pending_regime = None
+        self._pending_since = None
 
     def _compute_trend_strength(self, highs: list[float], lows: list[float], closes: list[float], period: int) -> float:
         if len(closes) < period + 1:

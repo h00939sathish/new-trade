@@ -130,11 +130,12 @@ class ATRStrategy(Strategy):
         prev = prices[-2]
         if prev == 0:
             return None
-        change = (current - prev) / prev
-        if abs(change) < self.threshold:
+        change_pct = (current - prev) / prev
+        change_abs = current - prev
+        if abs(change_pct) < self.threshold:
             return None
-        ratio = abs(change) / atr if atr > 0 else 0
-        direction = "long" if change > 0 else "short"
+        ratio = abs(change_abs) / atr if atr > 0 else 0
+        direction = "long" if change_pct > 0 else "short"
         confidence = min(ratio / self.multiplier, 0.95)
         return {
             "direction": direction,
@@ -142,7 +143,7 @@ class ATRStrategy(Strategy):
             "price": current,
             "features": {
                 "atr": atr,
-                "change_pct": change,
+                "change_pct": change_pct,
                 "ratio": ratio,
             },
         }

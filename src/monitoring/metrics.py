@@ -34,6 +34,18 @@ class MetricsCollector:
     def record_latency(self, seconds: float) -> None:
         self._latency_history.append(seconds)
 
+    def _connection_active(self, target: Any) -> bool:
+        connection_state = getattr(target, "is_connected", None)
+        if connection_state is None:
+            return False
+        try:
+            if callable(connection_state):
+                connection_state = connection_state()
+        except Exception as exc:
+            logger.warning("Failed to read broker connection state: %s", exc)
+            return False
+        return bool(connection_state)
+
     def snapshot(self) -> dict[str, Any]:
         import time
         uptime = time.time() - self._start_time if self._start_time > 0 else 0
@@ -87,9 +99,9 @@ class MetricsCollector:
         broker_connected = 0
         if system and hasattr(system, "execution") and system.execution and hasattr(system.execution, "_broker") and system.execution._broker:
             broker = system.execution._broker
-            if hasattr(broker, "is_connected") and broker.is_connected():
+            if self._connection_active(broker):
                 broker_connected = 1
-            elif hasattr(broker, "_client") and hasattr(broker._client, "is_connected") and broker._client.is_connected():
+            elif hasattr(broker, "_client") and self._connection_active(broker._client):
                 broker_connected = 1
 
         lines.extend([

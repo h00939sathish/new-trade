@@ -21,6 +21,7 @@ class PortfolioOptimizationAgent(BaseAgent):
         self._peak_capital = initial_capital
         self._positions: dict[str, dict[str, Any]] = {}
         self._pnl: float = 0.0
+        self._reconciliation_matched: bool = True
         self._trade_history: list[dict[str, Any]] = []
         self._kelly_fractions: dict[str, float] = {}
         self._price_history: dict[str, deque[float]] = {}
@@ -61,7 +62,7 @@ class PortfolioOptimizationAgent(BaseAgent):
             try:
                 system_ref = getattr(self, "system", None)
                 if system_ref:
-                    await reconcile_positions(system_ref)
+                    self._reconciliation_matched = await reconcile_positions(system_ref)
             except Exception as e:
                 self.logger.error("Reconciliation loop error: %s", e, exc_info=True)
             await asyncio.sleep(300.0)
@@ -145,6 +146,10 @@ class PortfolioOptimizationAgent(BaseAgent):
             "Position %s: qty=%d avg_cost=%.2f",
             instrument, pos["quantity"], pos["avg_cost"],
         )
+        
+        from src.risk.position_registry import position_registry
+        await position_registry.update_from_fill(instrument, side, quantity, price)
+        
         await self._emit_portfolio_update(instrument, side)
 
     async def _on_signal(self, event: Event) -> None:
@@ -169,7 +174,7 @@ class PortfolioOptimizationAgent(BaseAgent):
         return self._positions.get(instrument, {"quantity": 0, "avg_cost": 0.0})
 
     def get_total_exposure(self) -> float:
-        return sum(p["quantity"] * p["avg_cost"] for p in self._positions.values())
+        return sum(abs(p["quantity"]) * p["avg_cost"] for p in self._positions.values())
 
     def _kelly_fraction(self, confidence: float, direction: str) -> float:
         if confidence <= 0.5:
@@ -316,6 +321,7 @@ class PortfolioOptimizationAgent(BaseAgent):
             "capital": self._capital,
             "peak_capital": self._peak_capital,
             "pnl": self._pnl,
+            "reconciliation_matched": self._reconciliation_matched,
             "open_positions": len([p for p in self._positions.values() if p["quantity"] != 0]),
             "total_exposure": self.get_total_exposure(),
         })

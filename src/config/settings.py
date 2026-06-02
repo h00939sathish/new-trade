@@ -56,12 +56,16 @@ class Settings(BaseSettings):
     risk_per_trade_loss_cap_pct: float = 0.01
     risk_max_open_positions: int = 5
 
+    live_trading_enabled: bool = False
+    broker_order_poll_interval_seconds: float = 5.0
+    risk_require_volume_data: bool = False
+
     kill_switch_daily_loss_pct: float = 0.01
     kill_switch_max_drawdown_pct: float = 0.05
     kill_switch_auto_reset: bool = True
 
-    consensus_threshold: float = 0.65
-    consensus_short_threshold: float = 0.70
+    consensus_threshold: float = 0.03
+    consensus_short_threshold: float = 0.03
     signal_cooldown_seconds: int = 120
 
     reflection_mutation_enabled: bool = False
