@@ -1,0 +1,29 @@
+groups:
+  - name: trading-system-alerts
+    rules:
+      - alert: TradingSystemDown
+        expr: up{job="trading-system"} == 0 or (time() - trading_uptime_seconds) > 60
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Trading system is down"
+          description: "No heartbeat detected or Prometheus target scraping failed for more than 60 seconds."
+
+      - alert: KillSwitchTriggered
+        expr: trading_kill_switch_active == 1
+        for: 0s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Kill Switch Triggered"
+          description: "System daily loss or drawdown limits breached. System is in square-off-only mode."
+
+      - alert: BrokerConnectionLost
+        expr: trading_broker_connected == 0
+        for: 10s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Broker connection lost"
+          description: "API connection or WebSocket stream to the broker has failed."

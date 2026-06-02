@@ -1,5 +1,6 @@
 from typing import Literal
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -53,6 +54,7 @@ class Settings(BaseSettings):
     risk_max_leverage: float = 3.0
     risk_max_order_value: float = 50_000.0
     risk_per_trade_loss_cap_pct: float = 0.01
+    risk_max_open_positions: int = 5
 
     kill_switch_daily_loss_pct: float = 0.01
     kill_switch_max_drawdown_pct: float = 0.05
@@ -63,6 +65,13 @@ class Settings(BaseSettings):
     signal_cooldown_seconds: int = 120
 
     reflection_mutation_enabled: bool = False
+    reflection_backtest_gate_threshold: float = 0.0
+    earnings_calendar_path: str = "config/earnings_calendar.yaml"
+
+    timescaledb_enabled: bool = True
+    risk_sizing_method: str = "fixed"  # "fixed" or "kelly"
+    vault_provider: str = ""           # "", "vault", or "aws"
+    pagerduty_routing_key: str = ""
 
     portfolio_optimizer_regime: str = "risk_parity"
     portfolio_optimizer_max_weight: float = 0.40
@@ -79,6 +88,43 @@ class Settings(BaseSettings):
 
     yahoo_poll_interval: int = 60
     market_hours_only: bool = True
+
+    @model_validator(mode="after")
+    def load_vault_secrets(self) -> 'Settings':
+        if not self.vault_provider:
+            return self
+            
+        try:
+            from src.utils.vault import load_secure_secret
+            
+            sensitive_keys = [
+                ("kite_api_key", "TRA_KITE_API_KEY"),
+                ("kite_api_secret", "TRA_KITE_API_SECRET"),
+                ("kite_access_token", "TRA_KITE_ACCESS_TOKEN"),
+                ("kite_user_id", "TRA_KITE_USER_ID"),
+                ("groww_api_key", "TRA_GROWW_API_KEY"),
+                ("groww_api_secret", "TRA_GROWW_API_SECRET"),
+                ("groww_totp_secret", "TRA_GROWW_TOTP_SECRET"),
+                ("groww_auth_token", "TRA_GROWW_AUTH_TOKEN"),
+                ("angel_api_key", "TRA_ANGEL_API_KEY"),
+                ("angel_client_id", "TRA_ANGEL_CLIENT_ID"),
+                ("angel_password", "TRA_ANGEL_PASSWORD"),
+                ("angel_totp", "TRA_ANGEL_TOTP"),
+                ("gemini_api_key", "TRA_GEMINI_API_KEY"),
+                ("telegram_bot_token", "TRA_TELEGRAM_BOT_TOKEN"),
+                ("telegram_chat_id", "TRA_TELEGRAM_CHAT_ID"),
+                ("pagerduty_routing_key", "TRA_PAGERDUTY_ROUTING_KEY"),
+            ]
+            
+            for attr, env_name in sensitive_keys:
+                val = load_secure_secret(env_name)
+                if val:
+                    setattr(self, attr, val)
+        except Exception as e:
+            import logging
+            logging.getLogger("config.settings").error("Failed to load secure secrets from vault: %s", e)
+            
+        return self
 
 
 settings = Settings()

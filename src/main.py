@@ -70,7 +70,7 @@ async def _handle_metrics_request(
     import json
 
     if path == "/metrics":
-        body_str = system_metrics.prometheus_text()
+        body_str = system_metrics.prometheus_text(system)
         body = body_str.encode()
         ct = "text/plain; charset=utf-8"
         status = "200 OK"
@@ -88,7 +88,7 @@ async def _handle_metrics_request(
         ct = "application/json"
         status = "200 OK"
     elif path == "/api/metrics":
-        body = system_metrics.prometheus_text().encode()
+        body = system_metrics.prometheus_text(system).encode()
         ct = "text/plain; charset=utf-8"
         status = "200 OK"
     elif path == "/":

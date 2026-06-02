@@ -165,6 +165,13 @@ HTML = """<!DOCTYPE html>
   ::-webkit-scrollbar-track { background: var(--navy); }
   ::-webkit-scrollbar-thumb { background: var(--navy-lighter); border-radius: 3px; }
 
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; margin-bottom: 0; font-size: 0.8rem; }
+  th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--navy-lighter); }
+  th { color: var(--text-dim); font-weight: 600; text-transform: uppercase; font-size: 0.7rem; }
+  tr:hover td { background: var(--navy-lighter); }
+  .tbl-container { background: var(--navy-light); border: 1px solid var(--navy-lighter); border-radius: var(--radius); overflow-x: auto; margin-bottom: 24px; }
+
   @media (max-width: 640px) {
     .header { padding: 12px 16px; }
     .container { padding: 12px 16px; }
@@ -199,6 +206,12 @@ HTML = """<!DOCTYPE html>
 
   <div class="section-title">Agent Status</div>
   <div class="agent-grid" id="agentGrid"></div>
+
+  <div class="section-title">Active Executions</div>
+  <div id="execGrid"><div style="color:var(--text-dim);margin-bottom:24px;font-size:0.8rem">No active orders</div></div>
+
+  <div class="section-title">Slippage Analytics</div>
+  <div id="slippageGrid"><div style="color:var(--text-dim);margin-bottom:24px;font-size:0.8rem">No fill data</div></div>
 
   <div class="metrics-section">
     <button class="metrics-toggle" id="metricsToggle" onclick="toggleMetrics()">
@@ -325,6 +338,32 @@ async function refresh() {
     /* Metrics text */
     document.getElementById('metricsPre').textContent = metricsText;
 
+    /* Executions & Slippage */
+    const execJson = await fetch('/api/executions').then(r => r.json()).catch(() => null);
+    if (execJson) {
+      if (execJson.open.length > 0) {
+        let h = '<div class="tbl-container"><table><tr><th>ID</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Status</th><th>Corr ID</th></tr>';
+        for (const o of execJson.open) {
+          h += '<tr><td>' + o.id.substring(0,8) + '</td><td>' + o.symbol + '</td><td>' + o.side + '</td><td>' + o.qty + '</td><td>' + o.status + '</td><td>' + (o.correlation_id||'').substring(0,8) + '</td></tr>';
+        }
+        h += '</table></div>';
+        document.getElementById('execGrid').innerHTML = h;
+      } else {
+        document.getElementById('execGrid').innerHTML = '<div style="color:var(--text-dim);margin-bottom:24px;font-size:0.8rem">No active orders</div>';
+      }
+
+      if (Object.keys(execJson.slippage).length > 0) {
+        let h = '<div class="tbl-container"><table><tr><th>Symbol | Strategy</th><th>Avg Slippage (bps)</th></tr>';
+        for (const [k, v] of Object.entries(execJson.slippage)) {
+          h += '<tr><td>' + k + '</td><td>' + v.toFixed(2) + '</td></tr>';
+        }
+        h += '</table></div>';
+        document.getElementById('slippageGrid').innerHTML = h;
+      } else {
+        document.getElementById('slippageGrid').innerHTML = '<div style="color:var(--text-dim);margin-bottom:24px;font-size:0.8rem">No fill data</div>';
+      }
+    }
+
   } catch (e) {
     document.getElementById('agentGrid').innerHTML =
       '<div class="error-state"><div class="icon">&#9888;</div><div class="msg">Connection Error: ' + e.message + '</div></div>';
@@ -381,11 +420,56 @@ class HttpDashboard:
                 ct = "application/json"
                 status = "200 OK"
             elif method == "GET" and path == "/api/metrics":
-                body = system_metrics.prometheus_text().encode()
+                body = system_metrics.prometheus_text(self._system).encode()
                 ct = "text/plain; charset=utf-8"
                 status = "200 OK"
             elif method == "GET" and path == "/api/metrics/json":
                 body = json.dumps(system_metrics.snapshot()).encode()
+                ct = "application/json"
+                status = "200 OK"
+            elif method == "GET" and path == "/api/executions":
+                exec_agent = getattr(self._system, "execution", None)
+                open_orders = []
+                filled_orders = []
+                if exec_agent:
+                    for k, v in exec_agent._open_orders.items():
+                        open_orders.append({
+                            "id": k,
+                            "symbol": v.instrument,
+                            "side": v.side.value if hasattr(v.side, "value") else str(v.side),
+                            "qty": v.quantity,
+                            "price": v.data.get("price", 0),
+                            "status": v.status.value if hasattr(v.status, "value") else str(v.status),
+                            "correlation_id": v.metadata.correlation_id,
+                            "timestamp": v.timestamp.isoformat()
+                        })
+                    for k, v_list in exec_agent._filled_orders.items():
+                        for v in v_list:
+                            filled_orders.append({
+                                "id": v.order_id,
+                                "symbol": v.instrument,
+                                "side": v.side.value if hasattr(v.side, "value") else str(v.side),
+                                "qty": v.fill_quantity,
+                                "price": v.fill_price,
+                                "commission": getattr(v, "commission", 0.0) or 0.0,
+                                "slippage_bps": getattr(v, "slippage_bps", 0.0) or 0.0,
+                                "strategy": v.strategy or "unknown",
+                                "timestamp": v.timestamp.isoformat()
+                            })
+                
+                slippage_stats = {}
+                for f in filled_orders:
+                    key = f"{f['symbol']} | {f['strategy']}"
+                    if key not in slippage_stats:
+                        slippage_stats[key] = {"count": 0, "total_bps": 0}
+                    slippage_stats[key]["count"] += 1
+                    slippage_stats[key]["total_bps"] += f["slippage_bps"]
+                
+                body = json.dumps({
+                    "open": open_orders,
+                    "filled": filled_orders,
+                    "slippage": {k: v["total_bps"]/v["count"] for k, v in slippage_stats.items()}
+                }).encode()
                 ct = "application/json"
                 status = "200 OK"
             else:

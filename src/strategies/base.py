@@ -13,4 +13,5 @@ class Strategy:
         volumes: list[float] | None = None,
         highs: list[float] | None = None,
         lows: list[float] | None = None,
+        timestamps: list[Any] | None = None,
     ) -> dict[str, Any] | None: ...

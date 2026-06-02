@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 
 @dataclass
@@ -59,3 +59,48 @@ class TransactionCostModel:
             return price + slippage
         else:
             return price - slippage
+
+    def effective_fill_price_with_depth(
+        self,
+        side: Literal["buy", "sell"],
+        price: float,
+        quantity: int,
+        depth: dict[str, list[dict[str, Any]]] | None = None,
+    ) -> float:
+        """Calculate volume-weighted fill price sweeping through order book depth levels."""
+        if not depth or not depth.get("buy") or not depth.get("sell") or quantity <= 0:
+            return self.effective_fill_price(side, price)
+
+        levels = depth["sell"] if side == "buy" else depth["buy"]
+        remaining_qty = quantity
+        total_value = 0.0
+        filled_qty = 0
+
+        for level in levels:
+            lvl_price = float(level.get("price", price))
+            lvl_qty = int(level.get("quantity", 0))
+            if lvl_qty <= 0:
+                continue
+
+            fill = min(remaining_qty, lvl_qty)
+            total_value += fill * lvl_price
+            filled_qty += fill
+            remaining_qty -= fill
+
+            if remaining_qty <= 0:
+                break
+
+        if filled_qty > 0:
+            avg_price = total_value / filled_qty
+        else:
+            avg_price = price
+
+        if remaining_qty > 0:
+            # Order exceeds total book depth. Apply 10bps penalty beyond worst level.
+            worst_price = float(levels[-1].get("price", price))
+            penalty_pct = 0.0010
+            penalty_price = worst_price * (1.0 + penalty_pct if side == "buy" else 1.0 - penalty_pct)
+            total_value += remaining_qty * penalty_price
+            avg_price = total_value / quantity
+
+        return avg_price

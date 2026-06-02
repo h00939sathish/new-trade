@@ -92,14 +92,23 @@ class KiteMarketDataProvider:
                     f"{i['exchange']}:{i['tradingsymbol']}"
                     for i in self._instruments
                 ]
-                ltp_data = self._client.get_ltp(symbols)
-                for symbol, data in ltp_data.items():
+                quote_data = self._client.get_quote(symbols)
+                for symbol, data in quote_data.items():
                     if self._on_tick:
+                        # Extract top level bid and ask
+                        buy_levels = data.get("buy") or data.get("depth", {}).get("buy", [])
+                        sell_levels = data.get("sell") or data.get("depth", {}).get("sell", [])
+                        bid = buy_levels[0].get("price") if buy_levels else None
+                        ask = sell_levels[0].get("price") if sell_levels else None
+
                         await self._on_tick({
                             "instrument": symbol.split(":")[1] if ":" in symbol else symbol,
                             "exchange": symbol.split(":")[0] if ":" in symbol else "NSE",
                             "last_price": data.get("last_price", 0),
                             "volume": data.get("volume"),
+                            "depth": data.get("depth"),
+                            "bid": bid,
+                            "ask": ask,
                         })
             except Exception as e:
                 logger.error("Poll error: %s", e)

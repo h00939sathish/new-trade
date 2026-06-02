@@ -1,12 +1,14 @@
 import asyncio
 import json
 import logging
-import sqlite3
+import aiosqlite
 import time
 from pathlib import Path
 from typing import Any
+from src.monitoring.latency_tracer import tracer
 
 from src.agents.base import BaseAgent
+from src.config.settings import settings
 from src.schemas.events import (
     Event,
     EventType,
@@ -27,14 +29,14 @@ _ORDER_DB_PATH = Path("state/order_state.db")
 logger = logging.getLogger("execution")
 
 
-def _init_order_db(db_path: Path) -> sqlite3.Connection:
+async def _init_order_db(db_path: Path) -> aiosqlite.Connection:
     """Initialize SQLite database for persistent order state."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("""
+    conn = await aiosqlite.connect(str(db_path))
+    conn.row_factory = aiosqlite.Row
+    await conn.execute("PRAGMA journal_mode=WAL")
+    await conn.execute("PRAGMA synchronous=NORMAL")
+    await conn.execute("""
         CREATE TABLE IF NOT EXISTS orders (
             event_id TEXT PRIMARY KEY,
             instrument TEXT NOT NULL,
@@ -48,10 +50,16 @@ def _init_order_db(db_path: Path) -> sqlite3.Connection:
             strategy TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
-            data_json TEXT NOT NULL
+            data_json TEXT NOT NULL,
+            signal_id TEXT
         )
     """)
-    conn.execute("""
+    try:
+        await conn.execute("ALTER TABLE orders ADD COLUMN signal_id TEXT")
+        await conn.commit()
+    except aiosqlite.OperationalError:
+        pass
+    await conn.execute("""
         CREATE TABLE IF NOT EXISTS fills (
             fill_id TEXT PRIMARY KEY,
             order_id TEXT NOT NULL,
@@ -63,7 +71,22 @@ def _init_order_db(db_path: Path) -> sqlite3.Connection:
             FOREIGN KEY (order_id) REFERENCES orders(event_id)
         )
     """)
-    conn.commit()
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS twaps (
+            twap_id TEXT PRIMARY KEY,
+            instrument TEXT NOT NULL,
+            side TEXT NOT NULL,
+            price REAL,
+            signal_json TEXT NOT NULL,
+            chunks_json TEXT NOT NULL,
+            executed INTEGER NOT NULL,
+            total INTEGER NOT NULL,
+            last_executed_at REAL NOT NULL,
+            interval REAL NOT NULL,
+            iceberg BOOLEAN NOT NULL
+        )
+    """)
+    await conn.commit()
     return conn
 
 
@@ -81,9 +104,10 @@ class ExecutionAgent(BaseAgent):
         self._order_strategies: dict[str, str] = {}
         # Order persistence
         self._order_db_path = order_db_path or _ORDER_DB_PATH
-        self._order_db: sqlite3.Connection | None = None
+        self._order_db: aiosqlite.Connection | None = None
         self._twap_orders: dict[str, dict[str, Any]] = {}
         self._db_lock = None
+        self._latest_depth: dict[str, dict] = {}
 
     def _get_db_lock(self):
         if self._db_lock is None:
@@ -95,36 +119,72 @@ class ExecutionAgent(BaseAgent):
         self.subscribe_signals()
         self.subscribe_risk()
         self.subscribe(EventType.PORTFOLIO_UPDATE)
+        self.subscribe(EventType.TICK)
         # Initialize order persistence DB
         try:
-            self._order_db = _init_order_db(self._order_db_path)
-            self._load_outstanding_orders()
+            self._order_db = await _init_order_db(self._order_db_path)
+            await self._load_outstanding_orders()
+            await self._load_active_twaps()
         except Exception as e:
             self.logger.error("Failed to initialize order DB: %s", e)
+
+        # Reconcile orders with broker on startup if not paper trading
+        if not self._paper_trading and self._broker is not None:
+            try:
+                await self.reconcile_orders()
+            except Exception as e:
+                self.logger.error("Error during startup broker reconciliation: %s", e)
 
         task = asyncio.create_task(self._twap_loop(), name="execution.twap_loop")
         self._tasks.append(task)
 
-    def _load_outstanding_orders(self) -> None:
+    async def _load_outstanding_orders(self) -> None:
         """Load outstanding (non-terminal) orders from disk on restart."""
         if self._order_db is None:
             return
-        cursor = self._order_db.execute(
+        async with self._order_db.execute(
             "SELECT event_id, data_json FROM orders WHERE status IN ('pending', 'accepted')"
-        )
-        count = 0
-        for row in cursor.fetchall():
-            try:
-                data = json.loads(row["data_json"])
-                order = OrderEvent(**data)
-                self._open_orders[row["event_id"]] = order
-                count += 1
-            except Exception as e:
-                self.logger.warning("Failed to restore order %s: %s", row["event_id"], e)
-        if count > 0:
-            self.logger.warning(
-                "Restored %d outstanding orders from disk — verify with broker", count,
-            )
+        ) as cursor:
+            count = 0
+            async for row in cursor:
+                try:
+                    data = json.loads(row["data_json"])
+                    order = OrderEvent(**data)
+                    self._open_orders[row["event_id"]] = order
+                    count += 1
+                except Exception as e:
+                    self.logger.warning("Failed to restore order %s: %s", row["event_id"], e)
+            if count > 0:
+                self.logger.warning(
+                    "Restored %d outstanding orders from disk — verify with broker", count,
+                )
+
+    async def _load_active_twaps(self) -> None:
+        """Load active TWAP states from disk."""
+        if self._order_db is None:
+            return
+        async with self._order_db.execute("SELECT * FROM twaps") as cursor:
+            count = 0
+            async for row in cursor:
+                try:
+                    twap_id = row["twap_id"]
+                    self._twap_orders[twap_id] = {
+                        "instrument": row["instrument"],
+                        "side": OrderSide(row["side"]),
+                        "price": row["price"],
+                        "signal": json.loads(row["signal_json"]),
+                        "chunks": json.loads(row["chunks_json"]),
+                        "executed": row["executed"],
+                        "total": row["total"],
+                        "last_executed_at": row["last_executed_at"],
+                        "interval": row["interval"],
+                        "iceberg": bool(row["iceberg"]),
+                    }
+                    count += 1
+                except Exception as e:
+                    self.logger.warning("Failed to restore TWAP %s: %s", row["twap_id"], e)
+            if count > 0:
+                self.logger.warning("Restored %d active TWAPs from disk", count)
 
     async def _persist_order(self, order: OrderEvent, strategy: str = "unknown") -> None:
         """Write order state to disk."""
@@ -134,11 +194,11 @@ class ExecutionAgent(BaseAgent):
             try:
                 from datetime import UTC, datetime
                 now = datetime.now(UTC).isoformat()
-                self._order_db.execute(
+                await self._order_db.execute(
                     """INSERT OR REPLACE INTO orders
                    (event_id, instrument, exchange, side, order_type, quantity, price,
-                    status, broker_order_id, strategy, created_at, updated_at, data_json)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    status, broker_order_id, strategy, created_at, updated_at, data_json, signal_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         order.event_id,
                         order.instrument,
@@ -149,13 +209,14 @@ class ExecutionAgent(BaseAgent):
                         order.price,
                         order.data.get("status", "pending"),
                         order.data.get("broker_order_id"),
-                        strategy,
+                        strategy or order.strategy,
                         now,
                         now,
                         json.dumps(order.model_dump(), default=str),
+                        order.signal_id or order.data.get("signal_id"),
                     ),
                 )
-                self._order_db.commit()
+                await self._order_db.commit()
             except Exception as e:
                 self.logger.error("Failed to persist order %s: %s", order.event_id, e)
 
@@ -166,11 +227,11 @@ class ExecutionAgent(BaseAgent):
         async with self._get_db_lock():
             try:
                 from datetime import UTC, datetime
-                self._order_db.execute(
+                await self._order_db.execute(
                     "UPDATE orders SET status = ?, updated_at = ? WHERE event_id = ?",
                     (status, datetime.now(UTC).isoformat(), event_id),
                 )
-                self._order_db.commit()
+                await self._order_db.commit()
             except Exception as e:
                 self.logger.error("Failed to update order status %s: %s", event_id, e)
 
@@ -181,7 +242,7 @@ class ExecutionAgent(BaseAgent):
         async with self._get_db_lock():
             try:
                 from datetime import UTC, datetime
-                self._order_db.execute(
+                await self._order_db.execute(
                     """INSERT OR IGNORE INTO fills
                    (fill_id, order_id, instrument, side, fill_price, fill_quantity, filled_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
@@ -195,20 +256,57 @@ class ExecutionAgent(BaseAgent):
                         datetime.now(UTC).isoformat(),
                     ),
                 )
-                self._order_db.commit()
+                await self._order_db.commit()
                 # Update corresponding order status
                 order_id = fill.data.get("order_id", "")
                 if order_id:
-                    self._order_db.execute(
+                    await self._order_db.execute(
                         "UPDATE orders SET status = ?, updated_at = ? WHERE event_id = ?",
                         ("filled", datetime.now(UTC).isoformat(), order_id)
                     )
-                    self._order_db.commit()
+                    await self._order_db.commit()
             except Exception as e:
                 self.logger.error("Failed to persist fill %s: %s", fill.event_id, e)
 
+    async def _persist_twap(self, twap_id: str) -> None:
+        """Write TWAP state to disk."""
+        if self._order_db is None:
+            return
+        twap = self._twap_orders.get(twap_id)
+        if not twap:
+            async with self._get_db_lock():
+                await self._order_db.execute("DELETE FROM twaps WHERE twap_id = ?", (twap_id,))
+                await self._order_db.commit()
+            return
+        async with self._get_db_lock():
+            try:
+                await self._order_db.execute(
+                    """INSERT OR REPLACE INTO twaps
+                    (twap_id, instrument, side, price, signal_json, chunks_json, executed, total, last_executed_at, interval, iceberg)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        twap_id,
+                        twap["instrument"],
+                        twap["side"].value if hasattr(twap["side"], "value") else str(twap["side"]),
+                        twap["price"],
+                        json.dumps(twap["signal"], default=str),
+                        json.dumps(twap["chunks"]),
+                        twap["executed"],
+                        twap["total"],
+                        twap["last_executed_at"],
+                        twap["interval"],
+                        bool(twap.get("iceberg", False))
+                    )
+                )
+                await self._order_db.commit()
+            except Exception as e:
+                self.logger.error("Failed to persist TWAP %s: %s", twap_id, e)
+
     async def on_event(self, event: Event) -> None:
         match event.event_type:
+            case EventType.TICK:
+                if "depth" in event.data and event.data["depth"]:
+                    self._latest_depth[event.data["instrument"]] = event.data["depth"]
             case EventType.SIGNAL:
                 await self._handle_signal(event)
             case EventType.RISK_CHECK:
@@ -224,6 +322,7 @@ class ExecutionAgent(BaseAgent):
         The order is NOT placed with the broker here (unless it is a neutral/exit signal).
         It is placed only when a matching RISK_CHECK event with passed=True is received.
         """
+        start_time = time.monotonic()
         signal = event.data
         instrument = signal.get("instrument", "")
         direction = signal.get("direction")
@@ -249,10 +348,13 @@ class ExecutionAgent(BaseAgent):
                 side=side,
                 order_type=OrderType.MARKET,
                 quantity=close_qty,
-                product=ProductType.MIS,
+                product=ProductType(str(signal.get("product", "mis")).lower()),
                 price=signal.get("price"),
                 producer=self.name,
                 status=OrderStatus.PENDING,
+                signal_id=signal.get("event_id") or signal.get("_signal_event_id"),
+                strategy=signal.get("strategy", "exit"),
+                correlation_id=event.metadata.correlation_id,
             )
             self._order_strategies[order_event.event_id] = signal.get("strategy", "unknown")
             try:
@@ -275,16 +377,19 @@ class ExecutionAgent(BaseAgent):
                     return
 
                 exchange = Exchange(signal.get("exchange", "NSE"))
+                broker_start = time.monotonic()
                 broker_id = await self._broker.place_order(
                     tradingsymbol=instrument,
                     exchange=exchange,
                     side=side,
                     order_type=OrderType.MARKET,
                     quantity=close_qty,
-                    product=ProductType.MIS,
+                    product=ProductType(str(signal.get("product", "mis")).lower()),
                     price=signal.get("price"),
                     tag=tag,
                 )
+                broker_rtt = (time.monotonic() - broker_start) * 1000
+                tracer.record_trace(event.metadata.correlation_id, "broker_rtt", broker_rtt)
                 order_event.data["broker_order_id"] = broker_id
 
             await self.emit(order_event)
@@ -292,6 +397,8 @@ class ExecutionAgent(BaseAgent):
             await self._persist_order(order_event, strategy=signal.get("strategy", "exit"))
             if self._paper_trading:
                 await self._simulate_fill(order_event)
+                
+            tracer.record_trace(event.metadata.correlation_id, "execution", (time.monotonic() - start_time) * 1000)
             return
 
         if confidence < 0.3:
@@ -347,9 +454,9 @@ class ExecutionAgent(BaseAgent):
             return
 
         # Risk check PASSED — now execute the order
-        await self._execute_approved_signal(pending["signal"])
+        await self._execute_approved_signal(pending["signal"], correlation_id=event.metadata.correlation_id)
 
-    async def _execute_approved_signal(self, signal: dict[str, Any]) -> None:
+    async def _execute_approved_signal(self, signal: dict[str, Any], correlation_id: str | None = None) -> None:
         """Create and execute an order for a risk-approved signal."""
         from src.risk.kill_switch import KillSwitch
         if KillSwitch().active:
@@ -382,15 +489,23 @@ class ExecutionAgent(BaseAgent):
                     strategy_name, weight * 100, allocated_capital,
                 )
 
-        quantity = self._calculate_quantity(confidence, price, allocated_capital, volatility)
+        quantity = self._calculate_quantity(confidence, price, allocated_capital, volatility, strategy=strategy_name)
         if quantity <= 0:
             return
 
         # TWAP Smart Order Routing for large orders
         if quantity >= 500:
-            iceberg = quantity >= 1000
-            self.logger.info("Order quantity %d >= 500, routing to TWAP engine (iceberg=%s)", quantity, iceberg)
-            await self._start_twap(signal, quantity, side, price, iceberg=iceberg)
+            is_iceberg = quantity >= 1000
+            self.logger.info("Order quantity %d >= 500, routing to TWAP engine (iceberg=%s)", quantity, is_iceberg)
+            await self._start_twap(
+                instrument=instrument,
+                side=side,
+                total_quantity=quantity,
+                price=price,
+                signal=signal,
+                iceberg=is_iceberg,
+                correlation_id=correlation_id,
+            )
             return
 
         order_event = OrderEvent.create(
@@ -399,9 +514,12 @@ class ExecutionAgent(BaseAgent):
             side=side,
             order_type=OrderType.MARKET,
             quantity=quantity,
-            product=ProductType.MIS,
+            product=ProductType(str(signal.get("product", "mis")).lower()),
             price=price,
             producer=self.name,
+            signal_id=signal.get("event_id") or signal.get("_signal_event_id"),
+            strategy=signal.get("strategy", "unknown"),
+            correlation_id=correlation_id,
         )
         self._order_strategies[order_event.event_id] = signal.get("strategy", "unknown")
         try:
@@ -424,16 +542,19 @@ class ExecutionAgent(BaseAgent):
                 return
 
             exchange = Exchange(signal.get("exchange", "NSE"))
+            broker_start = time.monotonic()
             broker_id = await self._broker.place_order(
                 tradingsymbol=instrument,
                 exchange=exchange,
                 side=side,
                 order_type=OrderType.MARKET,
                 quantity=quantity,
-                product=ProductType.MIS,
+                product=ProductType(str(signal.get("product", "mis")).lower()),
                 price=price,
                 tag=tag,
             )
+            broker_rtt = (time.monotonic() - broker_start) * 1000
+            tracer.record_trace(correlation_id, "broker_rtt", broker_rtt)
             order_event.data["broker_order_id"] = broker_id
             self.logger.info("Broker order: %s (id=%s)", instrument, broker_id)
         await self.emit(order_event)
@@ -445,6 +566,8 @@ class ExecutionAgent(BaseAgent):
         )
         if self._paper_trading:
             await self._simulate_fill(order_event)
+
+        tracer.record_trace(correlation_id, "execution", (time.monotonic() - start_time) * 1000)
 
     def _expire_stale_signals(self) -> None:
         """Remove pending signals that have been waiting too long for risk approval."""
@@ -461,9 +584,17 @@ class ExecutionAgent(BaseAgent):
                 _RISK_CHECK_TIMEOUT_SECONDS, instrument, sid,
             )
 
-    async def _start_twap(self, signal: dict[str, Any], total_quantity: int, side: OrderSide, price: float | None, iceberg: bool = False) -> None:
+    async def _start_twap(
+        self,
+        instrument: str,
+        side: OrderSide,
+        total_quantity: int,
+        price: float | None,
+        signal: dict[str, Any],
+        iceberg: bool = False,
+        correlation_id: str | None = None,
+    ) -> None:
         """Slice a large order into smaller chunks to execute over time (TWAP)."""
-        instrument = signal.get("instrument", "")
         # Slicing logic: max 100 per chunk, or at least 5 chunks
         chunk_size = min(100, max(10, total_quantity // 5))
         chunks = []
@@ -485,7 +616,11 @@ class ExecutionAgent(BaseAgent):
             "last_executed_at": 0.0,
             "interval": 30.0,  # Execute a chunk every 30 seconds
             "iceberg": iceberg,
+            "retries": 0,
+            "status": "active",
+            "correlation_id": correlation_id,
         }
+        await self._persist_twap(twap_id)
         self.logger.info("TWAP %s initialized: %d chunks of ~%d for %s (Iceberg=%s)", twap_id, len(chunks), chunk_size, instrument, iceberg)
 
     async def _twap_loop(self) -> None:
@@ -495,11 +630,17 @@ class ExecutionAgent(BaseAgent):
                 now = time.monotonic()
                 completed = []
                 for twap_id, twap in self._twap_orders.items():
+                    if twap.get("status") == "quarantined":
+                        continue
+                        
                     if not twap["chunks"]:
                         completed.append(twap_id)
                         continue
 
-                    if now - twap["last_executed_at"] >= twap["interval"]:
+                    # Exponential backoff based on retries
+                    retries = twap.get("retries", 0)
+                    delay = twap["interval"] * (2 ** retries)
+                    if now - twap["last_executed_at"] >= delay:
                         chunk_qty = twap["chunks"].pop(0)
 
                         # Generate the order slice
@@ -517,31 +658,51 @@ class ExecutionAgent(BaseAgent):
                             side=twap["side"],
                             order_type=order_type,
                             quantity=chunk_qty,
-                            product=ProductType.MIS,
+                            product=ProductType(str(twap["signal"].get("product", "mis")).lower()),
                             price=twap["price"],
                             disclosed_quantity=disclosed_qty,
                             producer=self.name,
+                            signal_id=twap["signal"].get("event_id") or twap["signal"].get("_signal_event_id"),
+                            strategy=twap["signal"].get("strategy", "unknown"),
+                            correlation_id=twap.get("correlation_id"),
                         )
                         tag = order_event.event_id
 
                         if self._broker is not None:
                             try:
+                                broker_start = time.monotonic()
                                 broker_id = await self._broker.place_order(
                                     tradingsymbol=twap["instrument"],
                                     exchange=order_event.exchange,
                                     side=order_event.side,
                                     order_type=order_event.order_type,
                                     quantity=chunk_qty,
-                                    product=ProductType.MIS,
+                                    product=ProductType(str(twap["signal"].get("product", "mis")).lower()),
                                     price=twap["price"],
                                     tag=tag,
                                     disclosed_quantity=disclosed_qty,
                                 )
+                                broker_rtt = (time.monotonic() - broker_start) * 1000
+                                tracer.record_trace(twap.get("correlation_id"), "broker_rtt", broker_rtt)
                                 order_event.data["broker_order_id"] = broker_id
                             except Exception as e:
                                 self.logger.error("TWAP broker failure on chunk: %s", e)
-                                # Re-insert the chunk to try again
-                                twap["chunks"].insert(0, chunk_qty)
+                                twap["retries"] = twap.get("retries", 0) + 1
+                                if twap["retries"] > 3:
+                                    self.logger.critical("TWAP %s quarantined after 3 retries. Manual intervention required.", twap_id)
+                                    twap["status"] = "quarantined"
+                                    # Create incident event
+                                    from src.schemas.events import EventType, Event, EventMetadata
+                                    err_event = Event(
+                                        event_type=EventType.SYSTEM_ERROR,
+                                        stream="system.errors",
+                                        data={"fatal": False, "reason": f"TWAP {twap_id} broker failure", "details": str(e)},
+                                        metadata=EventMetadata(producer=self.name)
+                                    )
+                                    await self.emit(err_event)
+                                else:
+                                    twap["chunks"].insert(0, chunk_qty)
+                                await self._persist_twap(twap_id)
                                 continue
 
                         await self.emit(order_event)
@@ -550,6 +711,9 @@ class ExecutionAgent(BaseAgent):
 
                         twap["executed"] += chunk_qty
                         twap["last_executed_at"] = now
+                        twap["retries"] = 0
+                        await self._persist_twap(twap_id)
+                        
                         self.logger.info(
                             "TWAP %s executed chunk %d/%d. Progress: %d/%d",
                             twap_id, chunk_qty, chunk_qty, twap["executed"], twap["total"]
@@ -563,6 +727,7 @@ class ExecutionAgent(BaseAgent):
 
                 for twap_id in completed:
                     del self._twap_orders[twap_id]
+                    await self._persist_twap(twap_id)
                     self.logger.info("TWAP %s completed fully", twap_id)
 
             except Exception as e:
@@ -593,6 +758,7 @@ class ExecutionAgent(BaseAgent):
             trigger_price=trigger_price,
             producer=self.name,
             status=OrderStatus.PENDING,
+            strategy=strategy,
         )
         self._order_strategies[order_event.event_id] = strategy
         try:
@@ -694,11 +860,24 @@ class ExecutionAgent(BaseAgent):
 
     async def _simulate_fill(self, order: OrderEvent) -> None:
         import asyncio
+        import random
         price = self._resolve_paper_fill_price(order)
 
         from src.risk.costs import TransactionCostModel
         cost_model = TransactionCostModel()
-        fill_price = cost_model.effective_fill_price(order.side.value, price)
+        
+        # Add realistic exchange latency delay (50-150ms depending on load)
+        latency = random.uniform(0.05, 0.15)
+        await asyncio.sleep(latency)
+        
+        depth = self._latest_depth.get(order.instrument)
+        fill_price = cost_model.effective_fill_price_with_depth(
+            order.side.value, price, order.quantity, depth
+        )
+        
+        product = order.product.value if hasattr(order.product, "value") else order.product
+        commission = cost_model.total_cost(order.side.value, order.quantity, fill_price, product=product)
+        slippage_bps = abs(fill_price - price) / price * 10000 if price else 0.0
 
         fill_event = FillEvent.create(
             order_id=order.event_id,
@@ -707,13 +886,17 @@ class ExecutionAgent(BaseAgent):
             side=order.side,
             fill_price=fill_price,
             fill_quantity=order.quantity,
+            signal_id=order.signal_id,
+            strategy=order.strategy or self._order_strategies.get(order.event_id, "unknown"),
+            broker_order_id=order.data.get("broker_order_id"),
+            commission=commission,
+            slippage_bps=slippage_bps,
         )
         try:
             from src.monitoring.metrics import system_metrics
             system_metrics.count_order("filled")
         except Exception:
             pass
-        await asyncio.sleep(0.1)
         await self.emit(fill_event)
         await self._persist_fill(fill_event)
         if order.event_id in self._open_orders:
@@ -727,10 +910,47 @@ class ExecutionAgent(BaseAgent):
         )
 
     def _calculate_quantity(
-        self, confidence: float, price: float | None, available_capital: float, volatility: float
+        self,
+        confidence: float,
+        price: float | None,
+        available_capital: float,
+        volatility: float,
+        strategy: str = "unknown",
     ) -> int:
         if price is None or price <= 0 or available_capital <= 0 or volatility <= 0:
             return 0
+
+        # Kelly-based or fixed position sizing (Phase 3 Task 2)
+        if settings.risk_sizing_method == "kelly" and strategy != "unknown":
+            try:
+                from src.risk.kelly_sizing import KellySizer
+                sizer = KellySizer()
+                # Dynamically calculate the sizing multiplier from performance database
+                sizing_factor = sizer.get_position_sizing_factor(strategy)
+                if sizing_factor > 0:
+                    # Quantity = (capital * sizing_factor) / price
+                    raw_qty = (available_capital * sizing_factor) / price
+                    max_qty = (available_capital * sizer.max_allocation_pct) / price
+                    return max(1, int(min(raw_qty, max_qty)))
+            except Exception as e:
+                self.logger.error("Error using Kelly sizing: %s. Falling back to ATR sizing.", e)
+
+        if settings.risk_sizing_method == "hrp":
+            try:
+                # Retrieve cached HRP weights or use default
+                # To avoid running HRP on every tick, the PortfolioAgent or a background task
+                # should compute it. For now, we fetch from a global cache or fallback
+                # In this simple implementation, we assign a default 5% max if HRP isn't explicitly set
+                # Ideally, we call hrp_allocator here with recent returns, but that is blocking.
+                # Assuming the risk_mgmt or portfolio agent has published hrp_weights to a global state:
+                from src.risk.position_registry import position_registry
+                hrp_weight = getattr(position_registry, "hrp_weights", {}).get("instrument", 0.05)
+                # Max weight is provided by HRP
+                raw_qty = (available_capital * hrp_weight) / price
+                return max(1, int(raw_qty))
+            except Exception as e:
+                self.logger.error("Error using HRP sizing: %s", e)
+
         # Risk per trade: 1% of capital
         risk_per_trade = available_capital * 0.01
         # ATR-based stop distance (2x ATR or volatility)
@@ -759,6 +979,69 @@ class ExecutionAgent(BaseAgent):
             self.logger.error("Failed to check duplicate orders: %s", e)
         return None
 
+    async def reconcile_orders(self) -> None:
+        """Startup reconciliation: compare local DB open orders vs broker actual status."""
+        if self._paper_trading or self._broker is None:
+            return
+        self.logger.info("Starting broker reconciliation...")
+        try:
+            broker_orders = await self._broker.get_orders()
+            broker_orders_by_id = {o.get("order_id"): o for o in broker_orders if o.get("order_id")}
+            broker_orders_by_tag = {o.get("tag"): o for o in broker_orders if o.get("tag")}
+            
+            reconciled_count = 0
+            for event_id, order in list(self._open_orders.items()):
+                b_order = None
+                broker_order_id = order.data.get("broker_order_id") or order.order_id
+                if broker_order_id:
+                    b_order = broker_orders_by_id.get(broker_order_id)
+                if not b_order:
+                    b_order = broker_orders_by_tag.get(event_id)
+                    
+                if b_order:
+                    broker_status = b_order.get("status", "").upper()
+                    if broker_status == "COMPLETE":
+                        self.logger.warning(
+                            "Reconciliation: Order %s was FILLED while offline. Emitting FillEvent.", event_id
+                        )
+                        self._open_orders.pop(event_id, None)
+                        await self._update_order_status(event_id, OrderStatus.FILLED.value)
+                        
+                        fill_qty = int(b_order.get("filled_quantity", order.quantity))
+                        avg_price = float(b_order.get("average_price", order.price or 0.0))
+                        
+                        fill_event = FillEvent.create(
+                            order_id=event_id,
+                            instrument=order.instrument,
+                            exchange=order.exchange,
+                            side=order.side,
+                            fill_price=avg_price,
+                            fill_quantity=fill_qty,
+                            signal_id=order.signal_id,
+                            strategy=order.strategy or self._order_strategies.get(event_id, "unknown"),
+                            broker_order_id=broker_order_id,
+                        )
+                        await self.emit(fill_event)
+                        await self._persist_fill(fill_event)
+                        reconciled_count += 1
+                        
+                    elif broker_status in ("REJECTED", "CANCELLED", "FAILED"):
+                        self.logger.warning(
+                            "Reconciliation: Order %s was %s while offline. Updating local status.", event_id, broker_status
+                        )
+                        self._open_orders.pop(event_id, None)
+                        await self._update_order_status(event_id, OrderStatus.CANCELLED.value)
+                        reconciled_count += 1
+                else:
+                    self.logger.warning("Reconciliation: Outstanding local order %s not found on broker", event_id)
+                    
+            if reconciled_count > 0:
+                self.logger.info("Successfully reconciled %d orders with broker", reconciled_count)
+            else:
+                self.logger.info("Broker reconciliation complete (0 discrepancies found)")
+        except Exception as e:
+            self.logger.error("Failed to perform broker reconciliation: %s", e)
+
     async def on_stop(self) -> None:
         # Log any signals that were still pending approval at shutdown
         if self._pending_signals:
@@ -781,9 +1064,15 @@ class ExecutionAgent(BaseAgent):
         if system_ref:
             portfolio_agent = getattr(system_ref, "portfolio_opt", None)
             if portfolio_agent:
-                open_positions = {inst: data for inst, data in portfolio_agent._positions.items() if data.get("quantity", 0) != 0}
+                open_positions = {
+                    inst: data for inst, data in portfolio_agent._positions.items()
+                    if data.get("quantity", 0) != 0 and (
+                        str(data.get("product", "mis")).lower() == "mis"
+                        or (hasattr(data.get("product"), "value") and str(data.get("product").value).lower() == "mis")
+                    )
+                }
                 if open_positions:
-                    self.logger.warning("Graceful Shutdown: Closing %d open positions...", len(open_positions))
+                    self.logger.warning("Graceful Shutdown: Closing %d open MIS positions...", len(open_positions))
                     for inst, data in open_positions.items():
                         qty = data.get("quantity", 0)
                         side = OrderSide.SELL if qty > 0 else OrderSide.BUY

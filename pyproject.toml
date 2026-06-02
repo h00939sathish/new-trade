@@ -19,6 +19,7 @@ dependencies = [
     "jugaad-data>=0.3",
     "rich>=13.0",
     "feedparser>=6.0.0",
+    "aiosqlite>=0.22.1",
 ]
 
 

@@ -1,12 +1,16 @@
 import json
+import logging
 from collections.abc import AsyncIterator
 from datetime import datetime
 from typing import Any
 
 import asyncpg
 
+from src.config.settings import settings
 from src.event_store.base import EventStore
 from src.schemas.events import Event
+
+logger = logging.getLogger("event_store.postgres")
 
 
 class PostgresEventStore(EventStore):
@@ -40,10 +44,17 @@ class PostgresEventStore(EventStore):
                 CREATE INDEX IF NOT EXISTS idx_events_type
                 ON events(event_type)
             """)
-            await conn.execute("""
-                SELECT create_hypertable('events', 'timestamp',
-                    if_not_exists => TRUE)
-            """)
+            if settings.timescaledb_enabled:
+                try:
+                    await conn.execute("""
+                        SELECT create_hypertable('events', 'timestamp',
+                            if_not_exists => TRUE)
+                    """)
+                except Exception as e:
+                    logger.warning(
+                        "Failed to create TimescaleDB hypertable (extension might be missing): %s. "
+                        "Continuing with standard Postgres table.", e
+                    )
 
     async def disconnect(self) -> None:
         if self._pool:

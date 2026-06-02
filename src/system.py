@@ -14,6 +14,7 @@ from src.agents import (
     RiskManagementAgent,
     StrategyGenAgent,
 )
+from src.agents.reconciliation import ReconciliationAgent
 from src.config.settings import settings
 from src.event_store import create_event_store
 
@@ -70,6 +71,9 @@ class TradingSystem:
             event_store=self._event_store,
         )
         self.alert = AlertAgent(event_store=self._event_store)
+        self.reconciliation = ReconciliationAgent(
+            event_store=self._event_store,
+        )
 
         if market_data_provider is not None:
             from src.connectors.backtest_provider import BacktestDataProvider
@@ -98,6 +102,7 @@ class TradingSystem:
             self.portfolio_opt,
             self.regime_detection,
             self.alert,
+            self.reconciliation,
             self.reflection,
             self.personas,
         ]

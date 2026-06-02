@@ -84,12 +84,64 @@ class NtfyNotifier(Notifier):
         return "3"
 
 
+class PagerDutyNotifier(Notifier):
+    def __init__(self, routing_key: str) -> None:
+        self._routing_key = routing_key
+        self.logger = logging.getLogger("alert.pagerduty")
+
+    async def send(self, subject: str, message: str) -> None:
+        severity = "critical" if "RISK" in subject or "ERROR" in subject else "info"
+        dedup_key = f"trading-system-{subject.replace(' ', '-').lower()}"
+        
+        payload = {
+            "routing_key": self._routing_key,
+            "event_action": "trigger",
+            "dedup_key": dedup_key,
+            "payload": {
+                "summary": f"[{subject}] {message[:100]}",
+                "source": "trading-system",
+                "severity": severity,
+                "custom_details": {
+                    "subject": subject,
+                    "message": message
+                }
+            }
+        }
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    "https://events.pagerduty.com/v2/enqueue",
+                    json=payload,
+                    timeout=10,
+                )
+                resp.raise_for_status()
+        except Exception as e:
+            self.logger.error("PagerDuty send failed: %s", e)
+
+
+class MultiNotifier(Notifier):
+    def __init__(self, notifiers: list[Notifier]) -> None:
+        self._notifiers = notifiers
+
+    async def send(self, subject: str, message: str) -> None:
+        for notifier in self._notifiers:
+            await notifier.send(subject, message)
+
+
 def create_notifier() -> Notifier:
+    notifiers: list[Notifier] = []
+    if settings.pagerduty_routing_key:
+        notifiers.append(PagerDutyNotifier(settings.pagerduty_routing_key))
     if settings.telegram_bot_token and settings.telegram_chat_id:
-        return TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id)
+        notifiers.append(TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id))
     if settings.ntfy_topic:
-        return NtfyNotifier(settings.ntfy_topic, settings.ntfy_server)
-    return LogNotifier()
+        notifiers.append(NtfyNotifier(settings.ntfy_topic, settings.ntfy_server))
+    
+    if not notifiers:
+        return LogNotifier()
+    if len(notifiers) == 1:
+        return notifiers[0]
+    return MultiNotifier(notifiers)
 
 
 class AlertAgent(BaseAgent):

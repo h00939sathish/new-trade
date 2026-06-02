@@ -8,6 +8,7 @@ from src.schemas.events import (
     EventType,
     RiskCheckEvent,
 )
+from src.monitoring.latency_tracer import tracer
 
 # IST timezone offset
 _IST = timezone(timedelta(hours=5, minutes=30))
@@ -32,6 +33,8 @@ class RiskManagementAgent(BaseAgent):
         self._peak_value: float | None = None
         self._current_value: float | None = None
         self._last_reset: datetime | None = None
+        from src.risk.earnings_filter import EarningsCalendarFilter
+        self._earnings_filter = EarningsCalendarFilter(settings.earnings_calendar_path)
 
     async def on_start(self) -> None:
         self.logger.info("Risk Management Agent initializing")
@@ -90,6 +93,8 @@ class RiskManagementAgent(BaseAgent):
         return square_off <= now_ist <= market_close
 
     async def _validate_signal(self, event: Event) -> None:
+        start_time = time.monotonic()
+        import time
         signal = event.data
         instrument = signal.get("instrument", "")
         direction = signal.get("direction", "neutral")
@@ -108,6 +113,7 @@ class RiskManagementAgent(BaseAgent):
                          "checks": [{"name": "market_hours", "passed": False,
                                       "details": {"reason": "outside NSE trading hours"}}]},
                 producer=self.name,
+                correlation_id=event.metadata.correlation_id,
             )
             await self.emit(risk_event)
             return
@@ -126,6 +132,7 @@ class RiskManagementAgent(BaseAgent):
                          "checks": [{"name": "square_off_window", "passed": False,
                                       "details": {"reason": "square-off window active"}}]},
                 producer=self.name,
+                correlation_id=event.metadata.correlation_id,
             )
             await self.emit(risk_event)
             return
@@ -143,6 +150,9 @@ class RiskManagementAgent(BaseAgent):
             await self._check_var_risk(instrument),
             await self._check_liquidity_risk(instrument),
             await self._check_per_trade_risk(instrument, signal),
+            await self._check_max_open_positions_risk(instrument, direction),
+            await self._check_earnings_risk(instrument),
+            await self._check_correlation_risk(instrument),
         ]
         # Only check exposure for orders that INCREASE position
         if not is_reducing:
@@ -159,7 +169,9 @@ class RiskManagementAgent(BaseAgent):
             instrument=instrument,
             details={"signal": signal_with_id, "checks": checks},
             producer=self.name,
+            correlation_id=event.metadata.correlation_id,
         )
+        tracer.record_trace(event.metadata.correlation_id, "risk_mgmt.signal_validation", (time.monotonic() - start_time) * 1000)
         await self.emit(risk_event)
         if not all_passed:
             self.logger.warning(
@@ -366,8 +378,76 @@ class RiskManagementAgent(BaseAgent):
             "samples": len(vols)
         })
 
-    def _check(self, name: str, passed: bool, details: dict[str, Any]) -> dict[str, Any]:
-        return {"name": name, "passed": passed, "details": details}
+    def _check(self, name: str, passed: bool, details: dict[str, Any] | None = None) -> dict[str, Any]:
+        return {"name": name, "passed": passed, "details": details or {}}
+
+    async def _check_max_open_positions_risk(self, instrument: str, direction: str) -> dict[str, Any]:
+        if direction == "neutral":
+            return self._check("max_open_positions", True)
+            
+        current_qty = self._positions.get(instrument, 0.0)
+        is_new_position = (current_qty == 0.0)
+        
+        if is_new_position:
+            active_positions = [k for k, v in self._positions.items() if v != 0.0]
+            if len(active_positions) >= settings.risk_max_open_positions:
+                return self._check("max_open_positions", False, {
+                    "reason": f"Maximum open positions limit reached ({settings.risk_max_open_positions})",
+                    "active_positions": active_positions,
+                })
+                
+        return self._check("max_open_positions", True)
+
+    async def _check_earnings_risk(self, instrument: str) -> dict[str, Any]:
+        now_ist = datetime.now(_IST).date()
+        if self._earnings_filter.is_near_earnings(instrument, now_ist):
+            return self._check("earnings_calendar", False, {
+                "reason": "Signal is near corporate earnings result announcement (result day ± 1 session)",
+                "check_date": now_ist.isoformat(),
+            })
+        return self._check("earnings_calendar", True)
+
+    async def _check_correlation_risk(self, instrument: str) -> dict[str, Any]:
+        active_positions = [k for k, v in self._positions.items() if v != 0.0 and k != instrument]
+        if not active_positions:
+            return self._check("correlation", True)
+            
+        system = getattr(self, "system", None)
+        if not system or not hasattr(system, "market_intel") or not hasattr(system.market_intel, "_candle_prices"):
+            return self._check("correlation", True)
+            
+        prices_new = list(system.market_intel._candle_prices.get(instrument, {}).get("minute", []))
+        if len(prices_new) < 30:
+            return self._check("correlation", True)
+            
+        import numpy as np
+        
+        rets_new = np.diff(prices_new) / prices_new[:-1]
+        
+        for pos_sym in active_positions:
+            prices_pos = list(system.market_intel._candle_prices.get(pos_sym, {}).get("minute", []))
+            if len(prices_pos) < 30:
+                continue
+                
+            min_len = min(len(prices_new), len(prices_pos))
+            aligned_new = np.array(prices_new[-min_len:])
+            aligned_pos = np.array(prices_pos[-min_len:])
+            
+            r_new = np.diff(aligned_new) / aligned_new[:-1]
+            r_pos = np.diff(aligned_pos) / aligned_pos[:-1]
+            
+            if np.std(r_new) == 0 or np.std(r_pos) == 0:
+                continue
+                
+            corr = np.corrcoef(r_new, r_pos)[0, 1]
+            if not np.isnan(corr) and corr > 0.7:
+                return self._check("correlation", False, {
+                    "reason": f"High return correlation ({corr:.2f} > 0.7) with active position {pos_sym}",
+                    "correlation": float(corr),
+                    "matched_symbol": pos_sym,
+                })
+                
+        return self._check("correlation", True)
 
     def _track_price(self, event: Event) -> None:
         from collections import deque

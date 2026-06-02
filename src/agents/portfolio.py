@@ -84,18 +84,21 @@ class PortfolioOptimizationAgent(BaseAgent):
         price = event.data.get("fill_price", 0.0)
         cost = price * quantity
 
+        product = event.data.get("product", "mis")
         if instrument not in self._positions:
             self._positions[instrument] = {
                 "quantity": 0,
                 "avg_cost": 0.0,
                 "total_bought": 0,
                 "total_sold": 0,
+                "product": product,
             }
         pos = self._positions[instrument]
-        from src.risk.costs import TransactionCostModel
-        cost_model = TransactionCostModel()
-        product = event.data.get("product", "mis")
-        txn_fee = cost_model.total_cost(side, quantity, price, product=product)
+        txn_fee = event.data.get("commission")
+        if txn_fee is None:
+            from src.risk.costs import TransactionCostModel
+            cost_model = TransactionCostModel()
+            txn_fee = cost_model.total_cost(side, quantity, price, product=product)
 
         if side == "buy":
             total_cost = pos["avg_cost"] * pos["quantity"] + cost

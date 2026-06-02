@@ -458,6 +458,42 @@ class ReflectionEngineAgent(BaseAgent):
             
         strategy_name = cand.get("strategy")
         param_changes = cand.get("params", {})
+
+        # 1. Backtest validation gating (Phase 2)
+        self.logger.info("Running validation backtest for candidate %s...", candidate_id)
+        
+        # Baseline backtest
+        baseline_res = await self._run_backtest()
+        if not baseline_res:
+            self.logger.warning("Validation Gating: Baseline backtest failed. Aborting approval.")
+            return False
+            
+        # Mutated/Candidate backtest
+        override = {strategy_name: {"params": param_changes, "enabled": True}}
+        mutated_res = await self._run_backtest(strategy_config_override=override)
+        if not mutated_res:
+            self.logger.warning("Validation Gating: Mutated backtest failed. Aborting approval.")
+            return False
+            
+        # Check Sharpe ratio improvement
+        sharpe_improvement = mutated_res.sharpe_ratio - baseline_res.sharpe_ratio
+        req_improvement = getattr(settings, "reflection_backtest_gate_threshold", 0.0)
+        
+        self.logger.info(
+            "Validation Gate Sharpe ratios: baseline=%.3f, candidate=%.3f, improvement=%.3f (required >= %.3f)",
+            baseline_res.sharpe_ratio, mutated_res.sharpe_ratio, sharpe_improvement, req_improvement
+        )
+        
+        if sharpe_improvement < req_improvement:
+            self.logger.warning(
+                "Validation Gate FAILED: candidate improvement %.3f < %.3f. Rejecting candidate.",
+                sharpe_improvement, req_improvement
+            )
+            cand["status"] = "failed_gate"
+            self._save_candidates()
+            return False
+            
+        self.logger.info("Validation Gate PASSED! Approving candidate %s", candidate_id)
         
         self.logger.info("Approving Candidate %s -> %s params=%s", candidate_id, strategy_name, param_changes)
         

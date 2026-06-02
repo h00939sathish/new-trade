@@ -33,3 +33,10 @@ strategies:
       window: 14
       oversold: 30.0
       overbought: 70.0
+  microstructure:
+    enabled: true
+    weight: 0.2
+    params:
+      ofi_window: 20
+      threshold: 1.5
+

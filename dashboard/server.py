@@ -522,6 +522,34 @@ def create_app(system: Any = None, metrics: Any = None) -> FastAPI:
     async def api_metrics():
         return PlainTextResponse(_metrics_text(), media_type="text/plain; charset=utf-8")
 
+    @app.get("/api/candidates")
+    async def api_candidates():
+        candidates = []
+        if _trading_system and hasattr(_trading_system, "reflection_engine"):
+            re = _trading_system.reflection_engine
+            candidates = [{"id": k, **v} for k, v in re._candidates.items()]
+        return JSONResponse({"candidates": candidates})
+
+    @app.post("/api/candidates/approve/{candidate_id}")
+    async def api_approve_candidate(candidate_id: str):
+        if _trading_system and hasattr(_trading_system, "reflection_engine"):
+            re = _trading_system.reflection_engine
+            success = await re.approve_candidate(candidate_id)
+            if success:
+                return JSONResponse({"status": "ok", "message": f"Candidate {candidate_id} approved for live trading"})
+            return JSONResponse({"status": "error", "message": "Approval failed (check logs or candidate status)"}, status_code=400)
+        return JSONResponse({"status": "error", "message": "Reflection Engine not running"}, status_code=503)
+
+    @app.post("/api/candidates/reject/{candidate_id}")
+    async def api_reject_candidate(candidate_id: str):
+        if _trading_system and hasattr(_trading_system, "reflection_engine"):
+            re = _trading_system.reflection_engine
+            success = await re.reject_candidate(candidate_id)
+            if success:
+                return JSONResponse({"status": "ok", "message": f"Candidate {candidate_id} rejected"})
+            return JSONResponse({"status": "error", "message": "Rejection failed"}, status_code=400)
+        return JSONResponse({"status": "error", "message": "Reflection Engine not running"}, status_code=503)
+
     @app.post("/api/control-plane/controls/emergency-stop")
     @app.post("/api/control-plane/controls/reset")
     @app.post("/api/kill-switch/reset")

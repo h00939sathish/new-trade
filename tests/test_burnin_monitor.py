@@ -28,8 +28,9 @@ def _system():
     return system
 
 
-def test_snapshot_reports_matching_local_paper_positions():
-    position_registry.update_from_fill("RELIANCE", "buy", 10, 100.0)
+@pytest.mark.asyncio
+async def test_snapshot_reports_matching_local_paper_positions():
+    await position_registry.update_from_fill("RELIANCE", "buy", 10, 100.0)
 
     snapshot = build_paper_reconciliation_snapshot(_system())
 
@@ -39,8 +40,9 @@ def test_snapshot_reports_matching_local_paper_positions():
     assert snapshot["filled_orders"] == 1
 
 
-def test_snapshot_reports_local_position_mismatch():
-    position_registry.update_from_fill("RELIANCE", "buy", 5, 100.0)
+@pytest.mark.asyncio
+async def test_snapshot_reports_local_position_mismatch():
+    await position_registry.update_from_fill("RELIANCE", "buy", 5, 100.0)
 
     snapshot = build_paper_reconciliation_snapshot(_system())
 
@@ -50,8 +52,9 @@ def test_snapshot_reports_local_position_mismatch():
     }
 
 
-def test_write_snapshot_appends_json_line(tmp_path):
-    position_registry.update_from_fill("RELIANCE", "buy", 10, 100.0)
+@pytest.mark.asyncio
+async def test_write_snapshot_appends_json_line(tmp_path):
+    await position_registry.update_from_fill("RELIANCE", "buy", 10, 100.0)
     path = tmp_path / "reconciliation.jsonl"
 
     snapshot = write_paper_reconciliation_snapshot(_system(), path)

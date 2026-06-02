@@ -1,0 +1,13 @@
+# Earnings Calendar for WATCHLIST instruments (result day ± 1 session will block entries)
+RELIANCE:
+  - "2026-04-18"
+  - "2026-07-20"
+TCS:
+  - "2026-04-12"
+  - "2026-07-15"
+INFY:
+  - "2026-04-14"
+  - "2026-07-17"
+HDFCBANK:
+  - "2026-04-20"
+  - "2026-07-22"

@@ -65,7 +65,7 @@ class Exchange(StrEnum):
 class EventMetadata(BaseModel):
     producer: str
     agent_id: str | None = None
-    correlation_id: str | None = None
+    correlation_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     trace_id: str | None = None
     version: int = 1
 
@@ -99,14 +99,18 @@ class MarketDataEvent(Event):
         data: dict[str, Any],
         producer: str = "market_intel",
         agent_id: str | None = None,
+        correlation_id: str | None = None,
     ) -> "MarketDataEvent":
+        meta = EventMetadata(producer=producer, agent_id=agent_id)
+        if correlation_id:
+            meta.correlation_id = correlation_id
         return cls(
             event_type=EventType.TICK,
             stream=f"market.{exchange.value}.{instrument}",
             instrument=instrument,
             exchange=exchange,
             data=data,
-            metadata=EventMetadata(producer=producer, agent_id=agent_id),
+            metadata=meta,
         )
 
 
@@ -134,7 +138,11 @@ class OHLCVEvent(Event):
         volume: float,
         oi: float | None = None,
         producer: str = "market_intel",
+        correlation_id: str | None = None,
     ) -> "OHLCVEvent":
+        meta = EventMetadata(producer=producer)
+        if correlation_id:
+            meta.correlation_id = correlation_id
         return cls(
             event_type=EventType.OHLCV,
             stream=f"ohlcv.{exchange.value}.{instrument}.{interval}",
@@ -158,7 +166,7 @@ class OHLCVEvent(Event):
                 "volume": volume,
                 "oi": oi,
             },
-            metadata=EventMetadata(producer=producer),
+            metadata=meta,
         )
 
 
@@ -169,6 +177,7 @@ class TickEvent(Event):
     volume: int | None = None
     bid: float | None = None
     ask: float | None = None
+    depth: dict[str, list[dict[str, Any]]] | None = None
 
     @classmethod
     def create(
@@ -179,12 +188,17 @@ class TickEvent(Event):
         volume: int | None = None,
         bid: float | None = None,
         ask: float | None = None,
+        depth: dict[str, list[dict[str, Any]]] | None = None,
         producer: str = "market_intel",
         timestamp: datetime | None = None,
+        correlation_id: str | None = None,
     ) -> "TickEvent":
         kwargs = {}
         if timestamp is not None:
             kwargs["timestamp"] = timestamp
+        meta = EventMetadata(producer=producer)
+        if correlation_id:
+            meta.correlation_id = correlation_id
         return cls(
             event_type=EventType.TICK,
             stream=f"tick.{exchange.value}.{instrument}",
@@ -194,6 +208,7 @@ class TickEvent(Event):
             volume=volume,
             bid=bid,
             ask=ask,
+            depth=depth,
             data={
                 "instrument": instrument,
                 "exchange": exchange.value,
@@ -201,8 +216,9 @@ class TickEvent(Event):
                 "volume": volume,
                 "bid": bid,
                 "ask": ask,
+                "depth": depth,
             },
-            metadata=EventMetadata(producer=producer),
+            metadata=meta,
             **kwargs,
         )
 
@@ -231,6 +247,7 @@ class SignalEvent(Event):
         timestamp: datetime | None = None,
         stop_loss_pct: float | None = None,
         take_profit_pct: float | None = None,
+        correlation_id: str | None = None,
     ) -> "SignalEvent":
         data = {
             "instrument": instrument,
@@ -246,6 +263,9 @@ class SignalEvent(Event):
         kwargs = {}
         if timestamp is not None:
             kwargs["timestamp"] = timestamp
+        meta = EventMetadata(producer=producer)
+        if correlation_id:
+            meta.correlation_id = correlation_id
         return cls(
             event_type=EventType.SIGNAL,
             stream=f"signal.{strategy}.{instrument}",
@@ -258,7 +278,7 @@ class SignalEvent(Event):
             stop_loss_pct=stop_loss_pct,
             take_profit_pct=take_profit_pct,
             data=data,
-            metadata=EventMetadata(producer=producer),
+            metadata=meta,
             **kwargs,
         )
 
@@ -276,6 +296,8 @@ class OrderEvent(Event):
     status: OrderStatus
     variety: str = "regular"
     disclosed_quantity: int | None = None
+    signal_id: str | None = None
+    strategy: str | None = None
 
     @classmethod
     def create(
@@ -293,6 +315,9 @@ class OrderEvent(Event):
         status: OrderStatus = OrderStatus.PENDING,
         disclosed_quantity: int | None = None,
         producer: str = "execution",
+        signal_id: str | None = None,
+        strategy: str | None = None,
+        correlation_id: str | None = None,
     ) -> "OrderEvent":
         data = {
             "order_id": order_id,
@@ -307,7 +332,12 @@ class OrderEvent(Event):
             "status": status.value,
             "variety": variety,
             "disclosed_quantity": disclosed_quantity,
+            "signal_id": signal_id,
+            "strategy": strategy,
         }
+        meta = EventMetadata(producer=producer)
+        if correlation_id:
+            meta.correlation_id = correlation_id
         return cls(
             event_type=EventType.ORDER_CREATED if status == OrderStatus.PENDING else EventType.ORDER_ACCEPTED,
             stream=f"order.{instrument}",
@@ -323,8 +353,10 @@ class OrderEvent(Event):
             status=status,
             variety=variety,
             disclosed_quantity=disclosed_quantity,
+            signal_id=signal_id,
+            strategy=strategy,
             data=data,
-            metadata=EventMetadata(producer=producer),
+            metadata=meta,
         )
 
 
@@ -337,6 +369,11 @@ class FillEvent(Event):
     fill_quantity: int
     fill_timestamp: datetime
     trade_id: str | None = None
+    signal_id: str | None = None
+    strategy: str | None = None
+    broker_order_id: str | None = None
+    commission: float | None = None
+    slippage_bps: float | None = None
 
     @classmethod
     def create(
@@ -350,6 +387,11 @@ class FillEvent(Event):
         fill_timestamp: datetime | None = None,
         trade_id: str | None = None,
         producer: str = "execution",
+        signal_id: str | None = None,
+        strategy: str | None = None,
+        broker_order_id: str | None = None,
+        commission: float | None = None,
+        slippage_bps: float | None = None,
     ) -> "FillEvent":
         ts = fill_timestamp or datetime.now(UTC)
         return cls(
@@ -364,6 +406,9 @@ class FillEvent(Event):
             fill_timestamp=ts,
             trade_id=trade_id,
             timestamp=ts,
+            signal_id=signal_id,
+            strategy=strategy,
+            broker_order_id=broker_order_id,
             data={
                 "order_id": order_id,
                 "instrument": instrument,
@@ -373,6 +418,11 @@ class FillEvent(Event):
                 "fill_quantity": fill_quantity,
                 "fill_timestamp": ts.isoformat(),
                 "trade_id": trade_id,
+                "signal_id": signal_id,
+                "strategy": strategy,
+                "broker_order_id": broker_order_id,
+                "commission": commission,
+                "slippage_bps": slippage_bps,
             },
             metadata=EventMetadata(producer=producer),
         )
@@ -392,7 +442,11 @@ class RiskCheckEvent(Event):
         instrument: str | None = None,
         details: dict[str, Any] | None = None,
         producer: str = "risk_mgmt",
+        correlation_id: str | None = None,
     ) -> "RiskCheckEvent":
+        meta = EventMetadata(producer=producer)
+        if correlation_id:
+            meta.correlation_id = correlation_id
         return cls(
             event_type=EventType.RISK_BREACH if not passed else EventType.RISK_CHECK,
             stream="risk" if passed else "risk.breach",
@@ -406,7 +460,7 @@ class RiskCheckEvent(Event):
                 "instrument": instrument,
                 "details": details or {},
             },
-            metadata=EventMetadata(producer=producer),
+            metadata=meta,
         )
 
 

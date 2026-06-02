@@ -74,6 +74,7 @@ class MarketIntelAgent(BaseAgent):
         volume: int | None = None,
         bid: float | None = None,
         ask: float | None = None,
+        depth: dict[str, list[dict[str, Any]]] | None = None,
     ) -> None:
         event = TickEvent.create(
             instrument=instrument,
@@ -82,6 +83,7 @@ class MarketIntelAgent(BaseAgent):
             volume=volume,
             bid=bid,
             ask=ask,
+            depth=depth,
             producer=self.name,
         )
         self._latest_ticks[instrument] = event
@@ -213,10 +215,16 @@ class MarketIntelAgent(BaseAgent):
         self._latest_ohlcv[key] = event
 
     async def _on_provider_tick(self, data: dict[str, Any]) -> None:
+        last_price = data.get("last_price", 0)
+        instrument = data.get("instrument")
+        
+        if not self._validate_tick(instrument, last_price):
+            return
+            
         self.logger.debug(
             "Tick received: %s @ %.2f (vol=%s)",
-            data.get("instrument"),
-            data.get("last_price", 0),
+            instrument,
+            last_price,
             data.get("volume"),
         )
         await self.ingest_tick(
@@ -224,6 +232,9 @@ class MarketIntelAgent(BaseAgent):
             exchange=Exchange(data["exchange"]),
             last_price=data["last_price"],
             volume=data.get("volume"),
+            bid=data.get("bid"),
+            ask=data.get("ask"),
+            depth=data.get("depth"),
         )
 
     async def _on_provider_ohlcv(self, data: dict[str, Any]) -> None:
@@ -273,6 +284,23 @@ class MarketIntelAgent(BaseAgent):
                     )
             except Exception as e:
                 self.logger.warning("Failed to load historical data for %s: %s", inst, e)
+
+    def _validate_tick(self, instrument: str, price: float) -> bool:
+        if price <= 0:
+            self.logger.warning("Invalid tick for %s: price is zero or negative (%.2f)", instrument, price)
+            return False
+            
+        last_event = self._latest_ticks.get(instrument)
+        if last_event:
+            last_price = last_event.data.get("last_price", 0)
+            if last_price > 0:
+                # Check for >10% single-tick gap
+                pct_change = abs(price - last_price) / last_price
+                if pct_change > 0.10:
+                    self.logger.warning("Anomalous tick rejected for %s: price gap of %.1f%% (%.2f -> %.2f)", 
+                                        instrument, pct_change * 100, last_price, price)
+                    return False
+        return True
 
     def _emit_market_data(self) -> None:
         pass

@@ -52,7 +52,7 @@ class MetricsCollector:
             "event_rate": total_events / uptime if uptime > 0 else 0,
         }
 
-    def prometheus_text(self) -> str:
+    def prometheus_text(self, system=None) -> str:
         snapshot = self.snapshot()
         lines = [
             "# HELP trading_events_total Total events processed",
@@ -79,6 +79,19 @@ class MetricsCollector:
         for status, count in snapshot["orders_by_status"].items():
             lines.append(f'trading_orders_total{{status="{status}"}} {count}')
 
+        # Add Kill Switch metric
+        from src.risk.kill_switch import KillSwitch
+        kill_active = 1 if KillSwitch().active else 0
+
+        # Add Broker Connected metric
+        broker_connected = 0
+        if system and hasattr(system, "execution") and system.execution and hasattr(system.execution, "_broker") and system.execution._broker:
+            broker = system.execution._broker
+            if hasattr(broker, "is_connected") and broker.is_connected():
+                broker_connected = 1
+            elif hasattr(broker, "_client") and hasattr(broker._client, "is_connected") and broker._client.is_connected():
+                broker_connected = 1
+
         lines.extend([
             "",
             "# HELP trading_errors_total Errors by component",
@@ -88,6 +101,8 @@ class MetricsCollector:
             f"trading_uptime_seconds {snapshot['uptime_seconds']}",
             f"trading_avg_latency_ms {snapshot['avg_latency_ms']}",
             f"trading_event_rate {snapshot['event_rate']}",
+            f"trading_kill_switch_active {kill_active}",
+            f"trading_broker_connected {broker_connected}",
         ])
         return "\n".join(lines) + "\n"
 

@@ -7,28 +7,17 @@ from src.agents.base import BaseAgent
 from src.risk.position_registry import position_registry
 from src.schemas.events import Event, EventType, Exchange, SignalEvent
 from src.strategies.base import Strategy
-from src.strategies.technical import (
-    ATRStrategy,
-    BollingerBandsStrategy,
-    IchimokuStrategy,
-    MACDStrategy,
-    MeanReversionStrategy,
-    MomentumStrategy,
-    RSIStrategy,
-    VolumeStrategy,
-)
+from src.strategies.opening_range_breakout import OpeningRangeBreakoutStrategy
+from src.strategies.sideways_reversion import SidewaysReversionStrategy
+from src.strategies.volatility_compression import VolatilityCompressionStrategy
+from src.monitoring.latency_tracer import tracer
 
 __all__ = [
-    "ATRStrategy",
-    "BollingerBandsStrategy",
-    "IchimokuStrategy",
-    "MACDStrategy",
-    "MeanReversionStrategy",
-    "MomentumStrategy",
-    "RSIStrategy",
+    "OpeningRangeBreakoutStrategy",
+    "SidewaysReversionStrategy",
+    "VolatilityCompressionStrategy",
     "Strategy",
     "StrategyGenAgent",
-    "VolumeStrategy",
 ]
 
 # Minimum seconds between signals for the same instrument (prevents overtrading)
@@ -46,6 +35,7 @@ class StrategyGenAgent(BaseAgent):
         self._candle_volumes: dict[str, dict[str, deque[float]]] = {}
         self._candle_highs: dict[str, dict[str, deque[float]]] = {}
         self._candle_lows: dict[str, dict[str, deque[float]]] = {}
+        self._candle_timestamps: dict[str, dict[str, deque[datetime]]] = {}
         self._config_path = config_path
         self._pending_signal_levels: dict[str, dict[str, float]] = {}
         self._last_tick_time: dict[str, datetime] = {}
@@ -155,7 +145,7 @@ class StrategyGenAgent(BaseAgent):
             return
 
         # Update the shared position registry
-        pos = position_registry.update_from_fill(instrument, side, fill_qty, fill_price)
+        pos = await position_registry.update_from_fill(instrument, side, fill_qty, fill_price)
         new_qty = pos["quantity"]
 
         if new_qty == 0:
@@ -177,7 +167,7 @@ class StrategyGenAgent(BaseAgent):
                 sl = avg_price * (1.0 + sl_pct)
                 tp = avg_price * (1.0 - tp_pct)
 
-            position_registry.set_sl_tp(
+            await position_registry.set_sl_tp(
                 instrument, stop_loss=sl, take_profit=tp,
                 stop_loss_pct=sl_pct, take_profit_pct=tp_pct,
             )
@@ -196,7 +186,7 @@ class StrategyGenAgent(BaseAgent):
             if is_trailing:
                 new_sl = current_price * (1.0 - pos["stop_loss_pct"])
                 if new_sl > pos["stop_loss"]:
-                    position_registry.update_trailing_sl(instrument, new_sl)
+                    await position_registry.update_trailing_sl(instrument, new_sl)
                     self.logger.debug("Trailing SL updated for %s: %.2f", instrument, new_sl)
             if current_price <= pos["stop_loss"]:
                 self.logger.warning("Stop Loss hit for %s long position at %.2f (SL: %.2f)", instrument, current_price, pos["stop_loss"])
@@ -208,7 +198,7 @@ class StrategyGenAgent(BaseAgent):
             if is_trailing:
                 new_sl = current_price * (1.0 + pos["stop_loss_pct"])
                 if new_sl < pos["stop_loss"] or pos["stop_loss"] == 0.0:
-                    position_registry.update_trailing_sl(instrument, new_sl)
+                    await position_registry.update_trailing_sl(instrument, new_sl)
                     self.logger.debug("Trailing SL updated for %s: %.2f", instrument, new_sl)
             if current_price >= pos["stop_loss"]:
                 self.logger.warning("Stop Loss hit for %s short position at %.2f (SL: %.2f)", instrument, current_price, pos["stop_loss"])
@@ -233,6 +223,7 @@ class StrategyGenAgent(BaseAgent):
         await self._emit_signal(instrument, strategy_name, signal, exchange=exchange, timestamp=timestamp)
 
     async def _process_tick(self, event: Event) -> None:
+        start_time = time.monotonic()
         instrument = event.data.get("instrument", "")
         exchange = Exchange(event.data.get("exchange", "NSE"))
         price = event.data.get("last_price")
@@ -244,11 +235,20 @@ class StrategyGenAgent(BaseAgent):
 
         await self._check_sl_tp(instrument, float(price), event.timestamp, exchange)
 
+        depth = event.data.get("depth")
+        bid = event.data.get("bid")
+        ask = event.data.get("ask")
+
         # 1. Evaluate candidate strategies (shadow trading)
         for candidate in self._candidate_strategies.values():
             if getattr(candidate, "data_type", "any") in ("tick", "any"):
                 prices_list = list(self._tick_prices[instrument])
-                signal = await candidate.evaluate(instrument, prices_list)
+                try:
+                    signal = await candidate.evaluate(
+                        instrument, prices_list, depth=depth, bid=bid, ask=ask
+                    )
+                except TypeError:
+                    signal = await candidate.evaluate(instrument, prices_list)
                 if signal is not None:
                     await self._emit_candidate_signal(instrument, candidate.name, signal, exchange, event.timestamp)
 
@@ -258,7 +258,12 @@ class StrategyGenAgent(BaseAgent):
         for strategy in self._strategies.values():
             if getattr(strategy, "data_type", "any") in ("tick", "any"):
                 prices_list = list(self._tick_prices[instrument])
-                signal = await strategy.evaluate(instrument, prices_list)
+                try:
+                    signal = await strategy.evaluate(
+                        instrument, prices_list, depth=depth, bid=bid, ask=ask
+                    )
+                except TypeError:
+                    signal = await strategy.evaluate(instrument, prices_list)
                 if signal is not None:
                     direction = signal["direction"]
                     confidence = signal["confidence"]
@@ -317,10 +322,16 @@ class StrategyGenAgent(BaseAgent):
 
                 self._last_signal_direction[instrument] = direction
                 self._last_signal_time[instrument] = now
-                await self._emit_signal(instrument, strategy_name, consolidated, exchange=exchange, timestamp=event.timestamp,
-                                        stop_loss_pct=sl_pct, take_profit_pct=tp_pct)
+                tracer.record_trace(event.metadata.correlation_id, "strategy_gen", (time.monotonic() - start_time) * 1000)
+                await self._emit_signal(
+                    instrument, strategy_name, consolidated,
+                    exchange=exchange, timestamp=event.timestamp,
+                    stop_loss_pct=sl_pct, take_profit_pct=tp_pct,
+                    correlation_id=event.metadata.correlation_id
+                )
 
     async def _process_ohlcv(self, event: Event) -> None:
+        start_time = time.monotonic()
         instrument = event.data.get("instrument", "")
         exchange = Exchange(event.data.get("exchange", "NSE"))
         close = event.data.get("close")
@@ -355,6 +366,12 @@ class StrategyGenAgent(BaseAgent):
             self._candle_lows[instrument][interval] = deque(maxlen=500)
         self._candle_lows[instrument][interval].append(float(low) if low else float(close))
 
+        if instrument not in self._candle_timestamps:
+            self._candle_timestamps[instrument] = {}
+        if interval not in self._candle_timestamps[instrument]:
+            self._candle_timestamps[instrument][interval] = deque(maxlen=500)
+        self._candle_timestamps[instrument][interval].append(event.timestamp)
+
         await self._check_sl_tp(instrument, float(close), event.timestamp, exchange)
 
         # 1. Evaluate candidate strategies (shadow trading)
@@ -368,7 +385,11 @@ class StrategyGenAgent(BaseAgent):
                 volumes_list = list(self._candle_volumes[instrument][interval])
                 highs_list = list(self._candle_highs.get(instrument, {}).get(interval, []))
                 lows_list = list(self._candle_lows.get(instrument, {}).get(interval, []))
-                signal = await candidate.evaluate(instrument, prices_list, volumes=volumes_list, highs=highs_list, lows=lows_list)
+                timestamps_list = list(self._candle_timestamps.get(instrument, {}).get(interval, []))
+                signal = await candidate.evaluate(
+                    instrument, prices_list, volumes=volumes_list, highs=highs_list, lows=lows_list,
+                    timestamps=timestamps_list,
+                )
                 if signal is not None:
                     await self._emit_candidate_signal(instrument, candidate.name, signal, exchange, event.timestamp)
 
@@ -387,9 +408,10 @@ class StrategyGenAgent(BaseAgent):
                 volumes_list = list(self._candle_volumes[instrument][interval])
                 highs_list = list(self._candle_highs.get(instrument, {}).get(interval, []))
                 lows_list = list(self._candle_lows.get(instrument, {}).get(interval, []))
+                timestamps_list = list(self._candle_timestamps.get(instrument, {}).get(interval, []))
                 signal = await strategy.evaluate(
                     instrument, prices_list, volumes=volumes_list,
-                    highs=highs_list, lows=lows_list,
+                    highs=highs_list, lows=lows_list, timestamps=timestamps_list,
                 )
                 if signal is not None:
                     direction = signal["direction"]
@@ -449,8 +471,37 @@ class StrategyGenAgent(BaseAgent):
 
                 self._last_signal_direction[instrument] = direction
                 self._last_signal_time[instrument] = now
-                await self._emit_signal(instrument, strategy_name, consolidated, exchange=exchange, timestamp=event.timestamp,
-                                        stop_loss_pct=sl_pct, take_profit_pct=tp_pct)
+                tracer.record_trace(event.metadata.correlation_id, "strategy_gen", (time.monotonic() - start_time) * 1000)
+                await self._emit_signal(
+                    instrument, strategy_name, consolidated,
+                    exchange=exchange, timestamp=event.timestamp,
+                    stop_loss_pct=sl_pct, take_profit_pct=tp_pct,
+                    correlation_id=event.metadata.correlation_id
+                )
+
+    def _get_15m_trend(self, instrument: str) -> str:
+        """Calculate 15-minute trend using 20-period EMA of 15m candles."""
+        closes = self._candle_prices.get(instrument, {}).get("15minute", [])
+        if not closes:
+            closes = self._candle_prices.get(instrument, {}).get("15m", [])
+        if not closes:
+            closes = self._candle_prices.get(instrument, {}).get("15min", [])
+            
+        if len(closes) < 20:
+            if len(closes) < 5:
+                return "neutral"
+            return "bullish" if closes[-1] > sum(closes)/len(closes) else "bearish"
+        
+        ema = closes[0]
+        multiplier = 2 / (20 + 1)
+        for c in closes[1:]:
+            ema = (c - ema) * multiplier + ema
+            
+        if closes[-1] > ema:
+            return "bullish"
+        elif closes[-1] < ema:
+            return "bearish"
+        return "neutral"
 
     async def _emit_signal(
         self,
@@ -461,7 +512,18 @@ class StrategyGenAgent(BaseAgent):
         timestamp: datetime | None = None,
         stop_loss_pct: float | None = None,
         take_profit_pct: float | None = None,
+        correlation_id: str | None = None,
     ) -> None:
+        direction = signal.get("direction", "neutral")
+        if direction in ("long", "short"):
+            trend = self._get_15m_trend(instrument)
+            if (direction == "long" and trend == "bearish") or (direction == "short" and trend == "bullish"):
+                self.logger.warning(
+                    "Signal BLOCKED by 15m trend confirmation: %s %s (15m trend: %s)",
+                    instrument, direction, trend
+                )
+                return
+
         event = SignalEvent.create(
             instrument=instrument,
             strategy=strategy,
@@ -474,6 +536,7 @@ class StrategyGenAgent(BaseAgent):
             timestamp=timestamp,
             stop_loss_pct=stop_loss_pct,
             take_profit_pct=take_profit_pct,
+            correlation_id=correlation_id,
         )
         self.logger.info(
             "Signal: %s %s %.2f%% from %s",
@@ -512,8 +575,17 @@ class StrategyGenAgent(BaseAgent):
         self.logger.debug("Candidate Signal: %s %s %.2f%% from %s", instrument, signal["direction"], signal["confidence"] * 100, strategy)
         await self.emit(event)
 
-    def _register_default_strategies(self) -> None:
+    def _load_default_strategies(self) -> None:
+        """Initialize the core robust strategy portfolio."""
+        from src.strategies.opening_range_breakout import OpeningRangeBreakoutStrategy
+        from src.strategies.sideways_reversion import SidewaysReversionStrategy
+        from src.strategies.volatility_compression import VolatilityCompressionStrategy
         from src.config.strategy_config import build_strategies_from_config, load_strategy_config
+        
+        self.add_strategy(OpeningRangeBreakoutStrategy(volume_multiplier=1.2, atr_window=14))
+        self.add_strategy(SidewaysReversionStrategy(rsi_window=14, bb_window=20, bb_std=2.0))
+        self.add_strategy(VolatilityCompressionStrategy(bb_window=20, bb_std=2.0, lookback=100, percentile_threshold=20.0, atr_window=14))
+        
         cfg = load_strategy_config(self._config_path)
         strategies = build_strategies_from_config(cfg)
         for name, strategy in strategies.items():
@@ -533,6 +605,9 @@ class StrategyGenAgent(BaseAgent):
         atr = None
         for _, strat_data in features_all.items():
             feat = strat_data.get("features", {})
+            if "sl_pct_override" in feat and "tp_pct_override" in feat:
+                return feat["sl_pct_override"], feat["tp_pct_override"]
+                
             if "atr" in feat and feat["atr"] is not None and feat["atr"] > 0:
                 atr = feat["atr"]
                 break
