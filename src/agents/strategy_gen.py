@@ -101,7 +101,7 @@ class StrategyGenAgent(BaseAgent):
         if not regime:
             return
 
-        now = time.monotonic()
+        now = event.timestamp.timestamp()
         self._regime_changes.append(now)
         # Keep only changes within the last 10 minutes (600s)
         self._regime_changes = [t for t in self._regime_changes if now - t <= 600.0]
@@ -296,7 +296,7 @@ class StrategyGenAgent(BaseAgent):
                     return
 
                 # Signal cooldown: skip if too recent
-                now = time.monotonic()
+                now = event.timestamp.timestamp()
                 last_time = self._last_signal_time.get(instrument, 0.0)
                 if now - last_time < self._signal_cooldown_seconds:
                     return
@@ -445,7 +445,7 @@ class StrategyGenAgent(BaseAgent):
                     return
 
                 # Signal cooldown: skip if too recent
-                now = time.monotonic()
+                now = event.timestamp.timestamp()
                 last_time = self._last_signal_time.get(instrument, 0.0)
                 if now - last_time < self._signal_cooldown_seconds:
                     return
@@ -632,7 +632,7 @@ class StrategyGenAgent(BaseAgent):
             "positions_tracked": len(position_registry.get_all_positions()),
             "cooldown_active": [
                 k for k, v in self._last_signal_time.items()
-                if time.monotonic() - v < _SIGNAL_COOLDOWN_SECONDS
+                if datetime.now(UTC).timestamp() - v < _SIGNAL_COOLDOWN_SECONDS
             ],
         })
         return base
