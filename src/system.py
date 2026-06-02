@@ -205,6 +205,7 @@ class TradingSystem:
         close: float,
         volume: float,
         exchange: str = "NSE",
+        timestamp: Any = None,
     ) -> None:
         from src.schemas.events import Exchange as Ex
         await self.market_intel.ingest_ohlcv(
@@ -216,4 +217,5 @@ class TradingSystem:
             low=low,
             close=close,
             volume=volume,
+            timestamp=timestamp,
         )

@@ -386,10 +386,15 @@ class StrategyGenAgent(BaseAgent):
                 highs_list = list(self._candle_highs.get(instrument, {}).get(interval, []))
                 lows_list = list(self._candle_lows.get(instrument, {}).get(interval, []))
                 timestamps_list = list(self._candle_timestamps.get(instrument, {}).get(interval, []))
-                signal = await candidate.evaluate(
-                    instrument, prices_list, volumes=volumes_list, highs=highs_list, lows=lows_list,
-                    timestamps=timestamps_list,
-                )
+                try:
+                    signal = await candidate.evaluate(
+                        instrument, prices_list, volumes=volumes_list, highs=highs_list, lows=lows_list,
+                        timestamps=timestamps_list,
+                    )
+                except TypeError:
+                    signal = await candidate.evaluate(
+                        instrument, prices_list, volumes=volumes_list, highs=highs_list, lows=lows_list,
+                    )
                 if signal is not None:
                     await self._emit_candidate_signal(instrument, candidate.name, signal, exchange, event.timestamp)
 
@@ -409,10 +414,16 @@ class StrategyGenAgent(BaseAgent):
                 highs_list = list(self._candle_highs.get(instrument, {}).get(interval, []))
                 lows_list = list(self._candle_lows.get(instrument, {}).get(interval, []))
                 timestamps_list = list(self._candle_timestamps.get(instrument, {}).get(interval, []))
-                signal = await strategy.evaluate(
-                    instrument, prices_list, volumes=volumes_list,
-                    highs=highs_list, lows=lows_list, timestamps=timestamps_list,
-                )
+                try:
+                    signal = await strategy.evaluate(
+                        instrument, prices_list, volumes=volumes_list,
+                        highs=highs_list, lows=lows_list, timestamps=timestamps_list,
+                    )
+                except TypeError:
+                    signal = await strategy.evaluate(
+                        instrument, prices_list, volumes=volumes_list,
+                        highs=highs_list, lows=lows_list,
+                    )
                 if signal is not None:
                     direction = signal["direction"]
                     confidence = signal["confidence"]

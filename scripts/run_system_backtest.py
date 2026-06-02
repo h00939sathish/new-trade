@@ -87,7 +87,8 @@ async def run(days: int):
             low=price,
             close=price,
             volume=tick.get("volume", 0),
-            exchange="NSE"
+            exchange="NSE",
+            timestamp=tick.get("timestamp")
         )
         ticks_processed += 1
         if ticks_processed % 10000 == 0:

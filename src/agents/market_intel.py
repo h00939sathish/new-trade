@@ -100,6 +100,7 @@ class MarketIntelAgent(BaseAgent):
         close: float,
         volume: float,
         oi: float | None = None,
+        timestamp: Any = None,
     ) -> None:
         event = OHLCVEvent.create(
             instrument=instrument,
@@ -113,6 +114,20 @@ class MarketIntelAgent(BaseAgent):
             oi=oi,
             producer=self.name,
         )
+        if timestamp is not None:
+            from datetime import datetime, UTC
+            if isinstance(timestamp, str):
+                try:
+                    event.timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                except ValueError:
+                    pass
+            elif isinstance(timestamp, datetime):
+                event.timestamp = timestamp
+            
+            # Ensure timestamp is UTC timezone aware
+            if event.timestamp.tzinfo is None:
+                event.timestamp = event.timestamp.replace(tzinfo=UTC)
+
         key = f"{instrument}.{interval}"
         self._latest_ohlcv[key] = event
         await self.emit(event)
