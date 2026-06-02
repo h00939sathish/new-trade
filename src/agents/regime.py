@@ -1,3 +1,4 @@
+import time
 import logging
 from collections import deque
 from typing import Any
@@ -10,13 +11,17 @@ from src.schemas.events import Event, EventType
 logger = logging.getLogger("agent.regime")
 
 class RegimeDetectionAgent(BaseAgent):
-    def __init__(self, event_store=None, window: int = 14):
+    def __init__(self, event_store=None, window: int = 20, min_stable_seconds: int = 240):
         super().__init__(name="regime_detection", event_store=event_store)
         self._window = window
         self._prices: dict[str, deque[float]] = {}
         self._highs: dict[str, deque[float]] = {}
         self._lows: dict[str, deque[float]] = {}
         self._current_regime: str = "mean_reverting"
+        self._min_stable_seconds = min_stable_seconds
+        self._pending_regime: str | None = None
+        self._pending_since: Any = None
+        self._last_emit_ts: dict[str, float] = {}
 
     async def on_start(self) -> None:
         self.logger.info("Regime Detection Agent starting")
@@ -86,7 +91,7 @@ class RegimeDetectionAgent(BaseAgent):
         new_regime = "mean_reverting"
         if atr_ma > 0 and atr > atr_ma * 1.5:
             new_regime = "high_volatility"
-        elif trend_strength > 25:
+        elif trend_strength > 35:
             if current_price > sma:
                 new_regime = "trending_up"
             else:
@@ -95,9 +100,31 @@ class RegimeDetectionAgent(BaseAgent):
             new_regime = "mean_reverting"
 
         if new_regime != self._current_regime:
-            self._current_regime = new_regime
-            self.logger.warning("Market regime changed to: %s", new_regime)
+            now = time.monotonic()
+            self._pending_regime = new_regime
+            self._pending_since = now
+            self.logger.info(
+                "Pending regime %s for %s (strength=%.1f, atr=%.2f, atr_ma=%.2f)",
+                new_regime,
+                instrument,
+                trend_strength,
+                atr,
+                atr_ma,
+            )
+            return
 
+        now_ts = time.monotonic()
+        if (
+            self._pending_regime == new_regime
+            and self._pending_since is not None
+            and (now_ts - self._pending_since) >= self._min_stable_seconds
+        ):
+            last_emit = self._last_emit_ts.get(instrument, 0.0)
+            if now_ts - last_emit < self._min_stable_seconds:
+                return
+            self._current_regime = new_regime
+            self._last_emit_ts[instrument] = now_ts
+            self.logger.warning("Market regime changed to: %s (%s)", new_regime, instrument)
             from src.schemas.events import Event, EventMetadata
             regime_event = Event(
                 event_type=EventType.SYSTEM_STATE,
@@ -106,6 +133,8 @@ class RegimeDetectionAgent(BaseAgent):
                 metadata=EventMetadata(producer=self.name),
             )
             await self.emit(regime_event)
+            self._pending_regime = None
+            self._pending_since = None
 
     def _compute_trend_strength(self, highs: list[float], lows: list[float], closes: list[float], period: int) -> float:
         if len(closes) < period + 1:
