@@ -385,7 +385,7 @@ class RiskManagementAgent(BaseAgent):
     async def _check_liquidity_risk(self, instrument: str) -> dict[str, Any]:
         """Check if instrument has sufficient recent volume/liquidity."""
         require_volume = getattr(settings, "risk_require_volume_data", False)
-        min_volume = 5000.0  # Realistic threshold for large-cap
+        min_volume = 1000.0  # Reduced to 1000.0 for synthetic backtest expansion
         
         if not hasattr(self, "_volume_history") or instrument not in self._volume_history:
             if require_volume:

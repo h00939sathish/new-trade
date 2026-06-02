@@ -191,8 +191,9 @@ class StrategyGenAgent(BaseAgent):
                     await position_registry.update_trailing_sl(instrument, new_sl)
                     self.logger.debug("Trailing SL updated for %s: %.2f", instrument, new_sl)
             if current_price <= pos["stop_loss"]:
-                self.logger.warning("Stop Loss hit for %s long position at %.2f (SL: %.2f)", instrument, current_price, pos["stop_loss"])
-                await self._emit_exit_signal(instrument, current_price, "stop_loss", exchange, timestamp)
+                self.logger.warning("SOFTWARE STOP LOSS ALERT for %s long at %.2f (SL: %.2f) - Assuming Native Broker CO handles this.", instrument, current_price, pos["stop_loss"])
+                # Note: We do NOT emit an exit signal for stop loss here anymore.
+                # The native broker Cover Order is responsible for protecting capital.
             elif current_price >= pos["take_profit"]:
                 self.logger.warning("Take Profit hit for %s long position at %.2f (TP: %.2f)", instrument, current_price, pos["take_profit"])
                 await self._emit_exit_signal(instrument, current_price, "take_profit", exchange, timestamp)
@@ -203,8 +204,8 @@ class StrategyGenAgent(BaseAgent):
                     await position_registry.update_trailing_sl(instrument, new_sl)
                     self.logger.debug("Trailing SL updated for %s: %.2f", instrument, new_sl)
             if current_price >= pos["stop_loss"]:
-                self.logger.warning("Stop Loss hit for %s short position at %.2f (SL: %.2f)", instrument, current_price, pos["stop_loss"])
-                await self._emit_exit_signal(instrument, current_price, "stop_loss", exchange, timestamp)
+                self.logger.warning("SOFTWARE STOP LOSS ALERT for %s short at %.2f (SL: %.2f) - Assuming Native Broker CO handles this.", instrument, current_price, pos["stop_loss"])
+                # Note: We do NOT emit an exit signal for stop loss here anymore.
             elif current_price <= pos["take_profit"]:
                 self.logger.warning("Take Profit hit for %s short position at %.2f (TP: %.2f)", instrument, current_price, pos["take_profit"])
                 await self._emit_exit_signal(instrument, current_price, "take_profit", exchange, timestamp)

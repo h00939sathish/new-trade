@@ -11,7 +11,7 @@ DEFAULT_CONFIG = {
         "momentum": {
             "enabled": True,
             "weight": 0.5,
-            "params": {"short_window": 5, "long_window": 20, "threshold": 0.02},
+            "params": {"short_window": 5, "long_window": 20, "threshold": 0.002},
         },
         "mean_reversion": {
             "enabled": False,
@@ -34,7 +34,7 @@ DEFAULT_CONFIG = {
             "params": {"window": 14, "oversold": 30.0, "overbought": 70.0},
         },
         "macd": {
-            "enabled": False,
+            "enabled": True,
             "weight": 0.5,
             "params": {"fast": 12, "slow": 26, "signal": 9, "threshold": 0.0},
         },

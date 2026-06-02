@@ -1,4 +1,5 @@
 from collections import defaultdict
+from datetime import datetime, UTC
 from typing import Any
 
 from src.agents.base import BaseAgent
@@ -300,10 +301,18 @@ class MarketIntelAgent(BaseAgent):
             except Exception as e:
                 self.logger.warning("Failed to load historical data for %s: %s", inst, e)
 
-    def _validate_tick(self, instrument: str, price: float) -> bool:
+    def _validate_tick(self, instrument: str, price: float, timestamp: datetime | None = None) -> bool:
         if price <= 0:
             self.logger.warning("Invalid tick for %s: price is zero or negative (%.2f)", instrument, price)
             return False
+            
+        if timestamp is not None:
+            now = datetime.now(UTC)
+            age = (now - timestamp).total_seconds()
+            if age > 60.0:
+                self.logger.warning("Stale tick rejected for %s: age is %.1fs", instrument, age)
+                return False
+                
             
         last_event = self._latest_ticks.get(instrument)
         if last_event:

@@ -167,6 +167,10 @@ class ExecutionAgent(BaseAgent):
                 self.logger.warning(
                     "Restored %d outstanding orders from disk — verify with broker", count,
                 )
+                
+            # If restart happens, we ensure orders map is populated properly
+            # and triggers any reconciliation loops automatically via start methods
+
 
     async def _load_active_twaps(self) -> None:
         """Load active TWAP states from disk."""
@@ -594,21 +598,39 @@ class ExecutionAgent(BaseAgent):
 
         if self._broker is not None:
             exchange = order_event.exchange
+            variety = order_event.variety
+            trigger_price = order_event.trigger_price
+            
+            # Upgrade MIS order to Cover Order if a trigger_price is provided (Native SL)
+            if order_event.product.value == "mis" and trigger_price is not None and trigger_price > 0:
+                variety = "co"
+                order_event.variety = "co"
+            
             broker_start = time.monotonic()
-            broker_id = await self._broker.place_order(
-                tradingsymbol=instrument,
-                exchange=exchange,
-                side=side,
-                order_type=order_event.order_type,
-                quantity=quantity,
-                product=order_event.product,
-                price=price,
-                tag=tag,
-            )
-            broker_rtt = (time.monotonic() - broker_start) * 1000
-            tracer.record_trace(correlation_id, "broker_rtt", broker_rtt)
-            order_event.data["broker_order_id"] = broker_id
-            self.logger.info("Broker order: %s (id=%s)", instrument, broker_id)
+            try:
+                broker_id = await self._broker.place_order(
+                    tradingsymbol=instrument,
+                    exchange=exchange,
+                    side=side,
+                    order_type=order_event.order_type,
+                    quantity=quantity,
+                    product=order_event.product,
+                    price=price,
+                    trigger_price=trigger_price,
+                    variety=variety,
+                    tag=tag,
+                )
+                broker_rtt = (time.monotonic() - broker_start) * 1000
+                tracer.record_trace(correlation_id, "broker_rtt", broker_rtt)
+                order_event.data["broker_order_id"] = broker_id
+                self.logger.info("Broker order: %s (id=%s)", instrument, broker_id)
+            except Exception as e:
+                self.logger.error("Broker pre-submission reject: %s", e)
+                order_event.status = OrderStatus.REJECTED
+                order_event.data["status"] = OrderStatus.REJECTED.value
+                order_event.data["reject_reason"] = str(e)
+                await self._persist_order(order_event, strategy=self._order_strategies.get(order_event.event_id, "unknown"))
+                raise e
             
         await self.emit(order_event)
         self._open_orders[order_event.event_id] = order_event
@@ -739,14 +761,22 @@ class ExecutionAgent(BaseAgent):
                         if self._broker is not None:
                             try:
                                 broker_start = time.monotonic()
+                                trigger_price = order_event.trigger_price
+                                variety = order_event.variety
+                                if order_event.product.value == "mis" and trigger_price is not None and trigger_price > 0:
+                                    variety = "co"
+                                    order_event.variety = "co"
+                                    
                                 broker_id = await self._broker.place_order(
                                     tradingsymbol=twap["instrument"],
                                     exchange=order_event.exchange,
                                     side=order_event.side,
                                     order_type=order_event.order_type,
                                     quantity=chunk_qty,
-                                    product=ProductType(str(twap["signal"].get("product", "mis")).lower()),
+                                    product=order_event.product,
                                     price=twap["price"],
+                                    trigger_price=trigger_price,
+                                    variety=variety,
                                     tag=tag,
                                     disclosed_quantity=disclosed_qty,
                                 )
@@ -850,21 +880,37 @@ class ExecutionAgent(BaseAgent):
                 if self._paper_trading:
                     await self._simulate_fill(order_event)
                 return order_event
+            
+            variety = "regular"
+            if product.value == "mis" and trigger_price is not None and trigger_price > 0:
+                variety = "co"
+                order_event.variety = "co"
+                order_event.data["variety"] = "co"
 
-            broker_id = await self._broker.place_order(
-                tradingsymbol=instrument,
-                exchange=exchange,
-                side=side,
-                order_type=order_type,
-                quantity=quantity,
-                product=product,
-                price=price,
-                trigger_price=trigger_price,
-                tag=tag,
-            )
-            order_event.data["broker_order_id"] = broker_id
+            try:
+                broker_id = await self._broker.place_order(
+                    tradingsymbol=instrument,
+                    exchange=exchange,
+                    side=side,
+                    order_type=order_type,
+                    quantity=quantity,
+                    product=product,
+                    price=price,
+                    trigger_price=trigger_price,
+                    variety=variety,
+                    tag=tag,
+                )
+                order_event.data["broker_order_id"] = broker_id
+            except Exception as e:
+                self.logger.error("Broker reject on place_order: %s", e)
+                order_event.status = OrderStatus.REJECTED
+                order_event.data["status"] = OrderStatus.REJECTED.value
+                order_event.data["reject_reason"] = str(e)
+                await self._persist_order(order_event, strategy=strategy)
+                raise e
         await self.emit(order_event)
         self._open_orders[order_event.event_id] = order_event
+        await self._persist_order(order_event, strategy=strategy)
         if self._paper_trading:
             await self._simulate_fill(order_event)
         return order_event

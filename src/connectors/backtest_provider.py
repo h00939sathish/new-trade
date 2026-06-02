@@ -5,6 +5,7 @@ from pathlib import Path
 import random
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 from typing import Any
 import httpx
 
@@ -193,20 +194,25 @@ class BacktestDataProvider:
             close_val = candle.get("close", o)
             volume = candle.get("volume", 10000)
 
+            ist_tz = ZoneInfo("Asia/Kolkata")
             ts = candle.get("timestamp")
             if isinstance(ts, str):
                 try:
-                    ts = datetime.fromisoformat(ts)
+                    ts = datetime.fromisoformat(ts).astimezone(ist_tz)
                 except ValueError:
-                    ts = datetime.now(UTC)
+                    ts = datetime.now(ist_tz)
             if isinstance(ts, datetime):
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=ist_tz)
+                else:
+                    ts = ts.astimezone(ist_tz)
                 ts = ts.replace(
                     hour=TRADING_START_HOUR,
                     minute=TRADING_START_MINUTE,
                     second=0, microsecond=0,
                 )
             else:
-                base_dt = datetime.now(UTC) - timedelta(days=len(candles) - ci)
+                base_dt = datetime.now(ist_tz) - timedelta(days=len(candles) - ci)
                 ts = base_dt.replace(
                     hour=TRADING_START_HOUR,
                     minute=TRADING_START_MINUTE,

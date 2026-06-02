@@ -94,11 +94,6 @@ class TradingSystem:
             event_store=self._event_store,
             backtest_data_provider=bt_provider,
         )
-        self.personas = ExpertPersonasAgent(
-            event_store=self._event_store,
-            alternative_data_provider=None, # Will auto-init
-            poll_interval=3600,
-        )
         self._agents = []
         if settings.agent_market_intel_enabled:
             self._agents.append(self.market_intel)
@@ -118,7 +113,6 @@ class TradingSystem:
             self.portfolio_opt,
             self.regime_detection,
             self.reconciliation,
-            self.personas,
         ])
 
         for agent in self._agents:
