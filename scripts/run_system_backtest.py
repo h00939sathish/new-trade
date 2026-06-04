@@ -26,6 +26,9 @@ async def run(days: int):
     async_bus_module.event_bus = sync_bus
     
     # 2. Instantiate System without real broker
+    from src.config.settings import settings
+    settings.agent_reflection_enabled = False  # Disable reflection during backtest to prevent grid-search loops
+    
     system = TradingSystem(providers={"angel": None, "groww": None, "kite_client": None, "kite_broker": None})
     system.execution._paper_trading = True
     
@@ -46,10 +49,8 @@ async def run(days: int):
     logger.info(f"Using watchlist: {watchlist}")
     system.set_watchlist(watchlist)
     
-    # 3. Register agents to SyncEventBus and prevent their background loops
+    # 3. Prevent their background loops
     for agent in system._agents:
-        sync_bus.register_agent(agent)
-        
         original_start = agent.start
         import functools
         async def patched_start(*args, orig=original_start, **kwargs):
@@ -58,6 +59,10 @@ async def run(days: int):
 
     # 4. Start system (this now uses patched start and sync bus)
     await system.start()
+    
+    # 4b. Register agents to SyncEventBus after on_start has populated subscriptions
+    for agent in system._agents:
+        sync_bus.register_agent(agent)
     
     # 5. Fetch Historical Data
     logger.info(f"Fetching {days} days of historical data for {watchlist}...")
