@@ -28,6 +28,9 @@ class RiskManagementAgent(BaseAgent):
         self._max_leverage = settings.risk_max_leverage
         self._max_order_value = settings.risk_max_order_value
         self._per_trade_loss_cap_pct = settings.risk_per_trade_loss_cap_pct
+        # FIX P0.2: _capital is referenced in _validate_order (line 216)
+        # but was never initialized. Use the same source as KillSwitch.
+        self._capital = settings.reflection_initial_capital
         self._positions: dict[str, float] = {}
         self._orders_today: int = 0
         self._order_value_today: float = 0.0
