@@ -433,6 +433,11 @@ class ExecutionAgent(BaseAgent):
     async def _handle_risk_check(self, event: Event) -> None:
         """Process risk check results. If approved, execute the pending signal."""
         check_name = event.data.get("check_name", "")
+        # FIX P0.1: read `passed` and `details` BEFORE any conditional branch
+        # to avoid UnboundLocalError. Original code defined these at line 456
+        # but referenced them at lines 439 and 452.
+        passed = event.data.get("passed", False)
+        details = event.data.get("details", {})
 
         # Handle order_validation checks
         if check_name == "order_validation":
@@ -453,8 +458,6 @@ class ExecutionAgent(BaseAgent):
                 self.logger.warning("Risk check failed: %s", check_name)
             return
 
-        passed = event.data.get("passed", False)
-        details = event.data.get("details", {})
         signal_data = details.get("signal", {})
         signal_event_id = signal_data.get("_signal_event_id")
 

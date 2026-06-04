@@ -520,7 +520,7 @@ class StrategyGenAgent(BaseAgent):
         
         ema = closes[0]
         multiplier = 2 / (20 + 1)
-        for c in closes[1:]:
+        for c in list(closes)[1:]:
             ema = (c - ema) * multiplier + ema
             
         if closes[-1] > ema:
