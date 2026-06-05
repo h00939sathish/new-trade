@@ -25,6 +25,9 @@ __all__ = [
 _SIGNAL_COOLDOWN_SECONDS = 30.0
 
 
+from src.config.settings import Settings
+from src.core.regime.ema200_filter import EMA200Filter
+
 class StrategyGenAgent(BaseAgent):
     def __init__(self, event_store=None, config_path: str | None = None):
         super().__init__("strategy_gen", event_store=event_store)
@@ -50,6 +53,8 @@ class StrategyGenAgent(BaseAgent):
         self._signal_cooldown_seconds = 120.0
         self._regime_changes: list[float] = []
         self._regime_instability_active = False
+        # Daily candle aggregation from minute data (for TSMOM and other daily strategies)
+        self._daily_ohlcv: dict[str, dict] = {}  # {instrument: {date, open, high, low, close, volume}}
         if self._config_path:
             try:
                 from src.config.settings import settings
@@ -118,23 +123,58 @@ class StrategyGenAgent(BaseAgent):
                 self._regime_instability_active = False
 
         self.logger.info("Regime change detected in strategy_gen: %s", regime)
-        for name in list(self._strategy_weights.keys()):
-            if self._regime_instability_active:
-                # Flat equal weights during choppy regime oscillation
-                self._strategy_weights[name] = 1.0 / len(self._strategy_weights)
-            else:
-                if regime in ("trending_up", "trending_down"):
-                    if "momentum" in name or "breakout" in name:
-                        self._strategy_weights[name] = 0.5
-                    elif "reversion" in name or "rsi" in name or "bollinger" in name:
-                        self._strategy_weights[name] = 0.05
-                elif regime == "mean_reverting":
-                    if "momentum" in name or "breakout" in name:
-                        self._strategy_weights[name] = 0.05
-                    elif "reversion" in name or "rsi" in name or "bollinger" in name:
-                        self._strategy_weights[name] = 0.5
-                elif regime == "high_volatility":
-                    self._strategy_weights[name] = 0.02
+
+        # Explicit strategy group membership for regime-based weight allocation
+        # FIX P0.7: regime weight logic was using absolute overrides (0.02-0.5)
+        # which completely killed any strategy outside its preferred regime. This
+        # is the root cause of "0 signals" in mean_reverting markets: trend
+        # strategies got weight 0.02 and could never cross the consensus threshold.
+        # Switched to multiplier-based scaling, matching the design in the old
+        # trading_system repo (D:\projects\TRADE\trading_system\agents\signal_aggregation.py).
+        # Multipliers are bounded [0.3, 2.0] so a strategy never collapses to 0.
+        _TREND_STRATEGIES = {"momentum", "tsmom"}
+        _BREAKOUT_STRATEGIES = {"orb", "vol_compression", "vol_breakout"}
+        _REVERSION_STRATEGIES = {"sideways_reversion", "vwap_reversion"}
+        _FILTER_STRATEGIES = {"ema200_regime_gate", "adx_regime_filter"}
+
+        # Multipliers (not absolute weights) per regime. Format:
+        #   regime -> {strategy_group -> multiplier}
+        # Default multiplier is 1.0 (no change). A strategy's effective weight
+        # is its base weight * multiplier, then the whole vector is renormalized.
+        _MULTIPLIERS = {
+            "trending_up":    {"trend": 1.35, "breakout": 1.10, "reversion": 0.65},
+            "trending_down":  {"trend": 1.10, "breakout": 0.95, "reversion": 0.85},
+            "mean_reverting": {"trend": 0.70, "breakout": 0.80, "reversion": 1.40},
+            "high_volatility": {"trend": 0.55, "breakout": 1.15, "reversion": 0.50},
+        }
+        _GROUP_OF = {}
+        for n in _TREND_STRATEGIES:    _GROUP_OF[n] = "trend"
+        for n in _BREAKOUT_STRATEGIES: _GROUP_OF[n] = "breakout"
+        for n in _REVERSION_STRATEGIES: _GROUP_OF[n] = "reversion"
+        for n in _FILTER_STRATEGIES:   _GROUP_OF[n] = "filter"
+
+        if self._regime_instability_active:
+            # Flat equal weights during choppy regime oscillation
+            n_active = max(len(self._strategy_weights) - len(_FILTER_STRATEGIES), 1)
+            for name in list(self._strategy_weights.keys()):
+                if name in _FILTER_STRATEGIES:
+                    self._strategy_weights[name] = 0.0
+                else:
+                    self._strategy_weights[name] = 1.0 / n_active
+        else:
+            mults = _MULTIPLIERS.get(regime, {})
+            for name in list(self._strategy_weights.keys()):
+                if name in _FILTER_STRATEGIES:
+                    # Filters always stay at 0 weight (non-voting)
+                    self._strategy_weights[name] = 0.0
+                    continue
+                grp = _GROUP_OF.get(name)
+                m = mults.get(grp, 1.0)
+                # Bounded multiplier so nothing collapses to 0
+                m = max(0.3, min(2.0, m))
+                # Multiply the existing weight (which was normalized at load time)
+                # by m, then renormalize the whole vector below.
+                self._strategy_weights[name] = self._strategy_weights.get(name, 1.0) * m
         self._normalize_weights()
 
     async def _process_fill(self, event: Event) -> None:
@@ -378,6 +418,47 @@ class StrategyGenAgent(BaseAgent):
         if interval not in self._candle_timestamps[instrument]:
             self._candle_timestamps[instrument][interval] = deque(maxlen=500)
         self._candle_timestamps[instrument][interval].append(event.timestamp)
+
+        # --- Daily candle aggregation from minute data ---
+        if interval in ("minute", "1m"):
+            from zoneinfo import ZoneInfo
+            ist = ZoneInfo("Asia/Kolkata")
+            ts_ist = event.timestamp.astimezone(ist) if event.timestamp.tzinfo else event.timestamp.replace(tzinfo=ist)
+            today_str = ts_ist.strftime("%Y-%m-%d")
+            c = float(close)
+            h = float(high) if high else c
+            l = float(low) if low else c
+            v = float(volume)
+
+            if instrument not in self._daily_ohlcv:
+                self._daily_ohlcv[instrument] = {"date": today_str, "open": c, "high": h, "low": l, "close": c, "volume": v}
+            else:
+                daily = self._daily_ohlcv[instrument]
+                if daily["date"] != today_str:
+                    # New day — commit previous day's candle to the daily buffer
+                    if "1d" not in self._candle_prices.get(instrument, {}):
+                        if instrument not in self._candle_prices:
+                            self._candle_prices[instrument] = {}
+                        self._candle_prices[instrument]["1d"] = deque(maxlen=500)
+                        self._candle_volumes[instrument]["1d"] = deque(maxlen=500)
+                        self._candle_highs[instrument] = self._candle_highs.get(instrument, {})
+                        self._candle_highs[instrument]["1d"] = self._candle_highs[instrument].get("1d", deque(maxlen=500))
+                        self._candle_lows[instrument] = self._candle_lows.get(instrument, {})
+                        self._candle_lows[instrument]["1d"] = self._candle_lows[instrument].get("1d", deque(maxlen=500))
+                        self._candle_timestamps[instrument]["1d"] = deque(maxlen=500)
+                    self._candle_prices[instrument]["1d"].append(daily["close"])
+                    self._candle_volumes[instrument]["1d"].append(daily["volume"])
+                    self._candle_highs[instrument]["1d"].append(daily["high"])
+                    self._candle_lows[instrument]["1d"].append(daily["low"])
+                    self._candle_timestamps[instrument]["1d"].append(event.timestamp)
+                    # Reset for new day
+                    self._daily_ohlcv[instrument] = {"date": today_str, "open": c, "high": h, "low": l, "close": c, "volume": v}
+                else:
+                    # Same day — update running daily bar
+                    daily["high"] = max(daily["high"], h)
+                    daily["low"] = min(daily["low"], l)
+                    daily["close"] = c
+                    daily["volume"] += v
 
         await self._check_sl_tp(instrument, float(close), event.timestamp, exchange)
 
