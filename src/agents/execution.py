@@ -500,6 +500,20 @@ class ExecutionAgent(BaseAgent):
         strategy_name = signal.get("strategy", "unknown")
         side = OrderSide.BUY if direction == "long" else OrderSide.SELL
 
+        # FIX P1.1: compute trigger_price from signal's stop_loss_pct so that
+        # MIS orders become Cover Orders with native broker SL protection.
+        # Without this, the order code at lines 605-622 upgrades MIS to CO only
+        # if trigger_price is provided, and nothing upstream was providing it,
+        # meaning SL on long positions was log-only.
+        trigger_price: float | None = None
+        if price is not None and price > 0:
+            sl_pct = signal.get("stop_loss_pct")
+            if sl_pct is not None and sl_pct > 0:
+                if side == OrderSide.BUY:
+                    trigger_price = price * (1.0 - sl_pct)
+                else:
+                    trigger_price = price * (1.0 + sl_pct)
+
         # Calculate quantity using features volatility if available (Bug 3.2)
         features = signal.get("features", {})
         volatility = features.get("atr") or features.get("std")
@@ -546,6 +560,7 @@ class ExecutionAgent(BaseAgent):
             quantity=quantity,
             product=ProductType(str(signal.get("product", "mis")).lower()),
             price=price,
+            trigger_price=trigger_price,
             producer=self.name,
             signal_id=signal.get("event_id") or signal.get("_signal_event_id"),
             strategy=signal.get("strategy", "unknown"),

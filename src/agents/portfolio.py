@@ -86,15 +86,29 @@ class PortfolioOptimizationAgent(BaseAgent):
         cost = price * quantity
 
         product = event.data.get("product", "mis")
+
+        # FIX P1.2: PositionRegistry is the single source of truth for
+        # quantity and avg_price. PortfolioOptimizationAgent no longer keeps
+        # its own _positions[instrument]["quantity"] or _positions[instrument]
+        # ["avg_cost"] — it reads those from the registry. The portfolio
+        # agent keeps _positions[instrument] ONLY for cumulative accounting
+        # (total_bought, total_sold, product) which the registry does not
+        # track. get_position() now returns quantity/avg_cost from the
+        # registry, eliminating the divergence risk.
         if instrument not in self._positions:
             self._positions[instrument] = {
-                "quantity": 0,
-                "avg_cost": 0.0,
                 "total_bought": 0,
                 "total_sold": 0,
                 "product": product,
             }
         pos = self._positions[instrument]
+
+        # Delegate quantity/avg_price to the registry
+        from src.risk.position_registry import position_registry
+        reg_pos = await position_registry.update_from_fill(instrument, side, quantity, price)
+        reg_qty = reg_pos.get("quantity", 0)
+        reg_avg = reg_pos.get("avg_price", 0.0)
+
         txn_fee = event.data.get("commission")
         if txn_fee is None:
             from src.risk.costs import TransactionCostModel
@@ -102,26 +116,21 @@ class PortfolioOptimizationAgent(BaseAgent):
             txn_fee = cost_model.total_cost(side, quantity, price, product=product)
 
         if side == "buy":
-            total_cost = pos["avg_cost"] * pos["quantity"] + cost
-            pos["quantity"] += quantity
-            pos["avg_cost"] = total_cost / pos["quantity"] if pos["quantity"] > 0 else 0.0
             pos["total_bought"] += quantity
             self._capital -= (cost + txn_fee)  # Deduct cash and entry fees (Bug 2.2 + 3.1)
         else:
-            pos["quantity"] -= quantity
             pos["total_sold"] += quantity
-            realized_pnl = (price - pos["avg_cost"]) * quantity
+            # PnL uses registry's avg_price as the cost basis (SSOT)
+            realized_pnl = (price - reg_avg) * quantity
             self._pnl += realized_pnl
             self._capital += (cost - txn_fee)  # Credit cash and deduct exit fees (Bug 2.2 + 3.1)
-            if pos["quantity"] == 0:
-                pos["avg_cost"] = 0.0  # Clear position cost when quantity is 0
             self._trade_history.append({
                 "instrument": instrument,
                 "side": "sell",
                 "quantity": quantity,
                 "price": price,
                 "realized_pnl": realized_pnl,
-                "avg_cost": pos["avg_cost"],
+                "avg_cost": reg_avg,
             })
 
             strategy_name = "unknown"
@@ -144,12 +153,9 @@ class PortfolioOptimizationAgent(BaseAgent):
 
         self.logger.info(
             "Position %s: qty=%d avg_cost=%.2f",
-            instrument, pos["quantity"], pos["avg_cost"],
+            instrument, reg_qty, reg_avg,
         )
-        
-        from src.risk.position_registry import position_registry
-        await position_registry.update_from_fill(instrument, side, quantity, price)
-        
+
         await self._emit_portfolio_update(instrument, side)
 
     async def _on_signal(self, event: Event) -> None:
@@ -171,10 +177,29 @@ class PortfolioOptimizationAgent(BaseAgent):
             self._peak_capital = total_value
 
     def get_position(self, instrument: str) -> dict[str, Any]:
-        return self._positions.get(instrument, {"quantity": 0, "avg_cost": 0.0})
+        # FIX P1.2: read quantity/avg_cost from the registry (SSOT).
+        # The portfolio agent's _positions only tracks cumulative accounting
+        # (total_bought, total_sold, product) which the registry does not.
+        from src.risk.position_registry import position_registry
+        reg = position_registry.get_position(instrument)
+        local = self._positions.get(instrument, {})
+        return {
+            "quantity": reg.get("quantity", 0),
+            "avg_cost": reg.get("avg_price", 0.0),
+            "side": reg.get("side"),
+            "stop_loss": reg.get("stop_loss", 0.0),
+            "take_profit": reg.get("take_profit", 0.0),
+            "total_bought": local.get("total_bought", 0),
+            "total_sold": local.get("total_sold", 0),
+            "product": local.get("product", "mis"),
+        }
 
     def get_total_exposure(self) -> float:
-        return sum(abs(p["quantity"]) * p["avg_cost"] for p in self._positions.values())
+        from src.risk.position_registry import position_registry
+        return sum(
+            abs(p.get("quantity", 0)) * p.get("avg_price", 0.0)
+            for p in position_registry.get_all_positions().values()
+        )
 
     def _kelly_fraction(self, confidence: float, direction: str) -> float:
         if confidence <= 0.5:
@@ -307,22 +332,45 @@ class PortfolioOptimizationAgent(BaseAgent):
             cash=self._capital,
             pnl=self._pnl,
             exposure=self.get_total_exposure(),
-            positions=[
-                {"instrument": k, **v}
-                for k, v in self._positions.items()
-            ],
+            positions=self._build_position_payloads(),
             producer=self.name,
         )
         await self.emit(event)
 
+    def _build_position_payloads(self) -> list[dict[str, Any]]:
+        """Combine registry (SSOT) with portfolio-local cumulative accounting
+        into a single payload for the PORTFOLIO_UPDATE event."""
+        from src.risk.position_registry import position_registry
+        all_instruments = set(self._positions.keys()) | set(position_registry.get_all_positions().keys())
+        out: list[dict[str, Any]] = []
+        for instrument in sorted(all_instruments):
+            reg = position_registry.get_position(instrument)
+            local = self._positions.get(instrument, {})
+            out.append({
+                "instrument": instrument,
+                "quantity": reg.get("quantity", 0),
+                "avg_cost": reg.get("avg_price", 0.0),
+                "side": reg.get("side"),
+                "stop_loss": reg.get("stop_loss", 0.0),
+                "take_profit": reg.get("take_profit", 0.0),
+                "total_bought": local.get("total_bought", 0),
+                "total_sold": local.get("total_sold", 0),
+                "product": local.get("product", "mis"),
+            })
+        return out
+
     async def health(self) -> dict[str, Any]:
         base = await super().health()
+        from src.risk.position_registry import position_registry
+        open_qty = sum(
+            1 for p in position_registry.get_all_positions().values() if p.get("quantity", 0) != 0
+        )
         base.update({
             "capital": self._capital,
             "peak_capital": self._peak_capital,
             "pnl": self._pnl,
             "reconciliation_matched": self._reconciliation_matched,
-            "open_positions": len([p for p in self._positions.values() if p["quantity"] != 0]),
+            "open_positions": open_qty,
             "total_exposure": self.get_total_exposure(),
         })
         return base

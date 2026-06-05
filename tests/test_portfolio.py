@@ -2,11 +2,21 @@ import pytest
 
 from src.agents.portfolio import PortfolioOptimizationAgent
 from src.event_store.memory import InMemoryEventStore
+from src.risk.position_registry import position_registry
 from src.schemas.events import (
     Event,
     EventMetadata,
     EventType,
 )
+
+
+@pytest.fixture(autouse=True)
+def reset_registry():
+    """PositionRegistry is a singleton. Reset between tests so they don't
+    leak state from each other (FIX P1.2 follow-up)."""
+    position_registry.reset()
+    yield
+    position_registry.reset()
 
 
 @pytest.fixture
