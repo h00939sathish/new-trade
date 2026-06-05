@@ -8,18 +8,19 @@ from src.strategies.base import Strategy
 
 DEFAULT_CONFIG = {
     "strategies": {
-        # === FILTERS (non-voting, weight=0.0) — disabled in P0.4 ===
-        # ORB (which uses EMA200) is disabled because EMA200 needs 205
-        # candles (3.4h of 1-min data) before it can produce a signal.
-        # In a 6.25h NSE day that leaves <3h of usable signal time.
-        # Re-enable in Stage 3 P2.1 when we run 30-day paper validation.
+        # === FILTERS (re-enabled in Stage 3 P2.1) ===
+        # These are non-voting (weight=0.0) but block signals when the
+        # filter condition fails. EMA200 cold-start: 200 × 1-min candles
+        # = 200 minutes of history required = ~3.3 hours. NSE market is
+        # 9:15-15:30 IST = 6.25h, so first signal window opens at
+        # ~12:39 IST. ADX is faster (period=14, ~15 min).
         "ema200_regime_gate": {
-            "enabled": False,
+            "enabled": True,
             "weight": 0.0,
             "params": {"lookback": 200},
         },
         "adx_regime_filter": {
-            "enabled": False,
+            "enabled": True,
             "weight": 0.0,
             "params": {"period": 14},
         },

@@ -33,9 +33,13 @@ class PerformanceDecayDetector:
             logger.info("Decay Detector: Strategy %s rolling Sharpe: %.3f", strategy_name, rolling_sharpe)
 
             if rolling_sharpe < self.min_sharpe:
-                self._disable_strategy(strategy_name, rolling_sharpe)
+                # Pass the trade count and current rolling window so the
+                # event payload is built in the right scope.
+                self._disable_strategy(
+                    strategy_name, rolling_sharpe, trades_evaluated=len(window_pnls)
+                )
 
-    def _disable_strategy(self, strategy_name: str, current_sharpe: float) -> None:
+    def _disable_strategy(self, strategy_name: str, current_sharpe: float, trades_evaluated: int = 0) -> None:
         logger.critical(
             "DECAY DETECTED: Strategy %s has degraded rolling Sharpe: %.3f < %.3f. Disabling strategy.",
             strategy_name, current_sharpe, self.min_sharpe
@@ -48,21 +52,24 @@ class PerformanceDecayDetector:
                     sg._strategy_weights[strategy_name] = 0.0
                     logger.warning("Decay Detector: Set %s weight to 0.0 in strategy_gen", strategy_name)
 
-            # 2. Emit alert / system event
+            # 2. Emit STRATEGY_DECAY event so alert agent can notify
             try:
                 from src.schemas.events import Event, EventMetadata, EventType
                 decay_event = Event(
-                    event_type=EventType.SYSTEM_ERROR,
-                    stream="system.errors",
+                    event_type=EventType.STRATEGY_DECAY,
+                    stream=f"strategy.decay.{strategy_name}",
                     data={
-                        "fatal": False,
-                        "reason": f"Strategy decay detected: {strategy_name} Sharpe={current_sharpe:.3f} < {self.min_sharpe:.3f}"
+                        "strategy": strategy_name,
+                        "rolling_sharpe": float(current_sharpe),
+                        "min_sharpe": float(self.min_sharpe),
+                        "window": self.rolling_window,
+                        "trades_evaluated": trades_evaluated,
+                        "auto_disabled": True,
                     },
-                    metadata=EventMetadata(producer="decay_detector")
+                    metadata=EventMetadata(producer="decay_detector"),
                 )
                 import asyncio
                 if hasattr(self.system, "market_intel") and self.system.market_intel:
-                    # Emit to event bus safely
                     try:
                         loop = asyncio.get_running_loop()
                         loop.create_task(self.system.market_intel.emit(decay_event))

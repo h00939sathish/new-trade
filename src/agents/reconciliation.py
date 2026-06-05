@@ -20,7 +20,7 @@ class ReconciliationAgent(BaseAgent):
 
     async def on_start(self) -> None:
         self.logger.info("ReconciliationAgent starting...")
-        
+
         if self._broker is None and hasattr(self, "system") and self.system:
             if getattr(self.system, "_kite_broker", None):
                 self._broker = getattr(self.system, "_kite_client", None)  # Fallback to client for pure API access
@@ -29,14 +29,23 @@ class ReconciliationAgent(BaseAgent):
                     exec_agent = getattr(self.system, "execution", None)
                     if exec_agent and not getattr(exec_agent, "_paper_trading", False):
                         self._broker = exec_agent._broker
-                
-        if not self._broker:
-            self.logger.warning("No live broker available for reconciliation, skipping.")
-            await self.emit(SystemEvent.health(self.name, "skipped_no_broker", {}))
-            return
-            
-        task = asyncio.create_task(self._reconciliation_loop(), name="reconciliation.loop")
-        self._tasks.append(task)
+
+        if self._broker:
+            # FIX P1.4: subscribe to FILL events for position-drift alarm
+            # regardless of broker mode. The drift alarm checks that
+            # position_registry and portfolio_opt stay in sync. The broker
+            # reconciliation loop only runs in live mode.
+            self.subscribe(EventType.FILL)
+            task = asyncio.create_task(self._reconciliation_loop(), name="reconciliation.loop")
+            self._tasks.append(task)
+        else:
+            # FIX P1.4: in paper mode, still subscribe to FILL events for
+            # the drift alarm. Without this, paper mode would have no
+            # automatic detection if PositionRegistry and portfolio_opt
+            # ever diverge (which after P1.2 should be impossible, but
+            # defense-in-depth).
+            self.subscribe(EventType.FILL)
+            self.logger.warning("No live broker available for reconciliation, drift alarm only.")
         
     async def _reconciliation_loop(self) -> None:
         await asyncio.sleep(5.0)
@@ -100,4 +109,33 @@ class ReconciliationAgent(BaseAgent):
         self.logger.info("ReconciliationAgent stopping")
 
     async def on_event(self, event: Event) -> None:
-        pass
+        # FIX P1.4: position-drift alarm. After every FILL, verify that
+        # position_registry and portfolio_opt agree on the new quantity.
+        # If they diverge, emit a RISK_BREACH so the alert agent notifies.
+        if event.event_type == EventType.FILL:
+            await self._check_drift(event)
+
+    async def _check_drift(self, event: Event) -> None:
+        from src.risk.position_registry import position_registry
+        instrument = event.data.get("instrument", "")
+        if not instrument:
+            return
+        reg_qty = position_registry.get_quantity(instrument)
+        # Pull the portfolio agent's view via the system ref. The agent
+        # may not be wired in all test paths, so guard.
+        system_ref = getattr(self, "system", None)
+        port_qty = None
+        if system_ref and hasattr(system_ref, "portfolio_opt"):
+            pos = system_ref.portfolio_opt.get_position(instrument)
+            port_qty = pos.get("quantity")
+        if port_qty is not None and reg_qty != port_qty:
+            msg = (
+                f"Position drift on {instrument}: registry={reg_qty} "
+                f"portfolio={port_qty}"
+            )
+            self.logger.error(msg)
+            await self.emit(SystemEvent.error(
+                component=self.name,
+                error=f"position_drift: {msg}",
+                fatal=True,
+            ))

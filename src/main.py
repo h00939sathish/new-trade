@@ -158,15 +158,23 @@ async def main():
         cli_dashboard = None
         cli_task = None
 
+    # FIX P1.3: paper burn-in reconciliation runs by default in paper mode.
+    # Set TRA_BURNIN=0 to disable, TRA_BURNIN_RECONCILIATION_SECONDS to override
+    # the interval (default 300s = 5 minutes per three_stage_roadmap.md P1.3).
+    # The 1800s default from before was too sparse to catch drift quickly.
     burnin_task = None
-    if os.getenv("TRA_BURNIN", "0") == "1":
+    paper_mode = getattr(system.execution, "_paper_trading", True)
+    burnin_enabled = (
+        os.getenv("TRA_BURNIN", "1" if paper_mode else "0") == "1"
+    )
+    if burnin_enabled:
         from src.monitoring.burnin import run_paper_reconciliation_loop
 
         reconciliation_path = Path(
             os.getenv("TRA_BURNIN_RECONCILIATION_PATH", "state/burnin/reconciliation.jsonl"),
         )
         reconciliation_interval = float(
-            os.getenv("TRA_BURNIN_RECONCILIATION_SECONDS", "1800"),
+            os.getenv("TRA_BURNIN_RECONCILIATION_SECONDS", "300"),
         )
         burnin_task = asyncio.create_task(
             run_paper_reconciliation_loop(
@@ -176,8 +184,8 @@ async def main():
             ),
         )
         logger.info(
-            "Paper burn-in reconciliation enabled (interval=%.0fs)",
-            reconciliation_interval,
+            "Paper burn-in reconciliation enabled (interval=%.0fs, paper=%s)",
+            reconciliation_interval, paper_mode,
         )
 
     loop = asyncio.get_event_loop()

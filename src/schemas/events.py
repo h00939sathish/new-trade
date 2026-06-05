@@ -26,6 +26,7 @@ class EventType(StrEnum):
     SYSTEM_STATE = "system.state"
     AGENT_STATUS = "agent.status"
     MACRO_SENTIMENT = "macro.sentiment"
+    STRATEGY_DECAY = "strategy.decay"
 
 
 class OrderSide(StrEnum):
