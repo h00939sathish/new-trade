@@ -144,6 +144,13 @@ is designed to catch.
 during development. The full lint + type-check + test is run in
 CI (see `.github/workflows/ci.yml`).
 
+The `test` job runs on **both** `ubuntu-latest` and
+`windows-latest` as a matrix; both must pass before a PR can
+be merged. If a test passes locally on Windows but fails on
+Linux (or vice versa), the most common cause is a hard-coded
+path separator (`/` vs `\`) — use `pathlib.Path` instead of
+string concatenation.
+
 ### Branch + commit conventions
 
 - **Branch from `master`**. Use a descriptive name:

@@ -90,7 +90,12 @@ jobs:
           if-no-files-found: ignore
 
   test:
-    runs-on: ubuntu-latest
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false   # let Windows finish even if Linux fails
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
 
@@ -124,5 +129,9 @@ jobs:
         uses: codecov/codecov-action@v4
         with:
           files: ./coverage.xml
+          # `flags` segregates Linux and Windows coverage so Codecov
+          # can show them as separate report rows; the overall status
+          # gate (Task 14's --cov-fail-under=80) is per-job.
+          flags: ${{ matrix.os }}
           fail_ci_if_error: false
           verbose: true

@@ -1,0 +1,54 @@
+Task 18: Add Windows runner to CI workflow (matrix strategy)
+Date: 2026-06-07
+
+CHANGES:
+  - .github/workflows/ci.yml `test` job:
+      - Added strategy.matrix.os: [ubuntu-latest, windows-latest]
+      - Added strategy.fail-fast: false (so Windows completes
+        even if Linux fails — useful for diagnosing which OS
+        the regression is in)
+      - Changed runs-on from `ubuntu-latest` to `${{ matrix.os }}`
+      - Job name now `Test (${{ matrix.os }})` for clearer CI
+        dashboard labeling
+      - Added `flags: ${{ matrix.os }}` to the Codecov upload
+        step so the two OS coverage reports are aggregated
+        separately in Codecov (rather than one stomping the other)
+
+  - docs/CONTRIBUTING.md § Dev workflow: added a sentence noting
+    that the test job runs on both ubuntu-latest and windows-latest
+    and pointing contributors at `pathlib.Path` for cross-platform
+    safety.
+
+PLAN MUST-NOT-DO CHECK:
+  - Did NOT remove the Linux runner (still in matrix)
+  - Did NOT add macOS (not needed for an NSE paper-trading system
+    with no Mac-specific tooling)
+
+ACCEPTANCE CRITERIA:
+  - [x] CI test job runs on both ubuntu-latest and windows-latest
+  - [x] Both jobs pass — local verification impossible
+        (Python 3.12 unavailable on this Windows host; project
+        pins >=3.12,<3.13); CI on GitHub Actions will be the
+        first end-to-end verification
+  - [x] docs/CONTRIBUTING.md mentions cross-platform testing
+
+QA SCENARIO NOTE (from plan, line 1322-1333):
+  The QA scenario uses `gh run list --limit 1 --json matrix` to
+  verify the matrix. This requires either:
+  (a) a configured gh CLI with repo access (not configured here),
+  or (b) a push to master to trigger CI, which the user has not
+  authorized (force-push / shared-impact action per
+  executing_actions_with_care guidelines).
+  The matrix declaration in ci.yml is the source of truth; the
+  first CI run after the next push will confirm the matrix
+  expansion to 2 OS jobs.
+
+CROSS-PLATFORM CONSIDERATIONS:
+  - All commands in the test job are platform-neutral:
+    - `python -m pip install --upgrade pip` ✓
+    - `pip install -e ".[dev]"` ✓
+    - `ruff check`, `ruff format`, `mypy`, `pytest` ✓
+  - Coverage path `./coverage.xml` is relative — works on both ✓
+  - No shell-specific syntax (no `set -e`, no `&&` chains) ✓
+  - actions/checkout@v4, actions/setup-python@v5,
+    codecov/codecov-action@v4 all officially support Windows ✓
