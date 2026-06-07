@@ -1,7 +1,9 @@
 import asyncio
 import json
 import logging
+import time
 from collections import Counter, deque
+from datetime import date
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -19,6 +21,19 @@ logger = logging.getLogger("monitoring.metrics")
 # SQLite every 10 seconds (and on shutdown). On startup, the last 30 days
 # of stored counters are loaded back into the in-memory Counters so the
 # Prometheus endpoint survives a process restart.
+#
+# Gauges (portfolio state: PnL, exposure, drawdown, etc.) live in plain
+# attributes and are updated via ``update_portfolio_state`` (1-Hz
+# throttled writes to the store). Gauges are intentionally not restored
+# on startup: a portfolio agent re-emits them on the next portfolio
+# update, and a stale last-write-wins value would be misleading.
+
+
+# Default throttle for portfolio-state gauge writes. Plan constraint:
+# "Do NOT call these on every event (use a 1-second cache to avoid hot
+# loop)". 1 Hz is fine for a Prometheus scrape interval of 15s+ and
+# keeps the write rate to ~5 samples per minute per gauge.
+_PORTFOLIO_FLUSH_THROTTLE_S = 1.0
 
 
 class MetricsCollector:
@@ -36,12 +51,22 @@ class MetricsCollector:
         self._event_rate_history: deque[float] = deque(maxlen=100)
         self._start_time: float = 0.0
 
+        self._pnl_daily: float = 0.0
+        self._exposure_total: float = 0.0
+        self._open_positions: int = 0
+        self._drawdown_pct: float = 0.0
+        self._peak_capital: float = 0.0
+        self._pnl_daily_baseline: float = 0.0
+        self._pnl_daily_reset_day: date | None = None
+
         # Persistence layer (opt-in; default = no persistence)
         self._store: MetricsStore | None = store
         self._pending_writes: list[tuple[str, dict[str, str], float]] = []
+        self._pending_gauge_writes: list[tuple[str, float, dict[str, str]]] = []
         self._flush_interval_s = flush_interval_s
         self._flush_task: asyncio.Task[None] | None = None
         self._flush_lock = asyncio.Lock()
+        self._last_portfolio_flush_ts: float = 0.0
 
     # ----- Lifecycle ----------------------------------------------------
 
@@ -121,26 +146,31 @@ class MetricsCollector:
                 logger.warning("Periodic metrics flush failed: %s", exc)
 
     async def flush(self) -> None:
-        """Flush pending counter increments to the store, if attached."""
-        if self._store is None or not self._pending_writes:
+        """Flush pending counter and gauge writes to the store."""
+        if self._store is None:
             return
-        # Snapshot the buffer; new writes go to a fresh list while
-        # we flush the old one (keeps the hot path lock-free).
+        if not self._pending_writes and not self._pending_gauge_writes:
+            return
         pending = self._pending_writes
+        pending_gauges = self._pending_gauge_writes
         self._pending_writes = []
+        self._pending_gauge_writes = []
         try:
             async with self._flush_lock:
                 for metric, labels, delta in pending:
                     await self._store.increment(metric, labels, delta)
+                for metric, value, labels in pending_gauges:
+                    await self._store.set_gauge(metric, value, labels)
                 await self._store.flush()
         except Exception as exc:
             logger.warning(
-                "Metrics flush failed; re-buffering %d writes: %s",
+                "Metrics flush failed; re-buffering %d counter + %d gauge writes: %s",
                 len(pending),
+                len(pending_gauges),
                 exc,
             )
-            # Re-buffer so transient errors don't lose data
             self._pending_writes.extend(pending)
+            self._pending_gauge_writes.extend(pending_gauges)
 
     def attach_store(self, store: "MetricsStore | None") -> None:
         """Attach (or detach) a persistence store at runtime.
@@ -198,6 +228,61 @@ class MetricsCollector:
         # (gauge-like, not a counter). If we ever need historical
         # latency percentiles, store as a gauge histogram.
 
+    # ----- Portfolio state (gauges; 1-Hz throttled to the store) -----
+
+    def update_portfolio_state(
+        self,
+        *,
+        pnl: float,
+        exposure: float,
+        open_positions: int,
+        peak_capital: float,
+        total_value: float,
+    ) -> None:
+        """Push a snapshot of portfolio state to the gauges.
+
+        Called by ``PortfolioOptimizationAgent._emit_portfolio_update``
+        after every fill/portfolio update. In-memory values are
+        updated synchronously (cheap, O(1)). Writes to the
+        persistent store are throttled to ``_PORTFOLIO_FLUSH_THROTTLE_S``
+        (1 Hz) per the plan's hot-loop constraint.
+
+        Daily PnL is computed as ``current_pnl - baseline_pnl``,
+        where the baseline resets at local-date rollover. The
+        reset is automatic — no cron, no separate task.
+        """
+        today = date.today()
+        if self._pnl_daily_reset_day != today:
+            self._pnl_daily_reset_day = today
+            self._pnl_daily_baseline = pnl
+        self._pnl_daily = pnl - self._pnl_daily_baseline
+        self._exposure_total = exposure
+        self._open_positions = open_positions
+        self._peak_capital = peak_capital
+        if peak_capital > 0:
+            self._drawdown_pct = max(0.0, (peak_capital - total_value) / peak_capital)
+        else:
+            self._drawdown_pct = 0.0
+
+        # Throttle the durable write: Prometheus scrapes are typically
+        # 15-30s apart, so 1 Hz is well within resolution and avoids
+        # the 5+ writes/fill that the unthrottled path would produce.
+        if self._store is None:
+            return
+        now = time.monotonic()
+        if now - self._last_portfolio_flush_ts < _PORTFOLIO_FLUSH_THROTTLE_S:
+            return
+        self._last_portfolio_flush_ts = now
+        self._pending_gauge_writes.extend(
+            [
+                ("trading_pnl_daily", self._pnl_daily, {}),
+                ("trading_exposure_total", exposure, {}),
+                ("trading_open_positions", float(open_positions), {}),
+                ("trading_drawdown_pct", self._drawdown_pct, {}),
+                ("trading_peak_capital", peak_capital, {}),
+            ]
+        )
+
     # ----- Read-side helpers (unchanged interface) ---------------------
 
     def _connection_active(self, target: Any) -> bool:
@@ -230,6 +315,11 @@ class MetricsCollector:
                 else 0
             ),
             "event_rate": total_events / uptime if uptime > 0 else 0,
+            "pnl_daily": self._pnl_daily,
+            "exposure_total": self._exposure_total,
+            "open_positions": self._open_positions,
+            "drawdown_pct": self._drawdown_pct,
+            "peak_capital": self._peak_capital,
         }
 
     def prometheus_text(self, system=None) -> str:
@@ -289,6 +379,26 @@ class MetricsCollector:
                 "# HELP trading_errors_total Errors by component",
                 "# TYPE trading_errors_total counter",
                 f'trading_errors_total {{component="all"}} {sum(snapshot["errors_by_component"].values())}',
+                "",
+                "# HELP trading_pnl_daily Realized PnL since local midnight",
+                "# TYPE trading_pnl_daily gauge",
+                f"trading_pnl_daily {snapshot['pnl_daily']}",
+                "",
+                "# HELP trading_exposure_total Sum of |qty * price| across open positions",
+                "# TYPE trading_exposure_total gauge",
+                f"trading_exposure_total {snapshot['exposure_total']}",
+                "",
+                "# HELP trading_open_positions Count of positions with non-zero quantity",
+                "# TYPE trading_open_positions gauge",
+                f"trading_open_positions {snapshot['open_positions']}",
+                "",
+                "# HELP trading_drawdown_pct Current drawdown as fraction of peak capital",
+                "# TYPE trading_drawdown_pct gauge",
+                f"trading_drawdown_pct {snapshot['drawdown_pct']}",
+                "",
+                "# HELP trading_peak_capital All-time peak total value (capital + exposure)",
+                "# TYPE trading_peak_capital gauge",
+                f"trading_peak_capital {snapshot['peak_capital']}",
                 "",
                 f"trading_uptime_seconds {snapshot['uptime_seconds']}",
                 f"trading_avg_latency_ms {snapshot['avg_latency_ms']}",

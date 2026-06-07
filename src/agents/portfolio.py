@@ -345,6 +345,17 @@ class PortfolioOptimizationAgent(BaseAgent):
             system=system_ref,
         )
 
+        # Push portfolio-state gauges to system_metrics (throttled to 1 Hz).
+        from src.monitoring.metrics import system_metrics
+
+        system_metrics.update_portfolio_state(
+            pnl=self._pnl,
+            exposure=self.get_total_exposure(),
+            open_positions=self._count_open_positions(),
+            peak_capital=self._peak_capital,
+            total_value=total_value,
+        )
+
         event = PortfolioEvent.create(
             total_value=total_value,
             cash=self._capital,
@@ -354,6 +365,15 @@ class PortfolioOptimizationAgent(BaseAgent):
             producer=self.name,
         )
         await self.emit(event)
+
+    def _count_open_positions(self) -> int:
+        from src.risk.position_registry import position_registry
+
+        return sum(
+            1
+            for p in position_registry.get_all_positions().values()
+            if p.get("quantity", 0) != 0
+        )
 
     def _build_position_payloads(self) -> list[dict[str, Any]]:
         """Combine registry (SSOT) with portfolio-local cumulative accounting
@@ -386,16 +406,13 @@ class PortfolioOptimizationAgent(BaseAgent):
         base = await super().health()
         from src.risk.position_registry import position_registry
 
-        open_qty = sum(
-            1 for p in position_registry.get_all_positions().values() if p.get("quantity", 0) != 0
-        )
         base.update(
             {
                 "capital": self._capital,
                 "peak_capital": self._peak_capital,
                 "pnl": self._pnl,
                 "reconciliation_matched": self._reconciliation_matched,
-                "open_positions": open_qty,
+                "open_positions": self._count_open_positions(),
                 "total_exposure": self.get_total_exposure(),
             }
         )

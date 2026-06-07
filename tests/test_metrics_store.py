@@ -229,3 +229,163 @@ async def test_collector_attach_store_at_runtime(tmp_path):
     totals = await store.load_recent_totals()
     assert totals[("trading_events_total", '{"type": "TICK"}')] == 1.0
     await store.close()
+
+
+# ---------------------------------------------------------------------------
+# Task 22: portfolio-state gauges (PnL, exposure, drawdown, etc.)
+# ---------------------------------------------------------------------------
+
+
+def test_update_portfolio_state_updates_in_memory_gauges():
+    m = MetricsCollector()
+    m.update_portfolio_state(
+        pnl=1500.0,
+        exposure=250_000.0,
+        open_positions=3,
+        peak_capital=1_050_000.0,
+        total_value=1_015_000.0,
+    )
+    snap = m.snapshot()
+    assert snap["pnl_daily"] == 1500.0
+    assert snap["exposure_total"] == 250_000.0
+    assert snap["open_positions"] == 3
+    assert snap["peak_capital"] == 1_050_000.0
+    # Drawdown = (1_050_000 - 1_015_000) / 1_050_000 = 0.0333...
+    assert snap["drawdown_pct"] == pytest.approx(1500.0 / 1_050_000.0, rel=1e-6)
+
+
+def test_update_portfolio_state_drawdown_clamps_to_zero():
+    """If total_value > peak_capital, drawdown is reported as 0 (no drawdown)."""
+    m = MetricsCollector()
+    m.update_portfolio_state(
+        pnl=0.0,
+        exposure=0.0,
+        open_positions=0,
+        peak_capital=1_000_000.0,
+        total_value=1_100_000.0,
+    )
+    assert m.snapshot()["drawdown_pct"] == 0.0
+
+
+def test_update_portfolio_state_drawdown_with_zero_peak():
+    """If peak_capital is 0 (uninitialized), drawdown is 0 (no division by zero)."""
+    m = MetricsCollector()
+    m.update_portfolio_state(
+        pnl=0.0,
+        exposure=0.0,
+        open_positions=0,
+        peak_capital=0.0,
+        total_value=100_000.0,
+    )
+    assert m.snapshot()["drawdown_pct"] == 0.0
+
+
+def test_update_portfolio_state_daily_pnl_resets_on_date_change():
+    """Daily PnL is computed as current_pnl - baseline_pnl at midnight rollover."""
+    from datetime import date, timedelta
+
+    m = MetricsCollector()
+    today = date.today()
+
+    # Direct manipulation of internal state to simulate "yesterday was
+    # the last reset, with cumulative pnl of 500 at end of day". The
+    # method's date.today() check will then fire a reset.
+    m._pnl_daily_reset_day = today - timedelta(days=1)
+    m._pnl_daily_baseline = 500.0
+
+    m.update_portfolio_state(
+        pnl=1500.0,
+        exposure=0.0,
+        open_positions=0,
+        peak_capital=1_000_000.0,
+        total_value=1_001_500.0,
+    )
+    assert m._pnl_daily_reset_day == today
+    assert m.snapshot()["pnl_daily"] == 0.0  # reset baseline to 1500, daily = 0
+
+    m.update_portfolio_state(
+        pnl=1800.0,
+        exposure=0.0,
+        open_positions=0,
+        peak_capital=1_000_000.0,
+        total_value=1_001_800.0,
+    )
+    assert m.snapshot()["pnl_daily"] == 300.0  # 1800 - 1500
+
+
+@pytest.mark.asyncio
+async def test_update_portfolio_state_throttles_store_writes(tmp_path):
+    """Plan constraint: 1-second throttle on portfolio-state gauge writes."""
+    store = MetricsStore(tmp_path / "m.db")
+    m = MetricsCollector(store=store)
+
+    m.update_portfolio_state(
+        pnl=100.0,
+        exposure=0.0,
+        open_positions=0,
+        peak_capital=1_000_000.0,
+        total_value=1_000_100.0,
+    )
+    assert len(m._pending_gauge_writes) == 5  # all 5 gauges queued
+
+    m.update_portfolio_state(
+        pnl=200.0,
+        exposure=0.0,
+        open_positions=0,
+        peak_capital=1_000_000.0,
+        total_value=1_000_200.0,
+    )
+    assert len(m._pending_gauge_writes) == 5  # throttle suppresses
+
+    m._last_portfolio_flush_ts = 0.0  # force throttle to expire
+    m.update_portfolio_state(
+        pnl=300.0,
+        exposure=0.0,
+        open_positions=0,
+        peak_capital=1_000_000.0,
+        total_value=1_000_300.0,
+    )
+    assert len(m._pending_gauge_writes) == 10  # another 5 queued
+
+    await m.flush()
+    totals = await store.load_recent_totals()
+    # Last-write-wins within a bucket, so pnl_daily ends at the latest value
+    assert totals[("trading_pnl_daily", "{}")] == 300.0
+    assert totals[("trading_peak_capital", "{}")] == 1_000_000.0
+    await store.close()
+
+
+@pytest.mark.asyncio
+async def test_update_portfolio_state_no_store_means_in_memory_only():
+    """Without a store, the throttle check is skipped and writes are skipped."""
+    m = MetricsCollector()
+    m.update_portfolio_state(
+        pnl=100.0,
+        exposure=0.0,
+        open_positions=0,
+        peak_capital=1_000_000.0,
+        total_value=1_000_100.0,
+    )
+    assert m.snapshot()["pnl_daily"] == 100.0
+    assert m._pending_gauge_writes == []
+
+
+def test_prometheus_text_includes_new_gauges():
+    m = MetricsCollector()
+    m.update_portfolio_state(
+        pnl=42.0,
+        exposure=100.0,
+        open_positions=2,
+        peak_capital=1000.0,
+        total_value=950.0,
+    )
+    text = m.prometheus_text()
+    assert "trading_pnl_daily" in text
+    assert "trading_exposure_total" in text
+    assert "trading_open_positions" in text
+    assert "trading_drawdown_pct" in text
+    assert "trading_peak_capital" in text
+    assert "trading_pnl_daily 42.0" in text
+    assert "trading_open_positions 2" in text
+    assert "# TYPE trading_pnl_daily gauge" in text
+    assert "# HELP trading_pnl_daily" in text
