@@ -218,9 +218,16 @@ pytest tests/ -v --pdb
 - **Database isolation**: every test that touches SQLite must
   use `tmp_path` (see Section 5 of [`RUNBOOK.md`](RUNBOOK.md))
   and clean up. Tests must NOT write to `state/*.db` (the
-  gitignored shared state). The plan's Wave 3 Task 20 will
-  enforce this with a fixture; until then, audit PRs for
-  `state/test_*.db` leaks.
+  gitignored shared state). This is enforced by the
+  `isolated_order_db` autouse fixture in
+  [`tests/conftest.py`](../tests/conftest.py), which
+  monkeypatches `src.agents.execution._ORDER_DB_PATH` to a
+  per-test `tmp_path` directory for the duration of every test.
+  A session-start hook in the same file defensively removes any
+  `state/test_*.db` or `state/probe_*.db` that may have leaked
+  from older test runs. Two named fixtures are also available
+  for tests that need an explicit DB path: `order_state_db` and
+  `events_db`.
 - **Determinism**: backtest tests must pin a date range and a
   fixed seed; do not assert exact PnL numbers without a known
   fixture.
@@ -284,7 +291,13 @@ pytest tests/ --cov=src --cov-report=html
 
 ### What NOT to do
 
-- Do **not** edit `state/*.db` files in tests. Use `tmp_path`.
+- Do **not** edit `state/*.db` files in tests. Use `tmp_path`
+  (or the `order_state_db` / `events_db` fixtures, which return
+  a `tmp_path`-based path). The autouse `isolated_order_db`
+  fixture already prevents accidental writes to production
+  state, but bypassing it (e.g. by constructing an
+  `ExecutionAgent` with `order_db_path=Path("state/...")`)
+  defeats the safety net.
 - Do **not** add Rust / Go / Kafka code. The previous `init.md`
   claimed these would exist; they were never built, and the
   audit-remediation plan explicitly forbids re-introducing
