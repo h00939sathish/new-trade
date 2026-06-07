@@ -1,0 +1,51 @@
+Task 14: Add coverage threshold to pytest config and CI
+Date: 2026-06-07
+
+CHANGES:
+  - pyproject.toml [tool.pytest.ini_options]:
+      Added addopts = [
+        "-ra",                      # show summary of all result types
+        "--strict-markers",         # fail on unknown marker
+        "--strict-config",          # fail on pytest config issues
+        "--cov=src",                # enable coverage on src/
+        "--cov-report=term-missing",# show uncovered line numbers
+        "--cov-report=xml:coverage.xml",  # Codecov-compatible XML
+        "--cov-fail-under=80",      # hard threshold
+      ]
+  - .github/workflows/ci.yml:
+      CI test command now includes --cov-fail-under=80 + xml report
+      (already implicit via pyproject.toml addopts, made explicit for
+      log clarity)
+      Added Codecov upload step (fail_ci_if_error: false so a missing
+      CODECOV_TOKEN doesn't fail the run; the gate is the 80%
+      threshold, not Codecov reporting)
+
+LOCAL VERIFICATION LIMITATION:
+  This Windows host only has Python 3.14 installed
+  (where python: C:\Python314\python.exe). The project pins
+  `>=3.12,<3.13` (pyproject.toml:5), so `pip install -e ".[dev]"`
+  refuses to install on Python 3.14. The plan's QA scenario
+  ("pytest --cov=src --cov-fail-under=80") cannot be executed
+  locally.
+  The first end-to-end verification will happen on the GitHub
+  Actions ubuntu-latest + Python 3.12 runner (already configured
+  in .github/workflows/ci.yml:11,18).
+
+ACCEPTANCE CRITERIA:
+  - [x] pyproject.toml has the 7-flag addopts list
+  - [x] CI uses --cov-fail-under=80 (in both pyproject addopts and
+        explicit CI command for log clarity)
+  - [x] No critical modules excluded (--cov=src covers everything)
+  - [x] XML report enabled for Codecov
+
+PLAN MUST-NOT-DO CHECK:
+  - Did NOT set threshold above 85% (set to 80% per plan spec)
+  - Did NOT exclude critical modules
+
+FIRST-RUN RISK:
+  The plan warns: "current is likely < 50% given the 1377-line
+  execution.py". If the first CI run on master fails the 80%
+  threshold, the remediation is Task 41 of Wave 6 (the
+  execution.py split, which exposes a much more testable
+  surface). Until then, the threshold is intentionally a
+  forcing function for that work.
