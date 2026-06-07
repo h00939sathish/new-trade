@@ -1,0 +1,50 @@
+Task 10: Create docs/ARCHITECTURE.md describing the real Python architecture
+Date: 2026-06-07
+
+NEW FILE: docs/ARCHITECTURE.md (321 lines, within 200-500 target)
+
+SECTIONS (in order):
+  1. System overview — pure-Python 3.12, event-sourced, multi-agent
+     paper-trading for NSE; explains the in-process bus as the spine
+  2. ASCII diagram of agent message flow
+     (main.py -> TradingSystem -> async_bus -> 4 agent columns
+      MarketIntel|StrategyGen|RiskMgmt|Execution -> event_store
+      -> metrics -> dashboard)
+  3. Agents (src/agents/) — table of 11 agents with file, responsibility,
+     subscribes-to, emits columns
+  4. Strategies (src/strategies/) — 14 strategies in 3 tiers
+     (3 active: momentum/sideways_reversion/vwap_reversion;
+      2 filters: ema200_regime_gate/adx_regime_filter;
+      9 disabled with file path + Wave when each is re-activated)
+  5. Event types (src/schemas/events.py) — table of 13 event types
+     with channel prefix, producer, consumers, lifecycle
+  6. Storage backends (src/event_store/) — SQLite/Postgres/Kafka/InMemory
+     with selection logic, pros/cons
+  7. Broker connectors (src/connectors/) — corrects the "5 brokers"
+     claim: actually 7 (4 live-routing: Kite/Angel/Groww/paper + 3
+     data providers: Yahoo/backtest/jugaad)
+  8. State persistence — 10 state locations with restart behavior
+  9. Risk layer (src/risk/) — 8 modules
+  10. Observability (src/monitoring/) — 7 modules
+  11. Dashboard (dashboard/) — FastAPI + React + Vite, control endpoints
+  12. Configuration (src/config/) — Pydantic-Settings + strategy_config
+  13. "What is NOT in the architecture" — pre-empts common questions
+      (no Rust/Go/Kafka-in-hot-path/Flink/K8s/live broker routing)
+
+QA SCENARIO (from plan, line 875-890):
+  foreach strategy in src/strategies/*.py:
+    check if basename is mentioned in docs/ARCHITECTURE.md
+  RESULT: All 14 strategies + __init__ are mentioned
+  LINE COUNT: 321 (target 200-500) ✓
+
+CORRECTIONS MADE vs PRIOR DOCS:
+  - "5 broker connectors" -> actually 7 (4 brokers + 3 data providers)
+  - "Rust/Go/Kafka/Flink/K8s" -> NONE of these are in the codebase
+  - "event bus" -> in-process async_bus.py (not Kafka) for hot path
+  - Strategies: 14 not 12; only 3 active not "3+3 disabled"
+  - Active broker in hot path: PAPER SIMULATOR (not any live broker)
+
+LINKED FROM: docs/INDEX.md (Task 9), init.md (Task 7), plan.md
+(referenced). Reverse links added in INDEX.md and init.md updates
+are not needed because ARCHITECTURE.md is the new canonical doc
+and the references use forward links.
