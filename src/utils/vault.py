@@ -37,11 +37,16 @@ def get_secret_from_vault(secret_path: str, secret_key: str) -> str | None:
 
 
 def get_secret_from_aws(secret_id: str, secret_key: str) -> str | None:
-    """Retrieve secret from AWS Secrets Manager."""
+    """Retrieve secret from AWS Secrets Manager. Requires the [vault] extra."""
     try:
         import boto3
+    except ImportError as exc:
+        raise RuntimeError(
+            "AWS Secrets Manager support requires boto3. "
+            "Install with: pip install -e \".[vault]\" (or include the [vault] extra)."
+        ) from exc
+    try:
         import json
-        
         region_name = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
         session = boto3.session.Session()
         client = session.client(
@@ -56,8 +61,6 @@ def get_secret_from_aws(secret_id: str, secret_key: str) -> str | None:
                 return secret_dict.get(secret_key)
             except json.JSONDecodeError:
                 return secret
-    except ImportError:
-        logger.warning("boto3 package not installed, cannot fetch from AWS Secrets Manager.")
     except Exception as e:
         logger.error("Error fetching secret from AWS Secrets Manager: %s", e)
     return None
