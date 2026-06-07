@@ -1,0 +1,31 @@
+Task 4: Enforce TRA_HTTP_AUTH_TOKEN in docker-compose.yml
+Date: 2026-06-07
+
+CHANGES:
+  - docker-compose.yml: TRA_HTTP_AUTH_TOKEN now uses ${VAR:?error_msg} syntax
+    so compose fails fast if the variable is unset
+  - .env.compose.example: new file documenting required env vars
+  - src/main.py: WARNING log on module load if TRA_HTTP_AUTH_TOKEN is empty
+  - dashboard/server.py: WARNING log on module load if token is empty
+
+VERIFICATION:
+  1) docker compose config without TRA_HTTP_AUTH_TOKEN:
+     -> "error while interpolating services.trading-app.environment.
+         TRA_HTTP_AUTH_TOKEN: required variable TRA_HTTP_AUTH_TOKEN is missing
+         a value: TRA_HTTP_AUTH_TOKEN must be set (generate with: openssl rand
+         -hex 32)"
+     -> Exit 1 ✓
+
+  2) python -c "import src.main" with empty token:
+     -> "[main] WARNING: TRA_HTTP_AUTH_TOKEN is empty; HTTP control endpoints
+         are UNAUTHENTICATED. Set the env var to a random 32+ byte string
+         (e.g. `openssl rand -hex 32`)." ✓
+
+  3) python -c "import dashboard.server" with empty token:
+     -> "WARNING:root:TRA_HTTP_AUTH_TOKEN is empty; dashboard control
+         endpoints are UNAUTHENTICATED..." ✓
+
+ZERO-DOWNTIME NOTE: src/main.py and dashboard/server.py only ADD a WARNING
+log. The existing if auth_token: branch (which permits unauthenticated
+access when token is empty) is preserved for paper-mode local dev. The
+WARN is the new behavior; full enforcement is the compose-level guard.

@@ -17,6 +17,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger("main")
 
+if not os.environ.get("TRA_HTTP_AUTH_TOKEN", "").strip():
+    logger.warning(
+        "TRA_HTTP_AUTH_TOKEN is empty; HTTP control endpoints are UNAUTHENTICATED. "
+        "Set the env var to a random 32+ byte string (e.g. `openssl rand -hex 32`)."
+    )
+
 system_metrics.start()
 
 

@@ -57,6 +57,7 @@ services:
       redis:
         condition: service_healthy
     environment:
+      TRA_HTTP_AUTH_TOKEN: "${TRA_HTTP_AUTH_TOKEN:?TRA_HTTP_AUTH_TOKEN must be set (generate with: openssl rand -hex 32)}"
       TRA_EVENT_STORE_TYPE: postgres
       TRA_POSTGRES_DSN: postgresql+asyncpg://trading:trading@postgres:5432/trading
       TRA_REDIS_URL: redis://redis:6379/0

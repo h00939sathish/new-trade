@@ -25,6 +25,13 @@ _metrics_collector: Any = None
 
 CONTROL_AUTH_ENV = "TRA_HTTP_AUTH_TOKEN"
 
+if not os.environ.get(CONTROL_AUTH_ENV, "").strip():
+    logging.warning(
+        "%s is empty; dashboard control endpoints are UNAUTHENTICATED. "
+        "Set the env var to a random 32+ byte string (e.g. `openssl rand -hex 32`).",
+        CONTROL_AUTH_ENV,
+    )
+
 
 def _agent_health_summary(health_data: dict[str, Any]) -> tuple[int, int, str]:
     agents_running = sum(1 for s in health_data.values() if s.get("status") == "running")
