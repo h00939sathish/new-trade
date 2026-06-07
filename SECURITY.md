@@ -1,6 +1,31 @@
 # Security — Credential Leak Remediation
 
-> **STATUS: This repo's `.env` was committed in the initial commit (`68c373a`) and deleted in `277e031`. The credentials below are baked into git history. They must be considered compromised.**
+> **STATUS (2026-06-07 audit remediation, Wave 1 Task 1):**
+> - ✅ `scripts/verify_no_secrets.{ps1,sh}` created (working-tree guard, fast, run on every commit)
+> - ✅ `scripts/scrub_credentials.{ps1,sh}` already exist (history scrub via git-filter-repo)
+> - ⚠️  **History scrub not yet executed** — credentials (`k1bpotx2f133yrms`, etc.) are still present in git history. Force-push required. See "Pending Action" below.
+>
+> This repo's `.env` was committed in the initial commit (`68c373a`) and deleted in `277e031`. The credentials below are baked into git history. They must be considered compromised.
+
+## Pending Action (REQUIRES USER CONFIRMATION)
+
+A full history scrub is **destructive and shared-impact**: it rewrites all commits and requires `git push --force` to `https://github.com/aisathish07/new-trade.git`. This affects any collaborators on the same branch.
+
+To execute (manual, two-step):
+
+```pwsh
+# 1. install git-filter-repo
+pip install git-filter-repo
+
+# 2. scrub (will prompt for confirmation)
+pwsh scripts/scrub_credentials.ps1
+
+# 3. force-push (only after confirming no collaborators are active)
+git push origin --force --all
+git push origin --force --tags
+```
+
+The user must run these steps manually; this task only created the verifier scripts and documented the procedure.
 
 ## Compromised Credentials
 

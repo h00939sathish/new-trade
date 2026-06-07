@@ -1,0 +1,24 @@
+Task 1: Verify + complete git history scrub of leaked credentials
+Date: 2026-06-07
+Auditor: Sisyphus (work session opencode:ses_15e900aa8ffed0dZBaWPUzIjHn)
+
+VERIFICATION (working tree, current files only):
+  -> Run from repo root: pwsh scripts/verify_no_secrets.ps1
+  -> Run from repo root: bash scripts/verify_no_secrets.sh
+  -> Expected: "CLEAN: no broker credentials detected in working tree" (exit 0)
+
+VERIFICATION (git history, full audit):
+  -> git log --all -p | Select-String "TRA_KITE_API_KEY\s*=\s*[a-zA-Z0-9]{16,}" | Select-Object -First 5
+
+VERIFICATION RESULT (this run):
+  -> Working tree: CLEAN (.env is gitignored, not scanned by ls-files)
+  -> Git history: LEAK CONFIRMED - 'k1bpotx2f133yrms' (Kite API key) present in initial commit
+  -> History scrub: NOT YET EXECUTED (destructive + force-push requires user confirmation)
+
+ACTION TAKEN:
+  - Created scripts/verify_no_secrets.ps1 (PowerShell, cross-platform via pwsh)
+  - Created scripts/verify_no_secrets.sh (bash)
+  - Updated SECURITY.md with status, pending action section, and exact commands
+
+PENDING:
+  - User must run scrub_credentials.ps1 + force-push to remote (shared-impact action)
