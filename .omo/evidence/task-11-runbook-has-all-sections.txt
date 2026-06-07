@@ -1,0 +1,52 @@
+Task 11: Create docs/RUNBOOK.md (operational guide)
+Date: 2026-06-07
+
+NEW FILE: docs/RUNBOOK.md (546 lines, within 300-600 target)
+
+8 REQUIRED SECTIONS (all present, all using Symptom→Diagnosis→Action):
+  1. "Kill switch fires mid-session (e.g., 2 PM)"
+  2. "Add a new instrument to the watchlist"
+  3. "Rotate Kite access token (with restart)"
+  4. "Recover from a stuck reconciliation"
+  5. "angel_symbols.json is missing or corrupt"
+  6. "A paper trade didn't fire when expected"
+  7. "Read logs/runtime_traces/"
+  8. "Interpret state/burnin/reconciliation.jsonl"
+
+QA SCENARIO (from plan, line 940-953):
+  foreach section in [kill switch fires, add a new instrument,
+    rotate Kite, stuck reconciliation, angel_symbols,
+    paper trade, runtime_traces, reconciliation.jsonl]:
+    Select-String docs/RUNBOOK.md -Pattern $section
+  RESULT: SECTIONS OK (all 8 present)
+
+ADDITIONAL SECTIONS (not required, but value-add):
+  - Quick reference: scripts (13 scripts with purpose + when-to-run)
+  - Quick reference: env vars (12 TRA_*/MONITOR_* vars with defaults)
+
+ACCURACY VERIFIED against source:
+  - Kill switch details match src/risk/kill_switch.py:
+    _max_daily_loss=5000.0 default, _max_drawdown_pct=0.05,
+    asyncio.Lock, _auto_reset=True, daily_auto_reset behavior
+  - Reconciliation state matches scripts/check_paper_burnin.ps1:
+    process_running, health_reachable, metrics_reachable,
+    metadata, reconciliation, recent_errors fields
+  - Logs directory structure matches actual state of logs/:
+    runtime_traces/, first_trade_*.jsonl, backtest_compare.log,
+    run3_stderr.log, run3_stdout.log
+  - angel_symbols.json size and rebuild procedure match
+    src/connectors/angel/symbol_index.py and the actual 26.6 MB
+    file in state/
+
+MUST-NOT-DO CHECK:
+  - Did NOT include any actual credentials or tokens
+  - Did NOT recommend `rm -rf state/` — explicitly warned against
+    it in sections 4 and 5
+  - Did NOT recommend editing strategy_config.py during burn-in
+    (warned in section 6)
+
+REAL SCRIPTS REFERENCED (not fictional):
+  start_paper_burnin.ps1, stop_paper_burnin.ps1, run_paper_5d.ps1,
+  check_paper_burnin.ps1, replay_events.py, run_agent.py,
+  run_system_backtest.py, verify_no_secrets.{ps1,sh},
+  scrub_credentials.{ps1,sh}, run_paper_30d.py, run_validation.py
