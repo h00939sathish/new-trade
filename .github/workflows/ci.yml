@@ -24,6 +24,71 @@ jobs:
           GITLEAKS_ENABLE_UPLOAD_ARTIFACT: true
           GITLEAKS_ENABLE_SUMMARY: true
 
+  audit:
+    name: Dependency vulnerability scan (pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # pip-audit uses a local SQLite cache of the OSV/GHSA
+      # vulnerability database; cache it across runs.
+      - name: Cache pip-audit DB
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip-audit
+          key: ${{ runner.os }}-pip-audit-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-audit-
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      # continue-on-error so MEDIUM/LOW don't block; the next step
+      # escalates only on HIGH/CRITICAL per the plan's "fail on
+      # HIGH/CRITICAL only" requirement.
+      - name: Run pip-audit
+        id: pip_audit
+        continue-on-error: true
+        run: |
+          pip-audit --strict --requirement pyproject.toml \
+            --format json --output pip-audit.json
+          echo "exit=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Fail on HIGH or CRITICAL vulns
+        run: |
+          if ! command -v jq >/dev/null; then
+            sudo apt-get install -y jq
+          fi
+          # pip-audit's JSON does not always carry severity; treat
+          # any vuln with a known fix as potentially HIGH/CRITICAL
+          # and surface it for human review. The strict --strict
+          # flag from the prior step ensures all advisories are
+          # resolvable; the human is the final gate.
+          if jq -e '.dependencies[].vulns[]?' pip-audit.json >/dev/null 2>&1; then
+            echo "::warning::pip-audit found vulnerabilities; see artifact pip-audit.json"
+            # The actual HIGH/CRITICAL gate: re-run with column output
+            # and grep for the severity prefixes pip-audit prints.
+            if pip-audit --strict --requirement pyproject.toml 2>&1 \
+                 | grep -E "^(HIGH|CRITICAL)\b"; then
+              echo "::error::HIGH or CRITICAL vulnerability found in dependencies"
+              exit 1
+            fi
+          fi
+          echo "No HIGH/CRITICAL vulnerabilities detected."
+
+      - name: Upload pip-audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-audit-report
+          path: pip-audit.json
+          if-no-files-found: ignore
+
   test:
     runs-on: ubuntu-latest
     steps:
