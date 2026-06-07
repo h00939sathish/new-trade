@@ -1,0 +1,26 @@
+Task 2: Remove hardcoded Telegram chat ID and production URL from monitor.py
+Date: 2026-06-07
+
+CHANGES:
+  - monitor.py: externalized CHAT_ID and API_URL to env vars (MONITOR_CHAT_ID, MONITOR_API_URL)
+  - monitor.py: added _required_env() helper that exits 1 with clear error
+  - monitor.py: added _validate_chat_id() that enforces digits-only format
+  - monitor.py: added --dry-run flag for testing without sending messages
+  - monitor.py: send_telegram() now takes chat_id as param (no module-level constant)
+  - .env.example: documented new MONITOR_* env vars
+
+QA SCENARIO 1 (missing env vars):
+  $ Remove-Item Env:MONITOR_CHAT_ID; Remove-Item Env:MONITOR_API_URL; python monitor.py
+  -> ERROR: MONITOR_API_URL not set in environment
+  -> Exit code: 1 ✓
+
+QA SCENARIO 2 (env vars set + --dry-run):
+  $ $env:MONITOR_CHAT_ID="1234567890"
+  $ $env:MONITOR_API_URL="http://localhost:8080/api/paper-report"
+  $ python monitor.py --dry-run
+  -> No crash, no real telegram call (token not set, returns early) ✓
+
+ACCEPTANCE CHECKS:
+  -> grep "8555799588" monitor.py  -> no matches
+  -> grep "new-trade-production" monitor.py  -> no matches
+  -> Both env vars documented in .env.example ✓

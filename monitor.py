@@ -3,8 +3,42 @@ from datetime import datetime
 
 WORKDIR = "D:\\projects\\new trade"
 STATE_PATH = os.path.join(WORKDIR, "monitor_state.json")
-API_URL = "https://new-trade-production.up.railway.app/api/paper-report"
-CHAT_ID = "8555799588"
+
+DEFAULT_API_URL = "http://localhost:8080/api/paper-report"
+DEFAULT_CHAT_ID = ""
+
+
+def _required_env(name: str) -> str:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        print(f"ERROR: {name} not set in environment", file=sys.stderr)
+        sys.exit(1)
+    return value
+
+
+def _validate_chat_id(raw: str) -> str:
+    if not re.fullmatch(r"-?\d{5,20}", raw):
+        print(
+            f"ERROR: MONITOR_CHAT_ID must be digits only (got {raw!r})",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    return raw
+
+
+def _load_config():
+    dry_run = "--dry-run" in sys.argv
+    api_url = os.environ.get("MONITOR_API_URL", DEFAULT_API_URL).strip()
+    chat_id_raw = os.environ.get("MONITOR_CHAT_ID", DEFAULT_CHAT_ID).strip()
+    if not dry_run:
+        _required_env("MONITOR_API_URL")
+        _required_env("MONITOR_CHAT_ID")
+    chat_id = _validate_chat_id(chat_id_raw) if chat_id_raw else ""
+    return {
+        "api_url": api_url,
+        "chat_id": chat_id,
+        "dry_run": dry_run,
+    }
 
 def run(cmd, cwd=WORKDIR):
     try:
@@ -13,8 +47,8 @@ def run(cmd, cwd=WORKDIR):
     except Exception:
         return ""
 
-def get_paper_report():
-    out = run(["curl", "-s", API_URL])
+def get_paper_report(api_url):
+    out = run(["curl", "-s", api_url])
     if not out:
         return None
     try:
@@ -59,11 +93,17 @@ def save_state(state):
     with open(STATE_PATH, "w") as f:
         json.dump(state, f)
 
-def send_telegram(token, text):
+def send_telegram(token, chat_id, text, dry_run=False):
+    if not chat_id:
+        print(f"[dry-run] would send to telegram: {text!r}")
+        return
+    if dry_run:
+        print(f"[dry-run] would POST to telegram for chat_id={chat_id}: {text!r}")
+        return
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     subprocess.run([
         "curl", "-s", "-X", "POST", url,
-        "-d", f"chat_id={CHAT_ID}",
+        "-d", f"chat_id={chat_id}",
         "-d", f"text={text}"
     ], timeout=15)
 
@@ -157,8 +197,13 @@ def parse_log_entries(raw):
     return entries
 
 def main():
+    config = _load_config()
+    api_url = config["api_url"]
+    chat_id = config["chat_id"]
+    dry_run = config["dry_run"]
+
     state = load_state()
-    report = get_paper_report()
+    report = get_paper_report(api_url)
     if report is None:
         return
 
@@ -185,7 +230,7 @@ def main():
                 f"Portfolio: {portfolio_value}\n"
                 f"PnL: {pnl}"
             )
-            send_telegram(token, msg)
+            send_telegram(token, chat_id, msg, dry_run=dry_run)
         state["alerted_first_trade"] = True
         state["last_trade_count"] = trade_count
         save_state(state)
@@ -205,7 +250,7 @@ def main():
                 "🟢 Regime instability cleared.\n"
                 "Entry suppression lifted."
             )
-            send_telegram(token, msg)
+            send_telegram(token, chat_id, msg, dry_run=dry_run)
         state["alerted_regime_clear"] = True
         state["regime_suppression_active"] = False
         save_state(state)
@@ -229,7 +274,7 @@ def main():
             continue
 
         formatted = format_risk_breach(entry)
-        send_telegram(token, formatted)
+        send_telegram(token, chat_id, formatted, dry_run=dry_run)
         alerted[key] = datetime.now().isoformat()
         new_alerts[key] = alerted[key]
 
