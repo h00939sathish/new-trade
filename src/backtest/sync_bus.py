@@ -78,7 +78,9 @@ class SyncEventBus:
             self._deferred.clear()
 
     async def _deliver(self, event: Event) -> None:
-        etype_str = event.event_type.value if hasattr(event.event_type, "value") else str(event.event_type)
+        etype_str = (
+            event.event_type.value if hasattr(event.event_type, "value") else str(event.event_type)
+        )
         agents = self._subscribers.get(etype_str, [])
 
         for agent in agents:
@@ -89,10 +91,13 @@ class SyncEventBus:
             try:
                 await agent.on_event(event)
             except Exception as e:
-                logger.error("SyncEventBus: Error calling %s.on_event: %s", agent.name, e, exc_info=True)
+                logger.error(
+                    "SyncEventBus: Error calling %s.on_event: %s", agent.name, e, exc_info=True
+                )
 
         # Optional: Append to memory store
         if self._event_store:
             from src.event_store.memory import InMemoryEventStore
+
             if isinstance(self._event_store, InMemoryEventStore):
                 await self._event_store.append("events.bus", event)

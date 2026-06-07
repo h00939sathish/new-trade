@@ -9,20 +9,41 @@ from src.backtest.walk_forward import WalkForwardValidator
 async def test_walk_forward_validator():
     ticks = []
     # Day 1: Price goes up
-    ticks.extend([
-        {"instrument": "TEST", "price": 100.0 + i * 0.5, "volume": 1000, "timestamp": datetime(2026, 5, 25, 9, 15 + i, 0, tzinfo=UTC).isoformat()}
-        for i in range(10)
-    ])
+    ticks.extend(
+        [
+            {
+                "instrument": "TEST",
+                "price": 100.0 + i * 0.5,
+                "volume": 1000,
+                "timestamp": datetime(2026, 5, 25, 9, 15 + i, 0, tzinfo=UTC).isoformat(),
+            }
+            for i in range(10)
+        ]
+    )
     # Day 2: Price goes down
-    ticks.extend([
-        {"instrument": "TEST", "price": 105.0 - i * 0.5, "volume": 1000, "timestamp": datetime(2026, 5, 26, 9, 15 + i, 0, tzinfo=UTC).isoformat()}
-        for i in range(10)
-    ])
+    ticks.extend(
+        [
+            {
+                "instrument": "TEST",
+                "price": 105.0 - i * 0.5,
+                "volume": 1000,
+                "timestamp": datetime(2026, 5, 26, 9, 15 + i, 0, tzinfo=UTC).isoformat(),
+            }
+            for i in range(10)
+        ]
+    )
     # Day 3: Price rises again
-    ticks.extend([
-        {"instrument": "TEST", "price": 100.0 + i * 1.0, "volume": 1000, "timestamp": datetime(2026, 5, 27, 9, 15 + i, 0, tzinfo=UTC).isoformat()}
-        for i in range(10)
-    ])
+    ticks.extend(
+        [
+            {
+                "instrument": "TEST",
+                "price": 100.0 + i * 1.0,
+                "volume": 1000,
+                "timestamp": datetime(2026, 5, 27, 9, 15 + i, 0, tzinfo=UTC).isoformat(),
+            }
+            for i in range(10)
+        ]
+    )
 
     validator = WalkForwardValidator(
         train_days=2,
@@ -33,7 +54,7 @@ async def test_walk_forward_validator():
                 "long_window": [5],
                 "threshold": [0.01],
             }
-        }
+        },
     )
 
     result = await validator.run_validation("momentum", ticks, metric="total_pnl")

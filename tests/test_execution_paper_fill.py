@@ -1,7 +1,14 @@
 import pytest
 
 from src.agents.execution import ExecutionAgent
-from src.schemas.events import EventMetadata, Exchange, OrderEvent, OrderSide, OrderType, ProductType, TickEvent
+from src.schemas.events import (
+    Exchange,
+    OrderEvent,
+    OrderSide,
+    OrderType,
+    ProductType,
+    TickEvent,
+)
 
 
 class _StubMarketIntel:

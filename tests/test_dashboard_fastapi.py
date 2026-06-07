@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -108,7 +108,7 @@ class TestFastAPIDashboard:
         assert data["orders"] == []
 
     def test_reports_reflect_execution_state(self):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         open_order = SimpleNamespace(
             data={
                 "instrument": "RELIANCE",
@@ -186,7 +186,9 @@ class TestFastAPIDashboard:
 
     def test_control_endpoint_rejects_when_auth_not_configured(self):
         with TestClient(create_app()) as client:
-            resp = client.post("/api/control-plane/controls/emergency-stop", headers=_auth_headers())
+            resp = client.post(
+                "/api/control-plane/controls/emergency-stop", headers=_auth_headers()
+            )
         assert resp.status_code == 503
 
     def test_bearer_token_accepts_control_request(self, monkeypatch):
@@ -220,7 +222,9 @@ class TestFastAPIDashboard:
         system = SimpleNamespace(
             strategy_gen=SimpleNamespace(_running=True),
             market_intel=SimpleNamespace(emit=AsyncMock()),
-            execution=SimpleNamespace(_open_orders={}, cancel_order=AsyncMock(), place_order=AsyncMock()),
+            execution=SimpleNamespace(
+                _open_orders={}, cancel_order=AsyncMock(), place_order=AsyncMock()
+            ),
             portfolio_opt=SimpleNamespace(_positions={}),
         )
 

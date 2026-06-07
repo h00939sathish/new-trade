@@ -5,6 +5,7 @@ from src.schemas.events import EventType
 
 logger = logging.getLogger("risk.kill_switch")
 
+
 class KillSwitch:
     _instance = None
 
@@ -29,7 +30,13 @@ class KillSwitch:
     def reason(self) -> str:
         return self._reason
 
-    def setup(self, daily_loss_pct: float, max_drawdown_pct: float, initial_capital: float, auto_reset: bool = True) -> None:
+    def setup(
+        self,
+        daily_loss_pct: float,
+        max_drawdown_pct: float,
+        initial_capital: float,
+        auto_reset: bool = True,
+    ) -> None:
         self._max_drawdown_pct = max_drawdown_pct
         self._auto_reset = auto_reset
         if self._initial_capital is None:
@@ -51,8 +58,9 @@ class KillSwitch:
         """Auto-reset the kill switch at the start of a new trading day."""
         if not self._active or not self._auto_reset or self._triggered_date is None:
             return
-            
-        from datetime import datetime, UTC
+
+        from datetime import UTC, datetime
+
         now = datetime.now(UTC)
         if self._triggered_date.date() < now.date():
             self._active = False
@@ -63,24 +71,31 @@ class KillSwitch:
                 system.strategy_gen._running = True
                 logger.info("Strategy generator re-enabled by auto-reset.")
 
-    async def check_limits(self, current_capital: float, current_pnl: float, peak_capital: float, system=None) -> bool:
+    async def check_limits(
+        self, current_capital: float, current_pnl: float, peak_capital: float, system=None
+    ) -> bool:
         """Check daily PnL and drawdown limits. Trigger kill switch if breached."""
         async with self._lock:
             if self._active:
                 return True
-    
+
             # Check daily loss limit: PnL is realized daily PnL
             if current_pnl < -self._max_daily_loss:
-                await self.trigger(f"Daily loss limit breached: {current_pnl} < -{self._max_daily_loss}", system)
+                await self.trigger(
+                    f"Daily loss limit breached: {current_pnl} < -{self._max_daily_loss}", system
+                )
                 return True
-    
+
             # Drawdown check: (peak_capital - current_capital) / peak_capital
             if peak_capital > 0:
                 drawdown = (peak_capital - current_capital) / peak_capital
                 if drawdown > self._max_drawdown_pct:
-                    await self.trigger(f"Drawdown limit breached: {drawdown * 100:.2f}% > {self._max_drawdown_pct * 100:.2f}%", system)
+                    await self.trigger(
+                        f"Drawdown limit breached: {drawdown * 100:.2f}% > {self._max_drawdown_pct * 100:.2f}%",
+                        system,
+                    )
                     return True
-    
+
             return False
 
     async def trigger(self, reason: str, system=None) -> None:
@@ -88,7 +103,8 @@ class KillSwitch:
             return
         self._active = True
         self._reason = reason
-        from datetime import datetime, UTC
+        from datetime import UTC, datetime
+
         self._triggered_date = datetime.now(UTC)
         logger.critical("KILL SWITCH TRIGGERED: %s", reason)
 
@@ -101,6 +117,7 @@ class KillSwitch:
 
                 # 2. Emit fatal SYSTEM_ERROR event
                 from src.schemas.events import Event, EventMetadata
+
                 err_event = Event(
                     event_type=EventType.SYSTEM_ERROR,
                     stream="system.errors",
@@ -133,8 +150,14 @@ class KillSwitch:
             if qty != 0:
                 side = "sell" if qty > 0 else "buy"
                 from src.schemas.events import OrderSide, OrderType, ProductType
+
                 close_side = OrderSide.SELL if qty > 0 else OrderSide.BUY
-                logger.warning("Kill Switch: Market closing position for %s (qty=%d, side=%s)", instrument, qty, side)
+                logger.warning(
+                    "Kill Switch: Market closing position for %s (qty=%d, side=%s)",
+                    instrument,
+                    qty,
+                    side,
+                )
                 try:
                     await exec_agent.place_order(
                         instrument=instrument,

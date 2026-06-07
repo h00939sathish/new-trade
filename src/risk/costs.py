@@ -4,19 +4,25 @@ from typing import Any, Literal
 
 @dataclass
 class TransactionCostModel:
-    brokerage_pct: float = 0.0003       # 0.03%
-    brokerage_flat: float = 20.0        # Max ₹20
-    stt_pct_buy_cnc: float = 0.001      # 0.1% for CNC buy
-    stt_pct_sell_cnc: float = 0.001     # 0.1% for CNC sell
-    stt_pct_sell_mis: float = 0.00025    # 0.025% for MIS sell
-    exchange_txn_pct: float = 0.0000345 # 0.00345%
-    gst_pct: float = 0.18               # 18% GST
-    sebi_pct: float = 0.000001          # 0.0001% (₹10 / Crore)
-    stamp_duty_pct_cnc: float = 0.00015 # 0.015% for CNC buy
-    stamp_duty_pct_mis: float = 0.00003 # 0.003% for MIS buy
-    slippage_bps: float = 5.0           # 5 basis points default slippage
+    brokerage_pct: float = 0.0003  # 0.03%
+    brokerage_flat: float = 20.0  # Max ₹20
+    stt_pct_buy_cnc: float = 0.001  # 0.1% for CNC buy
+    stt_pct_sell_cnc: float = 0.001  # 0.1% for CNC sell
+    stt_pct_sell_mis: float = 0.00025  # 0.025% for MIS sell
+    exchange_txn_pct: float = 0.0000345  # 0.00345%
+    gst_pct: float = 0.18  # 18% GST
+    sebi_pct: float = 0.000001  # 0.0001% (₹10 / Crore)
+    stamp_duty_pct_cnc: float = 0.00015  # 0.015% for CNC buy
+    stamp_duty_pct_mis: float = 0.00003  # 0.003% for MIS buy
+    slippage_bps: float = 5.0  # 5 basis points default slippage
 
-    def total_cost(self, side: Literal["buy", "sell"], quantity: int, price: float, product: Literal["mis", "cnc", "nrml"] = "mis") -> float:
+    def total_cost(
+        self,
+        side: Literal["buy", "sell"],
+        quantity: int,
+        price: float,
+        product: Literal["mis", "cnc", "nrml"] = "mis",
+    ) -> float:
         """Calculates total transaction taxes and charges on the trade in ₹."""
         value = price * quantity
         if value <= 0 or quantity <= 0:
@@ -99,7 +105,9 @@ class TransactionCostModel:
             # Order exceeds total book depth. Apply 10bps penalty beyond worst level.
             worst_price = float(levels[-1].get("price", price))
             penalty_pct = 0.0010
-            penalty_price = worst_price * (1.0 + penalty_pct if side == "buy" else 1.0 - penalty_pct)
+            penalty_price = worst_price * (
+                1.0 + penalty_pct if side == "buy" else 1.0 - penalty_pct
+            )
             total_value += remaining_qty * penalty_price
             avg_price = total_value / quantity
 

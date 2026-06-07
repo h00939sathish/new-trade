@@ -72,6 +72,7 @@ class EventStore(ABC):
                 await callback(event)
             if not events:
                 import asyncio
+
                 await asyncio.sleep(0.1)
 
     @abstractmethod

@@ -17,6 +17,7 @@ signal dict so the ensemble layer can inspect ``features["regime"]``.
 """
 
 import numpy as np
+
 from src.strategies.base import Strategy
 
 
@@ -49,7 +50,7 @@ class AdxRegimeFilter(Strategy):
 
         # Seed with the simple sum (not average — Wilder uses the sum for
         # +DM / −DM / TR, then divides later when computing +DI / −DI).
-        out[period] = np.sum(values[:period + 1])
+        out[period] = np.sum(values[: period + 1])
 
         for i in range(period + 1, n):
             out[i] = out[i - 1] - (out[i - 1] / period) + values[i]
@@ -75,8 +76,8 @@ class AdxRegimeFilter(Strategy):
             return out
 
         seed_end = valid_idx[period - 1]  # index of period-th valid value
-        out[: seed_end] = np.nan
-        out[seed_end] = np.nanmean(values[valid_idx[0]: seed_end + 1])
+        out[:seed_end] = np.nan
+        out[seed_end] = np.nanmean(values[valid_idx[0] : seed_end + 1])
 
         for i in range(seed_end + 1, n):
             if np.isnan(values[i]):
@@ -100,10 +101,10 @@ class AdxRegimeFilter(Strategy):
         All arrays must be the same length (>= self.min_bars).
         """
         # --- Directional Movement & True Range (bar-by-bar) -----------
-        n = len(closes)
+        len(closes)
 
-        up_move = np.diff(highs)            # high[i] - high[i-1]
-        down_move = np.diff(-lows)          # low[i-1] - low[i]
+        up_move = np.diff(highs)  # high[i] - high[i-1]
+        down_move = np.diff(-lows)  # low[i-1] - low[i]
 
         plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
         minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)

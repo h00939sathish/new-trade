@@ -26,7 +26,9 @@ class SqliteEventStore(EventStore):
 
             def _conn_setup():
                 self.db_path.parent.mkdir(parents=True, exist_ok=True)
-                self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False, timeout=30.0)
+                self._conn = sqlite3.connect(
+                    str(self.db_path), check_same_thread=False, timeout=30.0
+                )
                 self._conn.row_factory = sqlite3.Row
                 self._conn.execute("PRAGMA journal_mode=WAL")
                 self._conn.execute("PRAGMA synchronous=NORMAL")
@@ -197,9 +199,7 @@ class SqliteEventStore(EventStore):
         conn = self._get_conn()
 
         def _db_get_stream_names():
-            return conn.execute(
-                "SELECT DISTINCT stream FROM events ORDER BY stream"
-            ).fetchall()
+            return conn.execute("SELECT DISTINCT stream FROM events ORDER BY stream").fetchall()
 
         rows = await asyncio.to_thread(_db_get_stream_names)
         return [r["stream"] for r in rows]

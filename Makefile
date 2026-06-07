@@ -9,6 +9,7 @@ dev:
 
 lint:
 	ruff check src/
+	ruff format --check src/ tests/
 	mypy src/
 
 test:

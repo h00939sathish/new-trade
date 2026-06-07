@@ -33,6 +33,7 @@ class ExpertPersonasAgent(BaseAgent):
         self.logger.info("Expert Personas Agent initializing")
         if not self._alt_data:
             from src.connectors.alternative_data import AlternativeDataProvider
+
             self._alt_data = AlternativeDataProvider()
 
     async def on_event(self, event: Event) -> None:
@@ -64,13 +65,15 @@ class ExpertPersonasAgent(BaseAgent):
 
         if not self._api_key:
             self.logger.warning("No Gemini API Key. Using neutral fallback sentiment.")
-            await self.emit(MacroSentimentEvent.create(
-                geopolitical_score=0.0,
-                macro_score=0.0,
-                composite_multiplier=1.0,
-                rationale="Fallback neutral sentiment due to missing LLM API key.",
-                producer=self.name,
-            ))
+            await self.emit(
+                MacroSentimentEvent.create(
+                    geopolitical_score=0.0,
+                    macro_score=0.0,
+                    composite_multiplier=1.0,
+                    rationale="Fallback neutral sentiment due to missing LLM API key.",
+                    producer=self.name,
+                )
+            )
             return
 
         prompt = self._build_prompt(news_text)
@@ -78,22 +81,26 @@ class ExpertPersonasAgent(BaseAgent):
 
         if result:
             self.logger.info("Macro Sentiment Evaluated: %s", result.get("rationale", ""))
-            await self.emit(MacroSentimentEvent.create(
-                geopolitical_score=float(result.get("geopolitical_score", 0.0)),
-                macro_score=float(result.get("macro_score", 0.0)),
-                composite_multiplier=float(result.get("composite_multiplier", 1.0)),
-                rationale=result.get("rationale", "No rationale provided"),
-                producer=self.name,
-            ))
+            await self.emit(
+                MacroSentimentEvent.create(
+                    geopolitical_score=float(result.get("geopolitical_score", 0.0)),
+                    macro_score=float(result.get("macro_score", 0.0)),
+                    composite_multiplier=float(result.get("composite_multiplier", 1.0)),
+                    rationale=result.get("rationale", "No rationale provided"),
+                    producer=self.name,
+                )
+            )
         else:
             self.logger.error("Failed to evaluate sentiment, using neutral fallback.")
-            await self.emit(MacroSentimentEvent.create(
-                geopolitical_score=0.0,
-                macro_score=0.0,
-                composite_multiplier=1.0,
-                rationale="Fallback neutral sentiment due to LLM error.",
-                producer=self.name,
-            ))
+            await self.emit(
+                MacroSentimentEvent.create(
+                    geopolitical_score=0.0,
+                    macro_score=0.0,
+                    composite_multiplier=1.0,
+                    rationale="Fallback neutral sentiment due to LLM error.",
+                    producer=self.name,
+                )
+            )
 
     def _build_prompt(self, news_text: str) -> str:
         return (

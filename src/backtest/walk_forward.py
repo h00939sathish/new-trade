@@ -26,6 +26,7 @@ DEFAULT_PARAMETER_GRIDS = {
     },
 }
 
+
 class WalkForwardValidator:
     def __init__(
         self,
@@ -97,12 +98,14 @@ class WalkForwardValidator:
             for d in test_dates:
                 test_ticks.extend(dates_map[d])
 
-            windows.append({
-                "train_range": (train_dates[0], train_dates[-1]),
-                "test_range": (test_dates[0], test_dates[-1]),
-                "train_ticks": train_ticks,
-                "test_ticks": test_ticks,
-            })
+            windows.append(
+                {
+                    "train_range": (train_dates[0], train_dates[-1]),
+                    "test_range": (test_dates[0], test_dates[-1]),
+                    "train_ticks": train_ticks,
+                    "test_ticks": test_ticks,
+                }
+            )
             # Slide window forward by test_days (non-overlapping out-of-sample periods)
             i += self.test_days
 
@@ -114,7 +117,13 @@ class WalkForwardValidator:
         history = []
 
         for idx, win in enumerate(windows):
-            logger.info("Window %d/%d: Optimizing on %s to %s", idx + 1, len(windows), win["train_range"][0], win["train_range"][1])
+            logger.info(
+                "Window %d/%d: Optimizing on %s to %s",
+                idx + 1,
+                len(windows),
+                win["train_range"][0],
+                win["train_range"][1],
+            )
 
             # 1. Parameter sweep on training set
             best_params = await self.optimize(strategy_name, win["train_ticks"], grid, metric)
@@ -138,18 +147,22 @@ class WalkForwardValidator:
             current_capital = result.final_value
             pnl = current_capital - prev_capital
 
-            history.append({
-                "window": idx + 1,
-                "train_range": (str(win["train_range"][0]), str(win["train_range"][1])),
-                "test_range": (str(win["test_range"][0]), str(win["test_range"][1])),
-                "best_params": best_params,
-                "test_pnl": pnl,
-                "test_trades_count": len(result.trades),
-                "test_sharpe": result.sharpe_ratio,
-            })
+            history.append(
+                {
+                    "window": idx + 1,
+                    "train_range": (str(win["train_range"][0]), str(win["train_range"][1])),
+                    "test_range": (str(win["test_range"][0]), str(win["test_range"][1])),
+                    "best_params": best_params,
+                    "test_pnl": pnl,
+                    "test_trades_count": len(result.trades),
+                    "test_sharpe": result.sharpe_ratio,
+                }
+            )
 
         # 3. Aggregate final out-of-sample statistics
-        final_result = self._aggregate_results(out_of_sample_trades, out_of_sample_equity_curve, self.initial_capital)
+        final_result = self._aggregate_results(
+            out_of_sample_trades, out_of_sample_equity_curve, self.initial_capital
+        )
 
         return {
             "strategy": strategy_name,
@@ -190,7 +203,9 @@ class WalkForwardValidator:
 
         return best_params
 
-    def _aggregate_results(self, trades: list[dict[str, Any]], equity_curve: list[float], initial_capital: float) -> dict[str, Any]:
+    def _aggregate_results(
+        self, trades: list[dict[str, Any]], equity_curve: list[float], initial_capital: float
+    ) -> dict[str, Any]:
         """Compute consolidated backtest statistics for out-of-sample performance."""
         total_trades = len(trades)
         wins = [t for t in trades if t.get("pnl", 0) > 0]
@@ -202,7 +217,9 @@ class WalkForwardValidator:
         profit_factor = (
             sum(t["pnl"] for t in wins) / abs(sum(t["pnl"] for t in losses))
             if losses and abs(sum(t["pnl"] for t in losses)) > 0
-            else float("inf") if wins else 0.0
+            else float("inf")
+            if wins
+            else 0.0
         )
 
         final_value = equity_curve[-1] if equity_curve else initial_capital
@@ -226,8 +243,8 @@ class WalkForwardValidator:
         if len(returns) > 1:
             avg_r = sum(returns) / len(returns)
             variance = sum((r - avg_r) ** 2 for r in returns) / len(returns)
-            std = variance ** 0.5
-            sharpe = (avg_r / std) * (252 ** 0.5) if std > 0 else 0.0
+            std = variance**0.5
+            sharpe = (avg_r / std) * (252**0.5) if std > 0 else 0.0
 
         return {
             "total_trades": total_trades,

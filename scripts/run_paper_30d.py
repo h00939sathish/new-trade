@@ -30,6 +30,7 @@ Environment variables (all optional):
   TRA_BURNIN               0=off, 1=on (default: 1 in paper mode)
   TRA_BURNIN_RECONCILE_SECONDS  Default 300
 """
+
 import os
 import sys
 import asyncio
@@ -45,7 +46,7 @@ sys.path.insert(0, str(ROOT))
 MARKET_OPEN_UTC = dtime(3, 45)
 MARKET_CLOSE_UTC = dtime(10, 0)
 SQUARE_OFF_START_UTC = dtime(9, 30)  # 15:00 IST — start closing positions
-SQUARE_OFF_END_UTC = dtime(10, 0)    # 15:30 IST — force close
+SQUARE_OFF_END_UTC = dtime(10, 0)  # 15:30 IST — force close
 
 logger = logging.getLogger("paper_30d")
 logging.basicConfig(
@@ -78,7 +79,9 @@ def seconds_until_next_window(now_utc: datetime | None = None) -> float:
     if is_market_open(now) and is_weekday(now):
         return 0.0
     # Find next market open
-    next_open = now.replace(hour=MARKET_OPEN_UTC.hour, minute=MARKET_OPEN_UTC.minute, second=0, microsecond=0)
+    next_open = now.replace(
+        hour=MARKET_OPEN_UTC.hour, minute=MARKET_OPEN_UTC.minute, second=0, microsecond=0
+    )
     if now.time() >= MARKET_CLOSE_UTC or not is_weekday(now):
         next_open += timedelta(days=1)
     # Skip weekends
@@ -94,6 +97,7 @@ def daily_attribution_check() -> dict:
     """
     try:
         from src.analytics.attribution import AttributionAggregator
+
         agg = AttributionAggregator()
         # Bootstrap from the SQLite event store so we capture
         # everything that happened today.
@@ -146,8 +150,11 @@ async def daily_attribution_loop() -> None:
             for strat, s in summary.items():
                 logger.info(
                     "  %s: trades=%d pnl=%.2f sharpe=%.2f winrate=%.1f%%",
-                    strat, s.get("trades", 0), s.get("total_pnl", 0.0),
-                    s.get("sharpe_20", 0.0), s.get("win_rate", 0.0) * 100,
+                    strat,
+                    s.get("trades", 0),
+                    s.get("total_pnl", 0.0),
+                    s.get("sharpe_20", 0.0),
+                    s.get("win_rate", 0.0) * 100,
                 )
 
 
@@ -165,6 +172,7 @@ async def main() -> None:
     # We delegate to src.main.run() so the harness uses the canonical entry point
     try:
         from src.main import run as run_system
+
         await run_system()
     finally:
         attrib_task.cancel()

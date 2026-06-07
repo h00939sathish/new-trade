@@ -92,7 +92,7 @@ class PagerDutyNotifier(Notifier):
     async def send(self, subject: str, message: str) -> None:
         severity = "critical" if "RISK" in subject or "ERROR" in subject else "info"
         dedup_key = f"trading-system-{subject.replace(' ', '-').lower()}"
-        
+
         payload = {
             "routing_key": self._routing_key,
             "event_action": "trigger",
@@ -101,11 +101,8 @@ class PagerDutyNotifier(Notifier):
                 "summary": f"[{subject}] {message[:100]}",
                 "source": "trading-system",
                 "severity": severity,
-                "custom_details": {
-                    "subject": subject,
-                    "message": message
-                }
-            }
+                "custom_details": {"subject": subject, "message": message},
+            },
         }
         try:
             async with httpx.AsyncClient() as client:
@@ -136,7 +133,7 @@ def create_notifier() -> Notifier:
         notifiers.append(TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id))
     if settings.ntfy_topic:
         notifiers.append(NtfyNotifier(settings.ntfy_topic, settings.ntfy_server))
-    
+
     if not notifiers:
         return LogNotifier()
     if len(notifiers) == 1:

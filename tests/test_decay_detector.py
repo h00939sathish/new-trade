@@ -1,6 +1,7 @@
 """
 Tests for P2.3 — strategy decay detector emits STRATEGY_DECAY event.
 """
+
 import asyncio
 from unittest.mock import MagicMock
 
@@ -60,7 +61,9 @@ async def test_decay_detector_emits_strategy_decay_event():
         loop.create_task = original_create_task
 
     # Verify the event was emitted with the right type
-    assert len(captured_events) >= 1, f"Expected at least 1 emitted event, got {len(captured_events)}"
+    assert len(captured_events) >= 1, (
+        f"Expected at least 1 emitted event, got {len(captured_events)}"
+    )
     decay_events = [e for e in captured_events if e.event_type == EventType.STRATEGY_DECAY]
     assert len(decay_events) >= 1
     ev = decay_events[0]
@@ -123,5 +126,6 @@ def test_decay_detector_below_min_trades_does_not_emit():
         detector.record_trade("momentum", -100.0)
 
     from src.schemas.events import EventType
+
     decay_events = [e for e in captured_events if e.event_type == EventType.STRATEGY_DECAY]
     assert len(decay_events) == 0

@@ -8,6 +8,7 @@ Related: src/agents/portfolio.py contains `portfolio_opt._positions` which is
 a read-only cache used for analytics/attribution snapshots. It must NEVER be
 written to directly — it is rebuilt from position_registry on demand.
 """
+
 import asyncio
 import logging
 import threading
@@ -53,15 +54,18 @@ class PositionRegistry:
 
     def get_position(self, instrument: str) -> dict[str, Any]:
         """Get current position for an instrument."""
-        return self._positions.get(instrument, {
-            "quantity": 0,
-            "avg_price": 0.0,
-            "side": None,
-            "stop_loss": 0.0,
-            "take_profit": 0.0,
-            "stop_loss_pct": 0.0,
-            "take_profit_pct": 0.0,
-        })
+        return self._positions.get(
+            instrument,
+            {
+                "quantity": 0,
+                "avg_price": 0.0,
+                "side": None,
+                "stop_loss": 0.0,
+                "take_profit": 0.0,
+                "stop_loss_pct": 0.0,
+                "take_profit_pct": 0.0,
+            },
+        )
 
     def get_quantity(self, instrument: str) -> int:
         """Get net quantity for an instrument."""
@@ -111,7 +115,11 @@ class PositionRegistry:
             else:
                 current_side = "long" if new_qty > 0 else "short"
                 # Update average price only when adding to position (not reducing)
-                if old_qty == 0 or (old_qty > 0 and qty_change > 0) or (old_qty < 0 and qty_change < 0):
+                if (
+                    old_qty == 0
+                    or (old_qty > 0 and qty_change > 0)
+                    or (old_qty < 0 and qty_change < 0)
+                ):
                     total_cost = (pos["avg_price"] * abs(old_qty)) + (fill_price * fill_qty)
                     pos["avg_price"] = total_cost / abs(new_qty) if new_qty != 0 else 0.0
 
@@ -119,7 +127,10 @@ class PositionRegistry:
                 pos["side"] = current_side
                 logger.info(
                     "Position updated: %s qty=%d avg=%.2f side=%s",
-                    instrument, new_qty, pos["avg_price"], current_side,
+                    instrument,
+                    new_qty,
+                    pos["avg_price"],
+                    current_side,
                 )
 
             return self._positions[instrument]
@@ -135,12 +146,14 @@ class PositionRegistry:
         """Set SL/TP levels for a position (called by strategy_gen after fill)."""
         async with self._get_lock():
             if instrument in self._positions:
-                self._positions[instrument].update({
-                    "stop_loss": stop_loss,
-                    "take_profit": take_profit,
-                    "stop_loss_pct": stop_loss_pct,
-                    "take_profit_pct": take_profit_pct,
-                })
+                self._positions[instrument].update(
+                    {
+                        "stop_loss": stop_loss,
+                        "take_profit": take_profit,
+                        "stop_loss_pct": stop_loss_pct,
+                        "take_profit_pct": take_profit_pct,
+                    }
+                )
 
     async def update_trailing_sl(self, instrument: str, new_sl: float) -> None:
         """Update trailing stop-loss if the new level is tighter."""
@@ -149,7 +162,9 @@ class PositionRegistry:
                 pos = self._positions[instrument]
                 if pos["side"] == "long" and new_sl > pos["stop_loss"]:
                     pos["stop_loss"] = new_sl
-                elif pos["side"] == "short" and (new_sl < pos["stop_loss"] or pos["stop_loss"] == 0.0):
+                elif pos["side"] == "short" and (
+                    new_sl < pos["stop_loss"] or pos["stop_loss"] == 0.0
+                ):
                     pos["stop_loss"] = new_sl
 
     async def sync_from_portfolio(self, portfolio_positions: dict[str, dict[str, Any]]) -> None:

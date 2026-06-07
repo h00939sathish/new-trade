@@ -342,7 +342,9 @@ class OrderEvent(Event):
         if correlation_id:
             meta.correlation_id = correlation_id
         return cls(
-            event_type=EventType.ORDER_CREATED if status == OrderStatus.PENDING else EventType.ORDER_ACCEPTED,
+            event_type=EventType.ORDER_CREATED
+            if status == OrderStatus.PENDING
+            else EventType.ORDER_ACCEPTED,
             stream=f"order.{instrument}",
             order_id=order_id,
             instrument=instrument,
@@ -505,7 +507,9 @@ class PortfolioEvent(Event):
 
 class SystemEvent(Event):
     @classmethod
-    def health(cls, component: str, status: str, details: dict[str, Any] | None = None) -> "SystemEvent":
+    def health(
+        cls, component: str, status: str, details: dict[str, Any] | None = None
+    ) -> "SystemEvent":
         return cls(
             event_type=EventType.SYSTEM_HEALTH,
             stream=f"system.health.{component}",

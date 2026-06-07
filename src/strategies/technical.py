@@ -23,8 +23,8 @@ class MomentumStrategy(Strategy):
     ) -> dict[str, Any] | None:
         if len(prices) < self.long_window:
             return None
-        short_ma = sum(prices[-self.short_window:]) / self.short_window
-        long_ma = sum(prices[-self.long_window:]) / self.long_window
+        short_ma = sum(prices[-self.short_window :]) / self.short_window
+        long_ma = sum(prices[-self.long_window :]) / self.long_window
         ratio = (short_ma - long_ma) / long_ma
         if abs(ratio) < self.threshold:
             return None
@@ -61,7 +61,7 @@ class MeanReversionStrategy(Strategy):
     ) -> dict[str, Any] | None:
         if len(prices) < self.window:
             return None
-        recent = prices[-self.window:]
+        recent = prices[-self.window :]
         mean = sum(recent) / len(recent)
         variance = sum((p - mean) ** 2 for p in recent) / len(recent)
         std = math.sqrt(variance) if variance > 0 else 1.0
@@ -105,9 +105,9 @@ class ATRStrategy(Strategy):
 
         # Use real high/low if available, otherwise approximate from close prices
         if highs and lows and len(highs) >= self.window + 1 and len(lows) >= self.window + 1:
-            recent_highs = highs[-(self.window + 1):]
-            recent_lows = lows[-(self.window + 1):]
-            recent_closes = prices[-(self.window + 1):]
+            recent_highs = highs[-(self.window + 1) :]
+            recent_lows = lows[-(self.window + 1) :]
+            recent_closes = prices[-(self.window + 1) :]
             tr_values = []
             for i in range(1, len(recent_closes)):
                 # Proper True Range: max(H-L, |H-C_prev|, |L-C_prev|)
@@ -119,11 +119,11 @@ class ATRStrategy(Strategy):
                 tr_values.append(tr)
         else:
             # Fallback: approximate from close-only
-            recent = prices[-(self.window + 1):]
+            recent = prices[-(self.window + 1) :]
             tr_values = []
             for i in range(1, len(recent)):
-                high = max(recent[i], recent[i-1])
-                low = min(recent[i], recent[i-1])
+                high = max(recent[i], recent[i - 1])
+                low = min(recent[i], recent[i - 1])
                 tr_values.append(high - low)
         atr = sum(tr_values) / len(tr_values)
         current = prices[-1]
@@ -167,7 +167,7 @@ class BollingerBandsStrategy(Strategy):
     ) -> dict[str, Any] | None:
         if len(prices) < self.window:
             return None
-        recent = prices[-self.window:]
+        recent = prices[-self.window :]
         mean = sum(recent) / len(recent)
         variance = sum((p - mean) ** 2 for p in recent) / len(recent)
         std = math.sqrt(variance) if variance > 0 else 1.0
@@ -214,12 +214,16 @@ class RSIStrategy(Strategy):
             return None
 
         # Initialize with simple average for the first window
-        avg_gain = sum(max(prices[i] - prices[i-1], 0) for i in range(1, self.window + 1)) / self.window
-        avg_loss = sum(max(prices[i-1] - prices[i], 0) for i in range(1, self.window + 1)) / self.window
+        avg_gain = (
+            sum(max(prices[i] - prices[i - 1], 0) for i in range(1, self.window + 1)) / self.window
+        )
+        avg_loss = (
+            sum(max(prices[i - 1] - prices[i], 0) for i in range(1, self.window + 1)) / self.window
+        )
 
         # Apply Wilder's smoothing for the rest of the prices
         for i in range(self.window + 1, len(prices)):
-            change = prices[i] - prices[i-1]
+            change = prices[i] - prices[i - 1]
             gain = max(change, 0)
             loss = max(-change, 0)
             avg_gain = (avg_gain * (self.window - 1) + gain) / self.window
@@ -341,7 +345,7 @@ class VolumeStrategy(Strategy):
     ) -> dict[str, Any] | None:
         if len(prices) < self.price_window or len(volumes) < self.volume_window:
             return None
-        recent_vol = volumes[-self.volume_window:]
+        recent_vol = volumes[-self.volume_window :]
         avg_vol = sum(recent_vol) / len(recent_vol)
         curr_vol = volumes[-1]
         if curr_vol <= avg_vol * self.volume_mult:
@@ -365,7 +369,9 @@ class VolumeStrategy(Strategy):
 
 
 class IchimokuStrategy(Strategy):
-    def __init__(self, conversion: int = 9, base: int = 26, lagging: int = 52, displacement: int = 26):
+    def __init__(
+        self, conversion: int = 9, base: int = 26, lagging: int = 52, displacement: int = 26
+    ):
         self.name = "ichimoku"
         self.data_type = "candle"
         self.timeframe = "minute"
@@ -410,7 +416,12 @@ class IchimokuStrategy(Strategy):
         }
 
     @staticmethod
-    def _midpoint(prices: list[float], period: int, highs: list[float] | None = None, lows: list[float] | None = None) -> float | None:
+    def _midpoint(
+        prices: list[float],
+        period: int,
+        highs: list[float] | None = None,
+        lows: list[float] | None = None,
+    ) -> float | None:
         if len(prices) < period:
             return None
         if highs and lows and len(highs) >= period and len(lows) >= period:

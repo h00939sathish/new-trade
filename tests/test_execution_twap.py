@@ -1,4 +1,3 @@
-
 import pytest
 
 from src.agents.execution import ExecutionAgent
@@ -23,7 +22,7 @@ async def test_twap_order_slicing():
         "direction": "long",
         "confidence": 1.0,
         "price": 2500.0,
-        "strategy": "momentum"
+        "strategy": "momentum",
     }
 
     # 1000 quantity should trigger TWAP (>= 500)
@@ -43,8 +42,10 @@ async def test_twap_order_slicing():
 
     # Mock emit to catch the order event
     emitted = []
+
     async def mock_emit(evt):
         emitted.append(evt)
+
     agent.emit = mock_emit
 
     # Create a small wrapper to run the loop exactly once
@@ -53,7 +54,15 @@ async def test_twap_order_slicing():
         for _tid, t in agent._twap_orders.items():
             if t["chunks"]:
                 chunk_qty = t["chunks"].pop(0)
-                order_event = agent._open_orders.get("dummy", Event(event_type=EventType.ORDER_CREATED, stream="test", data={"quantity": chunk_qty}, metadata={"producer": "test"}))
+                order_event = agent._open_orders.get(
+                    "dummy",
+                    Event(
+                        event_type=EventType.ORDER_CREATED,
+                        stream="test",
+                        data={"quantity": chunk_qty},
+                        metadata={"producer": "test"},
+                    ),
+                )
                 # For test sake we just mock the emit
                 await agent.emit(order_event)
                 t["executed"] += chunk_qty

@@ -74,7 +74,7 @@ class Settings(BaseSettings):
 
     timescaledb_enabled: bool = True
     risk_sizing_method: str = "fixed"  # "fixed" or "kelly"
-    vault_provider: str = ""           # "", "vault", or "aws"
+    vault_provider: str = ""  # "", "vault", or "aws"
     pagerduty_routing_key: str = ""
 
     portfolio_optimizer_regime: str = "risk_parity"
@@ -94,13 +94,13 @@ class Settings(BaseSettings):
     market_hours_only: bool = True
 
     @model_validator(mode="after")
-    def load_vault_secrets(self) -> 'Settings':
+    def load_vault_secrets(self) -> "Settings":
         if not self.vault_provider:
             return self
-            
+
         try:
             from src.utils.vault import load_secure_secret
-            
+
             sensitive_keys = [
                 ("kite_api_key", "TRA_KITE_API_KEY"),
                 ("kite_api_secret", "TRA_KITE_API_SECRET"),
@@ -119,15 +119,18 @@ class Settings(BaseSettings):
                 ("telegram_chat_id", "TRA_TELEGRAM_CHAT_ID"),
                 ("pagerduty_routing_key", "TRA_PAGERDUTY_ROUTING_KEY"),
             ]
-            
+
             for attr, env_name in sensitive_keys:
                 val = load_secure_secret(env_name)
                 if val:
                     setattr(self, attr, val)
         except Exception as e:
             import logging
-            logging.getLogger("config.settings").error("Failed to load secure secrets from vault: %s", e)
-            
+
+            logging.getLogger("config.settings").error(
+                "Failed to load secure secrets from vault: %s", e
+            )
+
         return self
 
 

@@ -96,7 +96,11 @@ async def _require_operator_auth(request: Request) -> None:
         )
 
     scheme, _, credential = request.headers.get("authorization", "").partition(" ")
-    if scheme.lower() != "bearer" or not credential or not secrets.compare_digest(credential, token):
+    if (
+        scheme.lower() != "bearer"
+        or not credential
+        or not secrets.compare_digest(credential, token)
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Unauthorized",
@@ -105,7 +109,10 @@ async def _require_operator_auth(request: Request) -> None:
 
 
 async def _json_body(request: Request) -> dict[str, Any]:
-    if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
+    if (
+        request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+        != "application/json"
+    ):
         return {}
     try:
         body = await request.json()
@@ -142,7 +149,9 @@ async def _health_payload() -> dict[str, Any]:
         },
         "reconciliation": {
             "available": exec_state["broker_available"],
-            "matched": health.get("portfolio_opt", {}).get("reconciliation_matched", True) if exec_state["broker_available"] else None,
+            "matched": health.get("portfolio_opt", {}).get("reconciliation_matched", True)
+            if exec_state["broker_available"]
+            else None,
             "broker": exec_state["broker_name"],
             "cash_delta": 0 if exec_state["broker_available"] else None,
             "portfolio_value_delta": 0 if exec_state["broker_available"] else None,
@@ -199,18 +208,20 @@ async def _build_paper_report(source: str = "paper") -> dict[str, Any]:
                     tick = _trading_system.market_intel._latest_ticks.get(symbol)
                     if tick:
                         current_price = tick.data.get("last_price", avg_cost)
-                
+
                 market_val = qty * current_price
                 unrealized_pnl = qty * (current_price - avg_cost)
-                positions.append({
-                    "symbol": symbol,
-                    "shares": qty,
-                    "avg_cost": avg_cost,
-                    "current_price": current_price,
-                    "market_value": market_val,
-                    "unrealized_pnl": unrealized_pnl,
-                    "weight": 0.0,
-                })
+                positions.append(
+                    {
+                        "symbol": symbol,
+                        "shares": qty,
+                        "avg_cost": avg_cost,
+                        "current_price": current_price,
+                        "market_value": market_val,
+                        "unrealized_pnl": unrealized_pnl,
+                        "weight": 0.0,
+                    }
+                )
 
     portfolio_value = cash + total_exposure
     if portfolio_value > peak_capital:
@@ -220,50 +231,60 @@ async def _build_paper_report(source: str = "paper") -> dict[str, Any]:
         if portfolio_value > 0:
             pos["weight"] = round((pos["market_value"] / portfolio_value) * 100, 2)
 
-    total_return_pct = round(((portfolio_value - initial_capital) / initial_capital) * 100, 2) if initial_capital > 0 else 0.0
+    total_return_pct = (
+        round(((portfolio_value - initial_capital) / initial_capital) * 100, 2)
+        if initial_capital > 0
+        else 0.0
+    )
 
     recent_orders = []
     recent_trades = []
     if exec_agent:
         for order_id, order in exec_agent._open_orders.items():
-            recent_orders.append({
-                "order_ref": order_id,
-                "symbol": order.data.get("instrument", ""),
-                "side": order.data.get("side", "").upper(),
-                "quantity": order.data.get("quantity", 0),
-                "status": order.data.get("status", ""),
-                "broker_order_id": order.data.get("broker_order_id"),
-                "strategy": "consensus",
-                "error_message": None,
-                "created_at": order.timestamp.isoformat(),
-            })
+            recent_orders.append(
+                {
+                    "order_ref": order_id,
+                    "symbol": order.data.get("instrument", ""),
+                    "side": order.data.get("side", "").upper(),
+                    "quantity": order.data.get("quantity", 0),
+                    "status": order.data.get("status", ""),
+                    "broker_order_id": order.data.get("broker_order_id"),
+                    "strategy": "consensus",
+                    "error_message": None,
+                    "created_at": order.timestamp.isoformat(),
+                }
+            )
 
         for inst, fills in exec_agent._filled_orders.items():
             for fill in fills:
-                recent_orders.append({
-                    "order_ref": fill.order_id,
-                    "symbol": fill.instrument,
-                    "side": fill.side.value.upper(),
-                    "quantity": fill.fill_quantity,
-                    "status": "filled",
-                    "broker_order_id": getattr(fill, "trade_id", None) or fill.event_id,
-                    "strategy": "consensus",
-                    "error_message": None,
-                    "created_at": fill.timestamp.isoformat(),
-                })
-                recent_trades.append({
-                    "symbol": fill.instrument,
-                    "action": fill.side.value.upper(),
-                    "shares": fill.fill_quantity,
-                    "price": fill.fill_price,
-                    "execution_price": fill.fill_price,
-                    "slippage": 0.0,
-                    "commission": 0.0,
-                    "strategy": "consensus",
-                    "pnl": 0.0,
-                    "timestamp": fill.timestamp.isoformat(),
-                })
-                
+                recent_orders.append(
+                    {
+                        "order_ref": fill.order_id,
+                        "symbol": fill.instrument,
+                        "side": fill.side.value.upper(),
+                        "quantity": fill.fill_quantity,
+                        "status": "filled",
+                        "broker_order_id": getattr(fill, "trade_id", None) or fill.event_id,
+                        "strategy": "consensus",
+                        "error_message": None,
+                        "created_at": fill.timestamp.isoformat(),
+                    }
+                )
+                recent_trades.append(
+                    {
+                        "symbol": fill.instrument,
+                        "action": fill.side.value.upper(),
+                        "shares": fill.fill_quantity,
+                        "price": fill.fill_price,
+                        "execution_price": fill.fill_price,
+                        "slippage": 0.0,
+                        "commission": 0.0,
+                        "strategy": "consensus",
+                        "pnl": 0.0,
+                        "timestamp": fill.timestamp.isoformat(),
+                    }
+                )
+
         if hasattr(exec_agent, "_twap_orders"):
             for twap_id, twap_state in exec_agent._twap_orders.items():
                 event = twap_state.get("event")
@@ -272,17 +293,19 @@ async def _build_paper_report(source: str = "paper") -> dict[str, Any]:
                     total = event.data.get("quantity", 0)
                     # Show ICEBERG or TWAP depending on execution strategy
                     exec_strat = event.data.get("execution_strategy", "TWAP").upper()
-                    recent_orders.append({
-                        "order_ref": twap_id,
-                        "symbol": event.data.get("instrument", ""),
-                        "side": event.data.get("side", "").upper(),
-                        "quantity": total,
-                        "status": f"{exec_strat} ({filled}/{total})",
-                        "broker_order_id": None,
-                        "strategy": "consensus",
-                        "error_message": None,
-                        "created_at": event.timestamp.isoformat()
-                    })
+                    recent_orders.append(
+                        {
+                            "order_ref": twap_id,
+                            "symbol": event.data.get("instrument", ""),
+                            "side": event.data.get("side", "").upper(),
+                            "quantity": total,
+                            "status": f"{exec_strat} ({filled}/{total})",
+                            "broker_order_id": None,
+                            "strategy": "consensus",
+                            "error_message": None,
+                            "created_at": event.timestamp.isoformat(),
+                        }
+                    )
 
     recent_orders = sorted(recent_orders, key=lambda x: x["created_at"], reverse=True)[:20]
     recent_trades = sorted(recent_trades, key=lambda x: x["timestamp"], reverse=True)[:20]
@@ -295,14 +318,19 @@ async def _build_paper_report(source: str = "paper") -> dict[str, Any]:
             win_rate = round((wins / total_t) * 100, 2)
 
     from src.risk.kill_switch import KillSwitch
+
     kill_switch_active = KillSwitch().active
     kill_switch_reason = KillSwitch().reason
     telemetry = _telemetry_summary(exec_state, metrics)
     warnings: list[str] = []
     if source == "live" and not telemetry["live_trading_configured"]:
-        warnings.append("Live broker telemetry unavailable; runtime is operating in simulated mode.")
+        warnings.append(
+            "Live broker telemetry unavailable; runtime is operating in simulated mode."
+        )
     if source == "live" and not telemetry["market_data_activity_detected"]:
-        warnings.append("No event activity observed in metrics snapshot; market data ingestion may be idle.")
+        warnings.append(
+            "No event activity observed in metrics snapshot; market data ingestion may be idle."
+        )
 
     return {
         "generated_at": now,
@@ -356,7 +384,9 @@ async def _build_paper_report(source: str = "paper") -> dict[str, Any]:
         },
         "reconciliation": {
             "available": exec_state["broker_available"],
-            "matched": health_data.get("portfolio_opt", {}).get("reconciliation_matched", True) if exec_state["broker_available"] else None,
+            "matched": health_data.get("portfolio_opt", {}).get("reconciliation_matched", True)
+            if exec_state["broker_available"]
+            else None,
             "broker": exec_state["broker_name"],
             "cash_delta": 0 if exec_state["broker_available"] else None,
             "portfolio_value_delta": 0 if exec_state["broker_available"] else None,
@@ -414,48 +444,65 @@ def create_app(system: Any = None, metrics: Any = None) -> FastAPI:
     async def api_validation_report():
         metrics = _metrics_collector.snapshot() if _metrics_collector else {}
         available = bool(metrics.get("total_events", 0)) and bool(metrics.get("orders_by_status"))
-        return JSONResponse({
-            "available": available,
-            "warning": None if available else "Validation report is placeholder-only because live production telemetry is unavailable.",
-            "summary": {
-                "total_return": None,
-                "annual_return": None,
-                "max_drawdown": None,
-                "sharpe_ratio": None,
-                "volatility": None,
-                "total_trades": metrics.get("total_events", 0),
-                "final_value": None,
-                "initial_capital": 1_000_000,
-                "benchmark_return": None,
-                "alpha": None,
-            },
-            "benchmark_comparison": {
-                "strategy_total_return_pct": None,
-                "benchmark_total_return_pct": None,
-                "alpha_pct": None,
-                "final_strategy_value": None,
-                "final_benchmark_value": None,
-            },
-            "trading_efficiency": {
-                "total_turnover": None,
-                "turnover_ratio": None,
-                "avg_trade_value": None,
-                "median_trade_value": None,
-                "total_slippage": None,
-                "total_commission": None,
-                "cost_drag_pct_of_initial": None,
-            },
-            "monthly_returns": [],
-            "strategy_participation": [],
-            "regime_breakdown": [],
-            "configuration": {
-                "benchmark": "^NSEI",
-                "symbols": ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK"],
-                "portfolio": {"method": "equal_weight", "initial_capital": 1_000_000, "max_positions": 10, "rebalance_frequency": "monthly"},
-                "risk_management": {"max_position_pct": 20, "max_sector_exposure_pct": 40, "max_drawdown_pct": 20, "drawdown_reduction": 0.5, "atr_volatility_multiple": 2, "stop_loss_pct": 5, "take_profit_pct": 15},
-                "strategies": {},
-            },
-        })
+        return JSONResponse(
+            {
+                "available": available,
+                "warning": None
+                if available
+                else "Validation report is placeholder-only because live production telemetry is unavailable.",
+                "summary": {
+                    "total_return": None,
+                    "annual_return": None,
+                    "max_drawdown": None,
+                    "sharpe_ratio": None,
+                    "volatility": None,
+                    "total_trades": metrics.get("total_events", 0),
+                    "final_value": None,
+                    "initial_capital": 1_000_000,
+                    "benchmark_return": None,
+                    "alpha": None,
+                },
+                "benchmark_comparison": {
+                    "strategy_total_return_pct": None,
+                    "benchmark_total_return_pct": None,
+                    "alpha_pct": None,
+                    "final_strategy_value": None,
+                    "final_benchmark_value": None,
+                },
+                "trading_efficiency": {
+                    "total_turnover": None,
+                    "turnover_ratio": None,
+                    "avg_trade_value": None,
+                    "median_trade_value": None,
+                    "total_slippage": None,
+                    "total_commission": None,
+                    "cost_drag_pct_of_initial": None,
+                },
+                "monthly_returns": [],
+                "strategy_participation": [],
+                "regime_breakdown": [],
+                "configuration": {
+                    "benchmark": "^NSEI",
+                    "symbols": ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK"],
+                    "portfolio": {
+                        "method": "equal_weight",
+                        "initial_capital": 1_000_000,
+                        "max_positions": 10,
+                        "rebalance_frequency": "monthly",
+                    },
+                    "risk_management": {
+                        "max_position_pct": 20,
+                        "max_sector_exposure_pct": 40,
+                        "max_drawdown_pct": 20,
+                        "drawdown_reduction": 0.5,
+                        "atr_volatility_multiple": 2,
+                        "stop_loss_pct": 5,
+                        "take_profit_pct": 15,
+                    },
+                    "strategies": {},
+                },
+            }
+        )
 
     @app.get("/api/output/analysis_results")
     async def api_analysis_results():
@@ -465,24 +512,30 @@ def create_app(system: Any = None, metrics: Any = None) -> FastAPI:
             latest_ticks = getattr(market_intel, "_latest_ticks", {})
             if isinstance(latest_ticks, dict):
                 market_symbols = sorted(latest_ticks.keys())
-        return JSONResponse({
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "market_data_symbols": market_symbols,
-            "features_computed": True,
-            "sentiment": {symbol: {"score": 0.3, "magnitude": 0.5} for symbol in market_symbols},
-            "fundamentals_internal": {},
-            "fundamentals_skill": {},
-        })
+        return JSONResponse(
+            {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "market_data_symbols": market_symbols,
+                "features_computed": True,
+                "sentiment": {
+                    symbol: {"score": 0.3, "magnitude": 0.5} for symbol in market_symbols
+                },
+                "fundamentals_internal": {},
+                "fundamentals_skill": {},
+            }
+        )
 
     @app.get("/api/output/experiment_report")
     async def api_experiment_report():
-        return JSONResponse({
-            "generated_at": datetime.now(timezone.utc).isoformat(),
-            "objective": {"name": "balanced_alpha", "formula": "sharpe * 100 - dd_penalty"},
-            "experiments_run": 0,
-            "successful_experiments": 0,
-            "ranking": [],
-        })
+        return JSONResponse(
+            {
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "objective": {"name": "balanced_alpha", "formula": "sharpe * 100 - dd_penalty"},
+                "experiments_run": 0,
+                "successful_experiments": 0,
+                "ranking": [],
+            }
+        )
 
     @app.get("/api/orders/pending")
     async def api_orders_pending():
@@ -490,14 +543,16 @@ def create_app(system: Any = None, metrics: Any = None) -> FastAPI:
         exec_agent = getattr(_trading_system, "execution", None)
         if exec_agent:
             for order_id, order in exec_agent._open_orders.items():
-                orders.append({
-                    "order_ref": order_id,
-                    "symbol": order.data.get("instrument", ""),
-                    "side": order.data.get("side", "").upper(),
-                    "quantity": order.data.get("quantity", 0),
-                    "status": order.data.get("status", ""),
-                    "created_at": order.timestamp.isoformat(),
-                })
+                orders.append(
+                    {
+                        "order_ref": order_id,
+                        "symbol": order.data.get("instrument", ""),
+                        "side": order.data.get("side", "").upper(),
+                        "quantity": order.data.get("quantity", 0),
+                        "status": order.data.get("status", ""),
+                        "created_at": order.timestamp.isoformat(),
+                    }
+                )
         orders.sort(key=lambda item: item["created_at"], reverse=True)
         return JSONResponse({"orders": orders, "total": len(orders)})
 
@@ -509,30 +564,34 @@ def create_app(system: Any = None, metrics: Any = None) -> FastAPI:
                 health = await _trading_system.health()
             except Exception:
                 pass
-        
+
         sg = health.get("strategy_gen", {})
         strategies = sg.get("strategies", ["momentum", "mean_reversion"])
-        
+
         # Get live weights from portfolio agent
         portfolio_agent = getattr(_trading_system, "portfolio_opt", None)
         strategy_weights = {}
         if portfolio_agent and hasattr(portfolio_agent, "get_strategy_weights"):
             strategy_weights = portfolio_agent.get_strategy_weights()
-            
+
         strategy_list = []
         for name in strategies:
             weight = strategy_weights.get(name, 1.0 / len(strategies) if strategies else 1.0)
-            strategy_list.append({
-                "name": name, 
-                "enabled": True, 
-                "configured_weight": weight, 
-                "runtime_weight": weight
-            })
-            
-        return JSONResponse({
-            "generated_at": datetime.now(timezone.utc).isoformat(),
-            "strategies": strategy_list,
-        })
+            strategy_list.append(
+                {
+                    "name": name,
+                    "enabled": True,
+                    "configured_weight": weight,
+                    "runtime_weight": weight,
+                }
+            )
+
+        return JSONResponse(
+            {
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "strategies": strategy_list,
+            }
+        )
 
     @app.get("/api/overview")
     @app.get("/api/control-plane/overview")
@@ -544,27 +603,51 @@ def create_app(system: Any = None, metrics: Any = None) -> FastAPI:
             except Exception:
                 pass
         agents_running, total, status = _agent_health_summary(health)
-        
+
         exec_agent = getattr(_trading_system, "execution", None)
         exec_state = _execution_runtime_state(exec_agent)
         metrics = _metrics_collector.snapshot() if _metrics_collector else {}
-        
+
         from src.risk.kill_switch import KillSwitch
+
         kill_switch_active = KillSwitch().active
 
-        return JSONResponse({
-            "broker": {"name": exec_state["broker_name"], "simulated": exec_state["simulated"], "allow_live_orders": exec_state["broker_available"]},
-            "controls": {"approvals_paused": False, "emergency_stop_active": kill_switch_active},
-            "health": {
-                "status": status,
-                "pending_orders": exec_state["pending_orders"],
-                "queue_total": 0,
-                "broker_health": {"available": exec_state["broker_available"], "status": exec_state["broker_name"]},
-                "reconciliation": {"available": exec_state["broker_available"], "matched": health.get("portfolio_opt", {}).get("reconciliation_matched", True) if exec_state["broker_available"] else None, "broker": exec_state["broker_name"]},
-            },
-            "telemetry": _telemetry_summary(exec_state, metrics),
-            "outputs": {"analysis_timestamp": datetime.now(timezone.utc).isoformat(), "validation_alpha_pct": 2.3},
-        })
+        return JSONResponse(
+            {
+                "broker": {
+                    "name": exec_state["broker_name"],
+                    "simulated": exec_state["simulated"],
+                    "allow_live_orders": exec_state["broker_available"],
+                },
+                "controls": {
+                    "approvals_paused": False,
+                    "emergency_stop_active": kill_switch_active,
+                },
+                "health": {
+                    "status": status,
+                    "pending_orders": exec_state["pending_orders"],
+                    "queue_total": 0,
+                    "broker_health": {
+                        "available": exec_state["broker_available"],
+                        "status": exec_state["broker_name"],
+                    },
+                    "reconciliation": {
+                        "available": exec_state["broker_available"],
+                        "matched": health.get("portfolio_opt", {}).get(
+                            "reconciliation_matched", True
+                        )
+                        if exec_state["broker_available"]
+                        else None,
+                        "broker": exec_state["broker_name"],
+                    },
+                },
+                "telemetry": _telemetry_summary(exec_state, metrics),
+                "outputs": {
+                    "analysis_timestamp": datetime.now(timezone.utc).isoformat(),
+                    "validation_alpha_pct": 2.3,
+                },
+            }
+        )
 
     @app.get("/health")
     @app.get("/api/health")
@@ -585,29 +668,49 @@ def create_app(system: Any = None, metrics: Any = None) -> FastAPI:
         return JSONResponse({"candidates": candidates})
 
     @app.post("/api/candidates/approve/{candidate_id}")
-    async def api_approve_candidate(candidate_id: str, _operator: None = Depends(_require_operator_auth)):
+    async def api_approve_candidate(
+        candidate_id: str, _operator: None = Depends(_require_operator_auth)
+    ):
         if _trading_system and hasattr(_trading_system, "reflection_engine"):
             re = _trading_system.reflection_engine
             success = await re.approve_candidate(candidate_id)
             if success:
-                return JSONResponse({"status": "ok", "message": f"Candidate {candidate_id} approved for live trading"})
-            return JSONResponse({"status": "error", "message": "Approval failed (check logs or candidate status)"}, status_code=400)
-        return JSONResponse({"status": "error", "message": "Reflection Engine not running"}, status_code=503)
+                return JSONResponse(
+                    {
+                        "status": "ok",
+                        "message": f"Candidate {candidate_id} approved for live trading",
+                    }
+                )
+            return JSONResponse(
+                {"status": "error", "message": "Approval failed (check logs or candidate status)"},
+                status_code=400,
+            )
+        return JSONResponse(
+            {"status": "error", "message": "Reflection Engine not running"}, status_code=503
+        )
 
     @app.post("/api/candidates/reject/{candidate_id}")
-    async def api_reject_candidate(candidate_id: str, _operator: None = Depends(_require_operator_auth)):
+    async def api_reject_candidate(
+        candidate_id: str, _operator: None = Depends(_require_operator_auth)
+    ):
         if _trading_system and hasattr(_trading_system, "reflection_engine"):
             re = _trading_system.reflection_engine
             success = await re.reject_candidate(candidate_id)
             if success:
-                return JSONResponse({"status": "ok", "message": f"Candidate {candidate_id} rejected"})
+                return JSONResponse(
+                    {"status": "ok", "message": f"Candidate {candidate_id} rejected"}
+                )
             return JSONResponse({"status": "error", "message": "Rejection failed"}, status_code=400)
-        return JSONResponse({"status": "error", "message": "Reflection Engine not running"}, status_code=503)
+        return JSONResponse(
+            {"status": "error", "message": "Reflection Engine not running"}, status_code=503
+        )
 
     @app.post("/api/control-plane/controls/emergency-stop")
     @app.post("/api/control-plane/controls/reset")
     @app.post("/api/kill-switch/reset")
-    async def api_control_action(request: Request, _operator: None = Depends(_require_operator_auth)):
+    async def api_control_action(
+        request: Request, _operator: None = Depends(_require_operator_auth)
+    ):
         path = request.url.path
         body = await _json_body(request)
         from src.risk.kill_switch import KillSwitch
@@ -620,11 +723,23 @@ def create_app(system: Any = None, metrics: Any = None) -> FastAPI:
                     status_code=409,
                 )
             kill_switch.reset(_trading_system)
-            return JSONResponse({"status": "ok", "message": "Kill switch reset successfully", "active": False})
+            return JSONResponse(
+                {"status": "ok", "message": "Kill switch reset successfully", "active": False}
+            )
 
-        reason = str(body.get("reason") or "dashboard emergency stop").strip() or "dashboard emergency stop"
+        reason = (
+            str(body.get("reason") or "dashboard emergency stop").strip()
+            or "dashboard emergency stop"
+        )
         await kill_switch.trigger(reason, _trading_system)
-        return JSONResponse({"status": "ok", "message": "Kill switch triggered", "active": kill_switch.active, "reason": kill_switch.reason})
+        return JSONResponse(
+            {
+                "status": "ok",
+                "message": "Kill switch triggered",
+                "active": kill_switch.active,
+                "reason": kill_switch.reason,
+            }
+        )
 
     @app.post("/api/control-plane/controls/approvals")
     async def api_approvals(request: Request, _operator: None = Depends(_require_operator_auth)):
@@ -636,21 +751,27 @@ def create_app(system: Any = None, metrics: Any = None) -> FastAPI:
         return JSONResponse({"status": "ok", "message": "Order action acknowledged"})
 
     @app.post("/api/trade/execute")
-    async def api_trade_execute(request: Request, _operator: None = Depends(_require_operator_auth)):
+    async def api_trade_execute(
+        request: Request, _operator: None = Depends(_require_operator_auth)
+    ):
         body = await _json_body(request)
         symbol = str(body.get("symbol", "")).strip().upper()
         side = str(body.get("side", "")).strip().upper()
-        return JSONResponse({
-            "status": "ok",
-            "message": f"{side} {symbol} queued for execution",
-            "order_ref": f"ORD-{int(time.time())}",
-        })
+        return JSONResponse(
+            {
+                "status": "ok",
+                "message": f"{side} {symbol} queued for execution",
+                "order_ref": f"ORD-{int(time.time())}",
+            }
+        )
 
     _dashboard_app = app
     return app
 
 
-def run_dashboard(system: Any = None, metrics: Any = None, host: str = "0.0.0.0", port: int = 8080) -> None:
+def run_dashboard(
+    system: Any = None, metrics: Any = None, host: str = "0.0.0.0", port: int = 8080
+) -> None:
     app = create_app(system, metrics)
     logger.info("Dashboard starting on http://%s:%d/control/", host, port)
     uvicorn.run(app, host=host, port=port, log_level="info")

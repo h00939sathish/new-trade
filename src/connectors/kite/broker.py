@@ -44,8 +44,12 @@ class KiteBroker:
         order_id = await asyncio.to_thread(self._client.place_order, **order_params)
         logger.info(
             "Order placed: %s %s %d %s @ %.2f (id=%s)",
-            side.value.upper(), tradingsymbol, quantity,
-            order_type.value.upper(), price or 0, order_id,
+            side.value.upper(),
+            tradingsymbol,
+            quantity,
+            order_type.value.upper(),
+            price or 0,
+            order_id,
         )
         return order_id
 
@@ -92,4 +96,3 @@ class KiteBroker:
 
     async def get_margins(self) -> dict[str, Any]:
         return await asyncio.to_thread(self._client.get_margins)
-

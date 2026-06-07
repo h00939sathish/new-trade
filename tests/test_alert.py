@@ -70,6 +70,7 @@ async def test_alert_on_system_error(agent: AlertAgent, notifier: CapturingNotif
 async def test_alert_on_fill(agent: AlertAgent, notifier: CapturingNotifier):
     await agent.start()
     import datetime
+
     event = FillEvent.create(
         order_id="ord_001",
         instrument="TCS",

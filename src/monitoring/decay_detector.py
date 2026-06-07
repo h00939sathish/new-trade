@@ -4,8 +4,11 @@ import numpy as np
 
 logger = logging.getLogger("monitoring.decay_detector")
 
+
 class PerformanceDecayDetector:
-    def __init__(self, system=None, rolling_window: int = 20, min_trades: int = 15, min_sharpe: float = 0.5):
+    def __init__(
+        self, system=None, rolling_window: int = 20, min_trades: int = 15, min_sharpe: float = 0.5
+    ):
         self.system = system
         self.rolling_window = rolling_window
         self.min_trades = min_trades
@@ -19,18 +22,25 @@ class PerformanceDecayDetector:
         self._strategy_pnls.setdefault(strategy_name, []).append(pnl)
         pnls = self._strategy_pnls[strategy_name]
 
-        logger.info("Decay Detector: Recorded trade for %s, PnL: %.2f. Total trades: %d", strategy_name, pnl, len(pnls))
+        logger.info(
+            "Decay Detector: Recorded trade for %s, PnL: %.2f. Total trades: %d",
+            strategy_name,
+            pnl,
+            len(pnls),
+        )
 
         if len(pnls) >= self.min_trades:
             # Calculate rolling Sharpe ratio on the trade PnLs
             # (mean trade PnL / std dev of trade PnL) * sqrt(252) as approximation
-            window_pnls = pnls[-self.rolling_window:]
+            window_pnls = pnls[-self.rolling_window :]
             mean_pnl = np.mean(window_pnls)
             std_pnl = np.std(window_pnls)
 
             rolling_sharpe = (mean_pnl / std_pnl) * np.sqrt(252) if std_pnl > 0.0 else 0.0
 
-            logger.info("Decay Detector: Strategy %s rolling Sharpe: %.3f", strategy_name, rolling_sharpe)
+            logger.info(
+                "Decay Detector: Strategy %s rolling Sharpe: %.3f", strategy_name, rolling_sharpe
+            )
 
             if rolling_sharpe < self.min_sharpe:
                 # Pass the trade count and current rolling window so the
@@ -39,10 +49,14 @@ class PerformanceDecayDetector:
                     strategy_name, rolling_sharpe, trades_evaluated=len(window_pnls)
                 )
 
-    def _disable_strategy(self, strategy_name: str, current_sharpe: float, trades_evaluated: int = 0) -> None:
+    def _disable_strategy(
+        self, strategy_name: str, current_sharpe: float, trades_evaluated: int = 0
+    ) -> None:
         logger.critical(
             "DECAY DETECTED: Strategy %s has degraded rolling Sharpe: %.3f < %.3f. Disabling strategy.",
-            strategy_name, current_sharpe, self.min_sharpe
+            strategy_name,
+            current_sharpe,
+            self.min_sharpe,
         )
         if self.system:
             # 1. Zero weight in strategy generator
@@ -50,11 +64,14 @@ class PerformanceDecayDetector:
                 sg = self.system.strategy_gen
                 if strategy_name in sg._strategy_weights:
                     sg._strategy_weights[strategy_name] = 0.0
-                    logger.warning("Decay Detector: Set %s weight to 0.0 in strategy_gen", strategy_name)
+                    logger.warning(
+                        "Decay Detector: Set %s weight to 0.0 in strategy_gen", strategy_name
+                    )
 
             # 2. Emit STRATEGY_DECAY event so alert agent can notify
             try:
                 from src.schemas.events import Event, EventMetadata, EventType
+
                 decay_event = Event(
                     event_type=EventType.STRATEGY_DECAY,
                     stream=f"strategy.decay.{strategy_name}",
@@ -69,6 +86,7 @@ class PerformanceDecayDetector:
                     metadata=EventMetadata(producer="decay_detector"),
                 )
                 import asyncio
+
                 if hasattr(self.system, "market_intel") and self.system.market_intel:
                     try:
                         loop = asyncio.get_running_loop()
@@ -76,7 +94,9 @@ class PerformanceDecayDetector:
                     except RuntimeError:
                         loop = asyncio.get_event_loop()
                         if loop.is_running():
-                            asyncio.run_coroutine_threadsafe(self.system.market_intel.emit(decay_event), loop)
+                            asyncio.run_coroutine_threadsafe(
+                                self.system.market_intel.emit(decay_event), loop
+                            )
                         else:
                             logger.error("No running event loop to emit decay event")
             except Exception as e:

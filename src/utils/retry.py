@@ -7,6 +7,7 @@ import httpx
 
 logger = logging.getLogger("utils.retry")
 
+
 async def with_retry(
     fn: Callable[[], Any],
     max_retries: int = 3,
@@ -25,9 +26,6 @@ async def with_retry(
             if attempt == max_retries - 1:
                 logger.error("All %d retries failed: %s", max_retries, e)
                 raise e
-            delay = min(base_delay * (2 ** attempt), max_delay)
-            logger.warning(
-                "Retry %d/%d after %.1fs due to: %s",
-                attempt + 1, max_retries, delay, e
-            )
+            delay = min(base_delay * (2**attempt), max_delay)
+            logger.warning("Retry %d/%d after %.1fs due to: %s", attempt + 1, max_retries, delay, e)
             await asyncio.sleep(delay)

@@ -39,20 +39,14 @@ async def test_kill_switch_mechanism():
 
     # 1. Test safe limits
     triggered = await ks.check_limits(
-        current_capital=100000.0,
-        current_pnl=-1000.0,
-        peak_capital=100000.0,
-        system=mock_system
+        current_capital=100000.0, current_pnl=-1000.0, peak_capital=100000.0, system=mock_system
     )
     assert not triggered
     assert not ks.active
 
     # 2. Test daily loss limit breach (-6000 PnL)
     triggered = await ks.check_limits(
-        current_capital=94000.0,
-        current_pnl=-6000.0,
-        peak_capital=100000.0,
-        system=mock_system
+        current_capital=94000.0, current_pnl=-6000.0, peak_capital=100000.0, system=mock_system
     )
     assert triggered
     assert ks.active
@@ -69,8 +63,9 @@ async def test_kill_switch_mechanism():
         side=OrderSide.SELL,
         order_type=OrderType.MARKET,
         quantity=10,
-        product=ProductType.MIS
+        product=ProductType.MIS,
     )
+
 
 @pytest.mark.asyncio
 async def test_position_reconciliation():
@@ -82,7 +77,7 @@ async def test_position_reconciliation():
     mock_execution._broker = mock_broker
     mock_portfolio._positions = {
         "RELIANCE": {"quantity": 5, "avg_cost": 100.0},
-        "TCS": {"quantity": 0, "avg_cost": 0.0}
+        "TCS": {"quantity": 0, "avg_cost": 0.0},
     }
     mock_portfolio.emit = AsyncMock()
     mock_portfolio._emit_portfolio_update = AsyncMock()
@@ -95,9 +90,7 @@ async def test_position_reconciliation():
     mock_system.portfolio_opt = mock_portfolio
 
     # Broker returns RELIANCE has 10 (mismatch)
-    mock_broker.get_positions.return_value = [
-        {"tradingsymbol": "RELIANCE", "quantity": 10}
-    ]
+    mock_broker.get_positions.return_value = [{"tradingsymbol": "RELIANCE", "quantity": 10}]
 
     await reconcile_positions(mock_system)
 
@@ -109,6 +102,7 @@ async def test_position_reconciliation():
     assert called_event.event_type == EventType.RISK_BREACH
     assert called_event.data["passed"] is False
     assert called_event.data["check_name"] == "position_reconciliation"
+
 
 @pytest.mark.asyncio
 async def test_retry_helper():
@@ -128,6 +122,7 @@ async def test_retry_helper():
 
     # Should fail after max retries
     call_count_2 = 0
+
     async def always_fail():
         nonlocal call_count_2
         call_count_2 += 1

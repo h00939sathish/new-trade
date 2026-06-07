@@ -35,9 +35,11 @@ logger = logging.getLogger("risk.portfolio_optimizer")
 # Result container
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class OptimizationResult:
     """Output of a portfolio optimisation run."""
+
     weights: dict[str, float]
     regime_used: str
     expected_return: float = 0.0
@@ -51,6 +53,7 @@ class OptimizationResult:
 # ---------------------------------------------------------------------------
 # Ledoit-Wolf shrinkage (simplified analytical estimator)
 # ---------------------------------------------------------------------------
+
 
 def _ledoit_wolf_shrinkage(returns: np.ndarray) -> tuple[np.ndarray, float]:
     """
@@ -84,15 +87,15 @@ def _ledoit_wolf_shrinkage(returns: np.ndarray) -> tuple[np.ndarray, float]:
 
     # Compute the squared Frobenius norm of S - target
     delta = S - target
-    sum_sq_delta = np.sum(delta ** 2)
+    sum_sq_delta = np.sum(delta**2)
 
     # Estimate the sum of variances of sample covariance entries
     sum_sq_pi = 0.0
     for t in range(T):
-        x_t = X[t:t+1, :]  # (1, N)
+        x_t = X[t : t + 1, :]  # (1, N)
         m_t = x_t.T @ x_t - S
-        sum_sq_pi += np.sum(m_t ** 2)
-    sum_sq_pi /= T ** 2
+        sum_sq_pi += np.sum(m_t**2)
+    sum_sq_pi /= T**2
 
     # Optimal shrinkage intensity (clamped to [0, 1])
     if sum_sq_delta == 0:
@@ -107,6 +110,7 @@ def _ledoit_wolf_shrinkage(returns: np.ndarray) -> tuple[np.ndarray, float]:
 # ---------------------------------------------------------------------------
 # Core optimizer
 # ---------------------------------------------------------------------------
+
 
 class InstitutionalPortfolioOptimizer:
     """
@@ -125,7 +129,9 @@ class InstitutionalPortfolioOptimizer:
 
     def __init__(
         self,
-        regime: Literal["risk_parity", "min_variance", "max_sharpe", "equal_weight"] = "risk_parity",
+        regime: Literal[
+            "risk_parity", "min_variance", "max_sharpe", "equal_weight"
+        ] = "risk_parity",
         min_weight: float = 0.05,
         max_weight: float = 0.40,
         risk_free_rate: float = 0.06,
@@ -175,7 +181,8 @@ class InstitutionalPortfolioOptimizer:
         if min_len < self.min_history:
             logger.warning(
                 "Insufficient history (%d < %d) — falling back to equal weight",
-                min_len, self.min_history,
+                min_len,
+                self.min_history,
             )
             eq = 1.0 / n
             return OptimizationResult(
@@ -184,9 +191,7 @@ class InstitutionalPortfolioOptimizer:
             )
 
         # Build (T, N) returns matrix
-        returns_matrix = np.column_stack([
-            strategy_returns[name][-min_len:] for name in names
-        ])
+        returns_matrix = np.column_stack([strategy_returns[name][-min_len:] for name in names])
 
         # Shrunk covariance
         cov, shrinkage = _ledoit_wolf_shrinkage(returns_matrix)

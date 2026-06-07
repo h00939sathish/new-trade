@@ -386,7 +386,9 @@ class HttpDashboard:
 
     async def start(self) -> None:
         self._server = await asyncio.start_server(
-            self._handle_connection, self._host, self._port,
+            self._handle_connection,
+            self._host,
+            self._port,
         )
         logger.info("Dashboard listening on http://%s:%d", self._host, self._port)
 
@@ -433,30 +435,38 @@ class HttpDashboard:
                 filled_orders = []
                 if exec_agent:
                     for k, v in exec_agent._open_orders.items():
-                        open_orders.append({
-                            "id": k,
-                            "symbol": v.instrument,
-                            "side": v.side.value if hasattr(v.side, "value") else str(v.side),
-                            "qty": v.quantity,
-                            "price": v.data.get("price", 0),
-                            "status": v.status.value if hasattr(v.status, "value") else str(v.status),
-                            "correlation_id": v.metadata.correlation_id,
-                            "timestamp": v.timestamp.isoformat()
-                        })
-                    for k, v_list in exec_agent._filled_orders.items():
-                        for v in v_list:
-                            filled_orders.append({
-                                "id": v.order_id,
+                        open_orders.append(
+                            {
+                                "id": k,
                                 "symbol": v.instrument,
                                 "side": v.side.value if hasattr(v.side, "value") else str(v.side),
-                                "qty": v.fill_quantity,
-                                "price": v.fill_price,
-                                "commission": getattr(v, "commission", 0.0) or 0.0,
-                                "slippage_bps": getattr(v, "slippage_bps", 0.0) or 0.0,
-                                "strategy": v.strategy or "unknown",
-                                "timestamp": v.timestamp.isoformat()
-                            })
-                
+                                "qty": v.quantity,
+                                "price": v.data.get("price", 0),
+                                "status": v.status.value
+                                if hasattr(v.status, "value")
+                                else str(v.status),
+                                "correlation_id": v.metadata.correlation_id,
+                                "timestamp": v.timestamp.isoformat(),
+                            }
+                        )
+                    for k, v_list in exec_agent._filled_orders.items():
+                        for v in v_list:
+                            filled_orders.append(
+                                {
+                                    "id": v.order_id,
+                                    "symbol": v.instrument,
+                                    "side": v.side.value
+                                    if hasattr(v.side, "value")
+                                    else str(v.side),
+                                    "qty": v.fill_quantity,
+                                    "price": v.fill_price,
+                                    "commission": getattr(v, "commission", 0.0) or 0.0,
+                                    "slippage_bps": getattr(v, "slippage_bps", 0.0) or 0.0,
+                                    "strategy": v.strategy or "unknown",
+                                    "timestamp": v.timestamp.isoformat(),
+                                }
+                            )
+
                 slippage_stats = {}
                 for f in filled_orders:
                     key = f"{f['symbol']} | {f['strategy']}"
@@ -464,12 +474,16 @@ class HttpDashboard:
                         slippage_stats[key] = {"count": 0, "total_bps": 0}
                     slippage_stats[key]["count"] += 1
                     slippage_stats[key]["total_bps"] += f["slippage_bps"]
-                
-                body = json.dumps({
-                    "open": open_orders,
-                    "filled": filled_orders,
-                    "slippage": {k: v["total_bps"]/v["count"] for k, v in slippage_stats.items()}
-                }).encode()
+
+                body = json.dumps(
+                    {
+                        "open": open_orders,
+                        "filled": filled_orders,
+                        "slippage": {
+                            k: v["total_bps"] / v["count"] for k, v in slippage_stats.items()
+                        },
+                    }
+                ).encode()
                 ct = "application/json"
                 status = "200 OK"
             else:

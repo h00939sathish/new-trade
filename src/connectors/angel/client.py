@@ -36,6 +36,7 @@ class AngelClient:
         symbol_index: AngelSymbolIndex | None = None,
     ):
         from src.config.settings import settings as _s
+
         self._api_key = api_key if api_key is not None else _s.angel_api_key
         self._client_id = client_id if client_id is not None else _s.angel_client_id
         self._password = password if password is not None else _s.angel_password
@@ -53,9 +54,14 @@ class AngelClient:
 
     async def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
         from src.utils.retry import with_retry
+
         async def make_call():
             return await self._http.request(method, url, **kwargs)
-        return await with_retry(make_call, exceptions=(httpx.HTTPError, httpx.TimeoutException, ConnectionError, OSError))
+
+        return await with_retry(
+            make_call,
+            exceptions=(httpx.HTTPError, httpx.TimeoutException, ConnectionError, OSError),
+        )
 
     @property
     def is_connected(self) -> bool:
@@ -221,14 +227,16 @@ class AngelClient:
         candles = []
         for item in raw:
             if isinstance(item, list) and len(item) >= 6:
-                candles.append({
-                    "timestamp": item[0],
-                    "open": float(item[1]),
-                    "high": float(item[2]),
-                    "low": float(item[3]),
-                    "close": float(item[4]),
-                    "volume": int(item[5]),
-                })
+                candles.append(
+                    {
+                        "timestamp": item[0],
+                        "open": float(item[1]),
+                        "high": float(item[2]),
+                        "low": float(item[3]),
+                        "close": float(item[4]),
+                        "volume": int(item[5]),
+                    }
+                )
         return candles
 
     async def _resolve_token(self, tradingsymbol: str, exchange: str) -> str | None:
@@ -288,6 +296,7 @@ class AngelClient:
             return AngelClient._public_ip
         try:
             import httpx
+
             resp = httpx.get("https://ifconfig.me/ip", timeout=5)
             AngelClient._public_ip = resp.text.strip()
         except Exception:

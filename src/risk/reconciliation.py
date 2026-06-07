@@ -4,6 +4,7 @@ from src.schemas.events import RiskCheckEvent
 
 logger = logging.getLogger("risk.reconciliation")
 
+
 async def reconcile_positions(system) -> bool:
     """Compare broker positions against local portfolio agent tracked positions.
 
@@ -65,12 +66,8 @@ async def reconcile_positions(system) -> bool:
                 check_name="position_reconciliation",
                 passed=False,
                 instrument=symbol,
-                details={
-                    "broker_qty": b_qty,
-                    "local_qty": l_qty,
-                    "mismatch": b_qty - l_qty
-                },
-                producer="reconciliation"
+                details={"broker_qty": b_qty, "local_qty": l_qty, "mismatch": b_qty - l_qty},
+                producer="reconciliation",
             )
             await portfolio_agent.emit(breach_event)
 
@@ -88,8 +85,9 @@ async def reconcile_positions(system) -> bool:
 
             # Emit portfolio update to sync with execution and other agents
             await portfolio_agent._emit_portfolio_update(symbol, "buy" if b_qty > 0 else "sell")
-            
+
         from src.risk.position_registry import position_registry
+
         await position_registry.sync_from_portfolio(portfolio_agent._positions)
         return False
     else:

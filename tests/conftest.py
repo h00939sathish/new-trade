@@ -15,6 +15,7 @@ def pytest_sessionstart():
         shm.unlink()
 
     import shutil
+
     cache_dir = Path("data/historical")
     if cache_dir.exists():
         try:

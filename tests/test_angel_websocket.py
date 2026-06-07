@@ -145,15 +145,17 @@ async def test_websocket_normalizes_ltp_tick_from_parsed_sdk_message():
         mode=AngelWebSocketMode.LTP,
     )
 
-    await client.handle_message({
-        "subscription_mode": 1,
-        "exchange_type": 1,
-        "token": "2885",
-        "sequence_number": 42,
-        "exchange_timestamp": 1716537600000,
-        "last_traded_price": 248025,
-        "volume_trade_for_the_day": 1200,
-    })
+    await client.handle_message(
+        {
+            "subscription_mode": 1,
+            "exchange_type": 1,
+            "token": "2885",
+            "sequence_number": 42,
+            "exchange_timestamp": 1716537600000,
+            "last_traded_price": 248025,
+            "volume_trade_for_the_day": 1200,
+        }
+    )
 
     assert ticks == [
         {
@@ -290,10 +292,12 @@ async def test_market_data_provider_falls_back_to_polling_after_websocket_discon
         client=FakeAngelClient(),
         websocket_factory=lambda **kwargs: AngelWebSocketClient(
             **kwargs,
-            session_factory=lambda _url, _headers, _on_message, on_disconnect=None: _capture_session(
-                captured,
-                session,
-                on_disconnect,
+            session_factory=lambda _url, _headers, _on_message, on_disconnect=None: (
+                _capture_session(
+                    captured,
+                    session,
+                    on_disconnect,
+                )
             ),
         ),
     )
@@ -315,10 +319,12 @@ async def test_market_data_provider_falls_back_to_polling_after_websocket_discon
 
 
 def test_websocket_app_headers_are_serialized_as_header_lines():
-    assert _header_lines({
-        "Authorization": "jwt-token",
-        "x-api-key": "api-key",
-    }) == [
+    assert _header_lines(
+        {
+            "Authorization": "jwt-token",
+            "x-api-key": "api-key",
+        }
+    ) == [
         "Authorization: jwt-token",
         "x-api-key: api-key",
     ]

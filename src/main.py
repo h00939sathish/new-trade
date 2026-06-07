@@ -33,7 +33,9 @@ async def metrics_http_server(
     port: int = 8080,
 ):
     handler = await asyncio.start_server(
-        lambda r, w: _handle_metrics_request(r, w, health_fn, system), host, port,
+        lambda r, w: _handle_metrics_request(r, w, health_fn, system),
+        host,
+        port,
     )
     logger.info("Metrics server listening on %s:%d", host, port)
     async with handler:
@@ -103,6 +105,7 @@ async def _handle_metrics_request(
         status = "200 OK"
     elif path == "/api/kill-switch/reset" and request_line.startswith("POST"):
         from src.risk.kill_switch import KillSwitch
+
         KillSwitch().reset(system=system)
         body = b'{"status": "ok", "message": "Kill switch reset"}'
         ct = "application/json"
@@ -146,7 +149,9 @@ async def main():
 
         dashboard_port = int(os.getenv("PORT") or os.getenv("TRA_DASHBOARD_PORT", "8081"))
         dashboard_task = asyncio.create_task(
-            asyncio.to_thread(run_dashboard, system, system_metrics, host="0.0.0.0", port=dashboard_port),
+            asyncio.to_thread(
+                run_dashboard, system, system_metrics, host="0.0.0.0", port=dashboard_port
+            ),
         )
         logger.info("FastAPI dashboard starting on port %d", dashboard_port)
 
@@ -170,9 +175,7 @@ async def main():
     # The 1800s default from before was too sparse to catch drift quickly.
     burnin_task = None
     paper_mode = getattr(system.execution, "_paper_trading", True)
-    burnin_enabled = (
-        os.getenv("TRA_BURNIN", "1" if paper_mode else "0") == "1"
-    )
+    burnin_enabled = os.getenv("TRA_BURNIN", "1" if paper_mode else "0") == "1"
     if burnin_enabled:
         from src.monitoring.burnin import run_paper_reconciliation_loop
 
@@ -191,7 +194,8 @@ async def main():
         )
         logger.info(
             "Paper burn-in reconciliation enabled (interval=%.0fs, paper=%s)",
-            reconciliation_interval, paper_mode,
+            reconciliation_interval,
+            paper_mode,
         )
 
     loop = asyncio.get_event_loop()

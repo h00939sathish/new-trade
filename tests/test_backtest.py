@@ -24,7 +24,12 @@ async def test_backtest_with_momentum_strategy():
         initial_capital=100_000.0,
     )
     ticks = [
-        {"instrument": "TEST", "price": 100.0 + i * 0.5, "volume": 1000, "timestamp": _BASE_TIME + timedelta(seconds=i)}
+        {
+            "instrument": "TEST",
+            "price": 100.0 + i * 0.5,
+            "volume": 1000,
+            "timestamp": _BASE_TIME + timedelta(seconds=i),
+        }
         for i in range(30)
     ]
     result = await engine.run(ticks)
@@ -39,7 +44,12 @@ async def test_backtest_sharpe_ratio():
     strategy = MomentumStrategy(short_window=3, long_window=10, threshold=0.02)
     engine = BacktestEngine(strategies=[strategy], initial_capital=100_000.0)
     ticks = [
-        {"instrument": "TEST", "price": 100.0 + (i % 5) * 2.0, "volume": 1000, "timestamp": _BASE_TIME + timedelta(seconds=i)}
+        {
+            "instrument": "TEST",
+            "price": 100.0 + (i % 5) * 2.0,
+            "volume": 1000,
+            "timestamp": _BASE_TIME + timedelta(seconds=i),
+        }
         for i in range(50)
     ]
     result = await engine.run(ticks)
@@ -52,7 +62,12 @@ async def test_backtest_equity_curve():
     strategy = MomentumStrategy(short_window=3, long_window=10, threshold=0.005)
     engine = BacktestEngine(strategies=[strategy], initial_capital=100_000.0)
     ticks = [
-        {"instrument": "TEST", "price": 100.0 + i * 2.0, "volume": 1000, "timestamp": _BASE_TIME + timedelta(seconds=i)}
+        {
+            "instrument": "TEST",
+            "price": 100.0 + i * 2.0,
+            "volume": 1000,
+            "timestamp": _BASE_TIME + timedelta(seconds=i),
+        }
         for i in range(30)
     ]
     result = await engine.run(ticks)
@@ -67,7 +82,7 @@ async def test_backtest_engine_trade_math():
     engine = BacktestEngine(
         initial_capital=100_000.0,
         commission_pct=0.001,  # 0.1% commission
-        slippage_bps=10.0,     # 10 bps slippage (0.1%)
+        slippage_bps=10.0,  # 10 bps slippage (0.1%)
     )
 
     # 1. Test Buy Fill calculation with commission and slippage (Bug 4)

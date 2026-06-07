@@ -10,6 +10,7 @@ class StatArbStrategy(Strategy):
     Statistical Arbitrage (Pairs Trading) Strategy using Z-Score of the spread.
     This strategy is designed to work with two highly correlated assets.
     """
+
     def __init__(
         self,
         primary_symbol: str = "TCS",
@@ -40,16 +41,16 @@ class StatArbStrategy(Strategy):
         # We need both prices to compute the spread.
         # This strategy tracks prices internally for both symbols.
         if instrument == self.primary_symbol:
-            self._primary_prices = prices[-self.window:]
+            self._primary_prices = prices[-self.window :]
         elif instrument == self.secondary_symbol:
-            self._secondary_prices = prices[-self.window:]
+            self._secondary_prices = prices[-self.window :]
 
         if len(self._primary_prices) < self.window or len(self._secondary_prices) < self.window:
             return None
 
         # Calculate Spread: Primary - Secondary (assuming 1:1 ratio for simplicity)
-        primary_arr = np.array(self._primary_prices[-self.window:])
-        secondary_arr = np.array(self._secondary_prices[-self.window:])
+        primary_arr = np.array(self._primary_prices[-self.window :])
+        secondary_arr = np.array(self._secondary_prices[-self.window :])
         spread = primary_arr - secondary_arr
 
         mean = np.mean(spread)

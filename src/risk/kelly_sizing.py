@@ -8,7 +8,7 @@ logger = logging.getLogger("risk.kelly_sizing")
 
 class KellySizer:
     """Fractional Kelly position sizer.
-    
+
     Dynamically computes win rate (p) and average win/loss ratio (b)
     from historical trades database and returns the Kelly sizing factor.
     """
@@ -30,7 +30,7 @@ class KellySizer:
         default_b: float = 1.5,
     ) -> tuple[float, float]:
         """Calculate win rate (p) and win/loss ratio (b) for a strategy from orders/fills DB.
-        
+
         Falls back to defaults if there is insufficient history (< 5 completed trades).
         """
         if not self.db_path.exists():
@@ -63,11 +63,13 @@ class KellySizer:
             instrument_fills: dict[str, list[dict[str, Any]]] = {}
             for row in rows:
                 inst = row["instrument"]
-                instrument_fills.setdefault(inst, []).append({
-                    "side": row["side"].lower(),
-                    "price": float(row["fill_price"]),
-                    "qty": int(row["fill_quantity"]),
-                })
+                instrument_fills.setdefault(inst, []).append(
+                    {
+                        "side": row["side"].lower(),
+                        "price": float(row["fill_price"]),
+                        "qty": int(row["fill_quantity"]),
+                    }
+                )
 
             trades_pnl: list[float] = []
             for inst, fills in instrument_fills.items():
@@ -138,6 +140,11 @@ class KellySizer:
         multiplier = self.fractional_kelly * f_star
         logger.info(
             "Kelly sizing for strategy %s: p=%.2f, b=%.2f, f*=%.2f, multiplier=%.2f (fractional=%.2f)",
-            strategy, p, b, f_star, multiplier, self.fractional_kelly,
+            strategy,
+            p,
+            b,
+            f_star,
+            multiplier,
+            self.fractional_kelly,
         )
         return multiplier

@@ -30,8 +30,9 @@ async def test_angel_client_search_no_data(angel_client: AngelClient):
 @pytest.mark.asyncio
 async def test_angel_client_get_ltp_no_key():
     import pytest
+
     from src.connectors.angel.client import AngelClientError
-    
+
     client = AngelClient(api_key="", client_id="", password="", totp="")
     with pytest.raises((AngelClientError, Exception)):
         await client.get_ltp(["NSE:RELIANCE"])
@@ -64,6 +65,7 @@ async def test_angel_client_handle_response_error():
 @pytest.mark.asyncio
 async def test_angel_historical_intervals():
     from src.connectors.angel.client import HISTORICAL_INTERVALS
+
     assert HISTORICAL_INTERVALS["minute"] == "ONE_MINUTE"
     assert HISTORICAL_INTERVALS["day"] == "ONE_DAY"
     assert HISTORICAL_INTERVALS["hour"] == "ONE_HOUR"

@@ -1,4 +1,5 @@
 import asyncio
+
 import pytest
 
 from src.agents.execution import ExecutionAgent
@@ -42,7 +43,9 @@ async def test_market_intel_start_stop(market_intel: MarketIntelAgent):
 @pytest.mark.asyncio
 async def test_market_intel_ingest_tick(market_intel: MarketIntelAgent):
     await market_intel.start()
-    await market_intel.ingest_tick("RELIANCE", Exchange.NSE, 2500.0, volume=1000, bid=2499, ask=2501)
+    await market_intel.ingest_tick(
+        "RELIANCE", Exchange.NSE, 2500.0, volume=1000, bid=2499, ask=2501
+    )
     latest = market_intel.get_latest_tick("RELIANCE")
     assert latest is not None
     assert latest.data["last_price"] == 2500.0
@@ -135,6 +138,7 @@ async def test_execution_start_stop(execution: ExecutionAgent):
 async def test_execution_place_and_cancel(execution: ExecutionAgent):
     await execution.start()
     from src.schemas.events import OrderSide, OrderType, ProductType
+
     order = await execution.place_order(
         instrument="RELIANCE",
         side=OrderSide.BUY,
@@ -153,6 +157,7 @@ async def test_execution_place_and_cancel(execution: ExecutionAgent):
 async def test_execution_paper_trading(execution: ExecutionAgent):
     await execution.start()
     from src.schemas.events import OrderSide, OrderType, ProductType
+
     await execution.place_order(
         instrument="RELIANCE",
         side=OrderSide.BUY,
@@ -176,7 +181,8 @@ async def test_agent_emits_periodic_health_heartbeats(monkeypatch):
 
     events = await store.read("events.bus")
     health_events = [
-        event for event in events
+        event
+        for event in events
         if event.event_type.value == "system.health"
         and event.data.get("component") == "market_intel"
     ]

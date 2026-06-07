@@ -4,14 +4,13 @@ from datetime import UTC, datetime
 from typing import Any
 
 from src.agents.base import BaseAgent
+from src.monitoring.latency_tracer import tracer
 from src.risk.position_registry import position_registry
 from src.schemas.events import Event, EventType, Exchange, SignalEvent
 from src.strategies.base import Strategy
 from src.strategies.opening_range_breakout import OpeningRangeBreakoutStrategy
 from src.strategies.sideways_reversion import SidewaysReversionStrategy
-from src.strategies.technical import MeanReversionStrategy, MomentumStrategy
 from src.strategies.volatility_compression import VolatilityCompressionStrategy
-from src.monitoring.latency_tracer import tracer
 
 __all__ = [
     "OpeningRangeBreakoutStrategy",
@@ -24,9 +23,6 @@ __all__ = [
 # Minimum seconds between signals for the same instrument (prevents overtrading)
 _SIGNAL_COOLDOWN_SECONDS = 30.0
 
-
-from src.config.settings import Settings
-from src.core.regime.ema200_filter import EMA200Filter
 
 class StrategyGenAgent(BaseAgent):
     def __init__(self, event_store=None, config_path: str | None = None):
@@ -54,10 +50,13 @@ class StrategyGenAgent(BaseAgent):
         self._regime_changes: list[float] = []
         self._regime_instability_active = False
         # Daily candle aggregation from minute data (for TSMOM and other daily strategies)
-        self._daily_ohlcv: dict[str, dict] = {}  # {instrument: {date, open, high, low, close, volume}}
+        self._daily_ohlcv: dict[
+            str, dict
+        ] = {}  # {instrument: {date, open, high, low, close, volume}}
         if self._config_path:
             try:
                 from src.config.settings import settings
+
                 self.threshold = settings.consensus_threshold
                 self.short_threshold = settings.consensus_short_threshold
                 self._signal_cooldown_seconds = settings.signal_cooldown_seconds
@@ -115,7 +114,9 @@ class StrategyGenAgent(BaseAgent):
         # Debounce: if > 3 changes in 10 minutes, activate instability mode
         if len(self._regime_changes) > 3:
             if not self._regime_instability_active:
-                self.logger.warning("Regime instability detected (>3 changes in 10m). Flattening weights and suppressing entries.")
+                self.logger.warning(
+                    "Regime instability detected (>3 changes in 10m). Flattening weights and suppressing entries."
+                )
                 self._regime_instability_active = True
         else:
             if self._regime_instability_active:
@@ -142,16 +143,20 @@ class StrategyGenAgent(BaseAgent):
         # Default multiplier is 1.0 (no change). A strategy's effective weight
         # is its base weight * multiplier, then the whole vector is renormalized.
         _MULTIPLIERS = {
-            "trending_up":    {"trend": 1.35, "breakout": 1.10, "reversion": 0.65},
-            "trending_down":  {"trend": 1.10, "breakout": 0.95, "reversion": 0.85},
+            "trending_up": {"trend": 1.35, "breakout": 1.10, "reversion": 0.65},
+            "trending_down": {"trend": 1.10, "breakout": 0.95, "reversion": 0.85},
             "mean_reverting": {"trend": 0.70, "breakout": 0.80, "reversion": 1.40},
             "high_volatility": {"trend": 0.55, "breakout": 1.15, "reversion": 0.50},
         }
         _GROUP_OF = {}
-        for n in _TREND_STRATEGIES:    _GROUP_OF[n] = "trend"
-        for n in _BREAKOUT_STRATEGIES: _GROUP_OF[n] = "breakout"
-        for n in _REVERSION_STRATEGIES: _GROUP_OF[n] = "reversion"
-        for n in _FILTER_STRATEGIES:   _GROUP_OF[n] = "filter"
+        for n in _TREND_STRATEGIES:
+            _GROUP_OF[n] = "trend"
+        for n in _BREAKOUT_STRATEGIES:
+            _GROUP_OF[n] = "breakout"
+        for n in _REVERSION_STRATEGIES:
+            _GROUP_OF[n] = "reversion"
+        for n in _FILTER_STRATEGIES:
+            _GROUP_OF[n] = "filter"
 
         if self._regime_instability_active:
             # Flat equal weights during choppy regime oscillation
@@ -180,9 +185,9 @@ class StrategyGenAgent(BaseAgent):
     async def _process_fill(self, event: Event) -> None:
         data = event.data
         instrument = data.get("instrument", "")
-        side = data.get("side", "")
-        fill_qty = data.get("fill_quantity", 0)
-        fill_price = data.get("fill_price", 0.0)
+        data.get("side", "")
+        data.get("fill_quantity", 0)
+        data.get("fill_price", 0.0)
         if not instrument:
             return
 
@@ -210,15 +215,24 @@ class StrategyGenAgent(BaseAgent):
                 tp = avg_price * (1.0 - tp_pct)
 
             await position_registry.set_sl_tp(
-                instrument, stop_loss=sl, take_profit=tp,
-                stop_loss_pct=sl_pct, take_profit_pct=tp_pct,
+                instrument,
+                stop_loss=sl,
+                take_profit=tp,
+                stop_loss_pct=sl_pct,
+                take_profit_pct=tp_pct,
             )
             self.logger.info(
                 "Position updated for %s: qty=%d, avg_price=%.2f, SL=%.2f, TP=%.2f",
-                instrument, new_qty, avg_price, sl, tp,
+                instrument,
+                new_qty,
+                avg_price,
+                sl,
+                tp,
             )
 
-    async def _check_sl_tp(self, instrument: str, current_price: float, timestamp: datetime, exchange: Exchange) -> None:
+    async def _check_sl_tp(
+        self, instrument: str, current_price: float, timestamp: datetime, exchange: Exchange
+    ) -> None:
         pos = position_registry.get_position(instrument)
         if pos["quantity"] == 0:
             return
@@ -231,11 +245,25 @@ class StrategyGenAgent(BaseAgent):
                     await position_registry.update_trailing_sl(instrument, new_sl)
                     self.logger.debug("Trailing SL updated for %s: %.2f", instrument, new_sl)
             if current_price <= pos["stop_loss"]:
-                self.logger.warning("STOP LOSS hit for %s long at %.2f (SL: %.2f) — emitting exit signal", instrument, current_price, pos["stop_loss"])
-                await self._emit_exit_signal(instrument, current_price, "stop_loss", exchange, timestamp)
+                self.logger.warning(
+                    "STOP LOSS hit for %s long at %.2f (SL: %.2f) — emitting exit signal",
+                    instrument,
+                    current_price,
+                    pos["stop_loss"],
+                )
+                await self._emit_exit_signal(
+                    instrument, current_price, "stop_loss", exchange, timestamp
+                )
             elif current_price >= pos["take_profit"]:
-                self.logger.warning("Take Profit hit for %s long position at %.2f (TP: %.2f)", instrument, current_price, pos["take_profit"])
-                await self._emit_exit_signal(instrument, current_price, "take_profit", exchange, timestamp)
+                self.logger.warning(
+                    "Take Profit hit for %s long position at %.2f (TP: %.2f)",
+                    instrument,
+                    current_price,
+                    pos["take_profit"],
+                )
+                await self._emit_exit_signal(
+                    instrument, current_price, "take_profit", exchange, timestamp
+                )
         elif pos["side"] == "short":
             if is_trailing:
                 new_sl = current_price * (1.0 + pos["stop_loss_pct"])
@@ -243,13 +271,29 @@ class StrategyGenAgent(BaseAgent):
                     await position_registry.update_trailing_sl(instrument, new_sl)
                     self.logger.debug("Trailing SL updated for %s: %.2f", instrument, new_sl)
             if current_price >= pos["stop_loss"]:
-                self.logger.warning("STOP LOSS hit for %s short at %.2f (SL: %.2f) — emitting exit signal", instrument, current_price, pos["stop_loss"])
-                await self._emit_exit_signal(instrument, current_price, "stop_loss", exchange, timestamp)
+                self.logger.warning(
+                    "STOP LOSS hit for %s short at %.2f (SL: %.2f) — emitting exit signal",
+                    instrument,
+                    current_price,
+                    pos["stop_loss"],
+                )
+                await self._emit_exit_signal(
+                    instrument, current_price, "stop_loss", exchange, timestamp
+                )
             elif current_price <= pos["take_profit"]:
-                self.logger.warning("Take Profit hit for %s short position at %.2f (TP: %.2f)", instrument, current_price, pos["take_profit"])
-                await self._emit_exit_signal(instrument, current_price, "take_profit", exchange, timestamp)
+                self.logger.warning(
+                    "Take Profit hit for %s short position at %.2f (TP: %.2f)",
+                    instrument,
+                    current_price,
+                    pos["take_profit"],
+                )
+                await self._emit_exit_signal(
+                    instrument, current_price, "take_profit", exchange, timestamp
+                )
 
-    async def _emit_exit_signal(self, instrument: str, price: float, reason: str, exchange: Exchange, timestamp: datetime) -> None:
+    async def _emit_exit_signal(
+        self, instrument: str, price: float, reason: str, exchange: Exchange, timestamp: datetime
+    ) -> None:
         # Clear signal deduplication state so we can re-enter after exit
         self._last_signal_direction.pop(instrument, None)
         self._last_signal_time.pop(instrument, None)
@@ -257,12 +301,14 @@ class StrategyGenAgent(BaseAgent):
             "direction": "neutral",
             "confidence": 1.0,
             "price": price,
-            "features": {"exit_reason": reason}
+            "features": {"exit_reason": reason},
         }
         strategy_name = "consensus_ensemble"
         if len(self._strategies) == 1:
             strategy_name = list(self._strategies.keys())[0]
-        await self._emit_signal(instrument, strategy_name, signal, exchange=exchange, timestamp=timestamp)
+        await self._emit_signal(
+            instrument, strategy_name, signal, exchange=exchange, timestamp=timestamp
+        )
 
     async def _process_tick(self, event: Event) -> None:
         start_time = time.monotonic()
@@ -292,7 +338,9 @@ class StrategyGenAgent(BaseAgent):
                 except TypeError:
                     signal = await candidate.evaluate(instrument, prices_list)
                 if signal is not None:
-                    await self._emit_candidate_signal(instrument, candidate.name, signal, exchange, event.timestamp)
+                    await self._emit_candidate_signal(
+                        instrument, candidate.name, signal, exchange, event.timestamp
+                    )
 
         # 2. Evaluate live strategies
         votes = []
@@ -317,7 +365,7 @@ class StrategyGenAgent(BaseAgent):
                         "direction": direction,
                         "confidence": confidence,
                         "vote": vote,
-                        "features": signal.get("features", {})
+                        "features": signal.get("features", {}),
                     }
 
         if votes:
@@ -326,9 +374,11 @@ class StrategyGenAgent(BaseAgent):
             direction = "long" if net_signal > 0 else "short"
             req_threshold = self.short_threshold if direction == "short" else self.threshold
             # DEBUG LOG
-            if instrument in self._candle_prices and '1m' in self._candle_prices[instrument]:
-                if len(self._candle_prices[instrument]['1m']) % 500 == 0:
-                    self.logger.info(f"DEBUG {instrument} @ {event.timestamp}: net_signal={net_signal:.3f} abs={abs_net:.3f} thr={req_threshold} votes={votes}")
+            if instrument in self._candle_prices and "1m" in self._candle_prices[instrument]:
+                if len(self._candle_prices[instrument]["1m"]) % 500 == 0:
+                    self.logger.info(
+                        f"DEBUG {instrument} @ {event.timestamp}: net_signal={net_signal:.3f} abs={abs_net:.3f} thr={req_threshold} votes={votes}"
+                    )
 
             if abs_net >= req_threshold:
                 # Block new entries if regime is unstable
@@ -351,16 +401,13 @@ class StrategyGenAgent(BaseAgent):
                 sl_pct, tp_pct = self._compute_dynamic_sl_tp(features_all, float(price))
                 self._pending_signal_levels[instrument] = {
                     "stop_loss_pct": sl_pct,
-                    "take_profit_pct": tp_pct
+                    "take_profit_pct": tp_pct,
                 }
                 consolidated = {
                     "direction": direction,
                     "confidence": confidence,
                     "price": float(price),
-                    "features": {
-                        "net_signal": net_signal,
-                        "votes": features_all
-                    }
+                    "features": {"net_signal": net_signal, "votes": features_all},
                 }
                 strategy_name = "consensus_ensemble"
                 if len(self._strategies) == 1:
@@ -368,12 +415,20 @@ class StrategyGenAgent(BaseAgent):
 
                 self._last_signal_direction[instrument] = direction
                 self._last_signal_time[instrument] = now
-                tracer.record_trace(event.metadata.correlation_id, "strategy_gen", (time.monotonic() - start_time) * 1000)
+                tracer.record_trace(
+                    event.metadata.correlation_id,
+                    "strategy_gen",
+                    (time.monotonic() - start_time) * 1000,
+                )
                 await self._emit_signal(
-                    instrument, strategy_name, consolidated,
-                    exchange=exchange, timestamp=event.timestamp,
-                    stop_loss_pct=sl_pct, take_profit_pct=tp_pct,
-                    correlation_id=event.metadata.correlation_id
+                    instrument,
+                    strategy_name,
+                    consolidated,
+                    exchange=exchange,
+                    timestamp=event.timestamp,
+                    stop_loss_pct=sl_pct,
+                    take_profit_pct=tp_pct,
+                    correlation_id=event.metadata.correlation_id,
                 )
 
     async def _process_ohlcv(self, event: Event) -> None:
@@ -421,8 +476,13 @@ class StrategyGenAgent(BaseAgent):
         # --- Daily candle aggregation from minute data ---
         if interval in ("minute", "1m"):
             from zoneinfo import ZoneInfo
+
             ist = ZoneInfo("Asia/Kolkata")
-            ts_ist = event.timestamp.astimezone(ist) if event.timestamp.tzinfo else event.timestamp.replace(tzinfo=ist)
+            ts_ist = (
+                event.timestamp.astimezone(ist)
+                if event.timestamp.tzinfo
+                else event.timestamp.replace(tzinfo=ist)
+            )
             today_str = ts_ist.strftime("%Y-%m-%d")
             c = float(close)
             h = float(high) if high else c
@@ -430,7 +490,14 @@ class StrategyGenAgent(BaseAgent):
             v = float(volume)
 
             if instrument not in self._daily_ohlcv:
-                self._daily_ohlcv[instrument] = {"date": today_str, "open": c, "high": h, "low": l, "close": c, "volume": v}
+                self._daily_ohlcv[instrument] = {
+                    "date": today_str,
+                    "open": c,
+                    "high": h,
+                    "low": l,
+                    "close": c,
+                    "volume": v,
+                }
             else:
                 daily = self._daily_ohlcv[instrument]
                 if daily["date"] != today_str:
@@ -441,9 +508,13 @@ class StrategyGenAgent(BaseAgent):
                         self._candle_prices[instrument]["1d"] = deque(maxlen=500)
                         self._candle_volumes[instrument]["1d"] = deque(maxlen=500)
                         self._candle_highs[instrument] = self._candle_highs.get(instrument, {})
-                        self._candle_highs[instrument]["1d"] = self._candle_highs[instrument].get("1d", deque(maxlen=500))
+                        self._candle_highs[instrument]["1d"] = self._candle_highs[instrument].get(
+                            "1d", deque(maxlen=500)
+                        )
                         self._candle_lows[instrument] = self._candle_lows.get(instrument, {})
-                        self._candle_lows[instrument]["1d"] = self._candle_lows[instrument].get("1d", deque(maxlen=500))
+                        self._candle_lows[instrument]["1d"] = self._candle_lows[instrument].get(
+                            "1d", deque(maxlen=500)
+                        )
                         self._candle_timestamps[instrument]["1d"] = deque(maxlen=500)
                     self._candle_prices[instrument]["1d"].append(daily["close"])
                     self._candle_volumes[instrument]["1d"].append(daily["volume"])
@@ -451,7 +522,14 @@ class StrategyGenAgent(BaseAgent):
                     self._candle_lows[instrument]["1d"].append(daily["low"])
                     self._candle_timestamps[instrument]["1d"].append(event.timestamp)
                     # Reset for new day
-                    self._daily_ohlcv[instrument] = {"date": today_str, "open": c, "high": h, "low": l, "close": c, "volume": v}
+                    self._daily_ohlcv[instrument] = {
+                        "date": today_str,
+                        "open": c,
+                        "high": h,
+                        "low": l,
+                        "close": c,
+                        "volume": v,
+                    }
                 else:
                     # Same day — update running daily bar
                     daily["high"] = max(daily["high"], h)
@@ -465,27 +543,50 @@ class StrategyGenAgent(BaseAgent):
         for candidate in self._candidate_strategies.values():
             strategy_data_type = getattr(candidate, "data_type", "any")
             strategy_timeframe = getattr(candidate, "timeframe", "minute")
-            norm_strat = "1d" if strategy_timeframe in ("day", "1d", "daily") else "1m" if strategy_timeframe in ("minute", "1m") else strategy_timeframe
-            norm_event = "1d" if interval in ("day", "1d", "daily") else "1m" if interval in ("minute", "1m") else interval
-            
-            if strategy_data_type in ("candle", "any") and norm_strat == norm_event:
+            norm_strat = (
+                "1d"
+                if strategy_timeframe in ("day", "1d", "daily")
+                else "1m"
+                if strategy_timeframe in ("minute", "1m")
+                else strategy_timeframe
+            )
+            norm_event = (
+                "1d"
+                if interval in ("day", "1d", "daily")
+                else "1m"
+                if interval in ("minute", "1m")
+                else interval
+            )
 
+            if strategy_data_type in ("candle", "any") and norm_strat == norm_event:
                 prices_list = list(self._candle_prices[instrument][interval])
                 volumes_list = list(self._candle_volumes[instrument][interval])
                 highs_list = list(self._candle_highs.get(instrument, {}).get(interval, []))
                 lows_list = list(self._candle_lows.get(instrument, {}).get(interval, []))
-                timestamps_list = list(self._candle_timestamps.get(instrument, {}).get(interval, []))
+                timestamps_list = list(
+                    self._candle_timestamps.get(instrument, {}).get(interval, [])
+                )
                 try:
                     signal = await candidate.evaluate(
-                        instrument, prices_list, volumes=volumes_list, highs=highs_list, lows=lows_list,
+                        instrument,
+                        prices_list,
+                        volumes=volumes_list,
+                        highs=highs_list,
+                        lows=lows_list,
                         timestamps=timestamps_list,
                     )
                 except TypeError:
                     signal = await candidate.evaluate(
-                        instrument, prices_list, volumes=volumes_list, highs=highs_list, lows=lows_list,
+                        instrument,
+                        prices_list,
+                        volumes=volumes_list,
+                        highs=highs_list,
+                        lows=lows_list,
                     )
                 if signal is not None:
-                    await self._emit_candidate_signal(instrument, candidate.name, signal, exchange, event.timestamp)
+                    await self._emit_candidate_signal(
+                        instrument, candidate.name, signal, exchange, event.timestamp
+                    )
 
         # 2. Evaluate live strategies
         votes = []
@@ -494,26 +595,45 @@ class StrategyGenAgent(BaseAgent):
             strategy_data_type = getattr(strategy, "data_type", "any")
             strategy_timeframe = getattr(strategy, "timeframe", "minute")
 
-            norm_strat = "1d" if strategy_timeframe in ("day", "1d", "daily") else "1m" if strategy_timeframe in ("minute", "1m") else strategy_timeframe
-            norm_event = "1d" if interval in ("day", "1d", "daily") else "1m" if interval in ("minute", "1m") else interval
+            norm_strat = (
+                "1d"
+                if strategy_timeframe in ("day", "1d", "daily")
+                else "1m"
+                if strategy_timeframe in ("minute", "1m")
+                else strategy_timeframe
+            )
+            norm_event = (
+                "1d"
+                if interval in ("day", "1d", "daily")
+                else "1m"
+                if interval in ("minute", "1m")
+                else interval
+            )
 
-            
             if strategy_data_type in ("candle", "any") and norm_strat == norm_event:
-
                 prices_list = list(self._candle_prices[instrument][interval])
                 volumes_list = list(self._candle_volumes[instrument][interval])
                 highs_list = list(self._candle_highs.get(instrument, {}).get(interval, []))
                 lows_list = list(self._candle_lows.get(instrument, {}).get(interval, []))
-                timestamps_list = list(self._candle_timestamps.get(instrument, {}).get(interval, []))
+                timestamps_list = list(
+                    self._candle_timestamps.get(instrument, {}).get(interval, [])
+                )
                 try:
                     signal = await strategy.evaluate(
-                        instrument, prices_list, volumes=volumes_list,
-                        highs=highs_list, lows=lows_list, timestamps=timestamps_list,
+                        instrument,
+                        prices_list,
+                        volumes=volumes_list,
+                        highs=highs_list,
+                        lows=lows_list,
+                        timestamps=timestamps_list,
                     )
                 except TypeError:
                     signal = await strategy.evaluate(
-                        instrument, prices_list, volumes=volumes_list,
-                        highs=highs_list, lows=lows_list,
+                        instrument,
+                        prices_list,
+                        volumes=volumes_list,
+                        highs=highs_list,
+                        lows=lows_list,
                     )
                 if signal is not None:
                     direction = signal["direction"]
@@ -526,7 +646,7 @@ class StrategyGenAgent(BaseAgent):
                         "direction": direction,
                         "confidence": confidence,
                         "vote": vote,
-                        "features": signal.get("features", {})
+                        "features": signal.get("features", {}),
                     }
 
         if votes:
@@ -535,9 +655,11 @@ class StrategyGenAgent(BaseAgent):
             direction = "long" if net_signal > 0 else "short"
             req_threshold = self.short_threshold if direction == "short" else self.threshold
             # DEBUG LOG
-            if instrument in self._candle_prices and '1m' in self._candle_prices[instrument]:
-                if len(self._candle_prices[instrument]['1m']) % 500 == 0:
-                    self.logger.info(f"DEBUG {instrument} @ {event.timestamp}: net_signal={net_signal:.3f} abs={abs_net:.3f} thr={req_threshold} votes={votes}")
+            if instrument in self._candle_prices and "1m" in self._candle_prices[instrument]:
+                if len(self._candle_prices[instrument]["1m"]) % 500 == 0:
+                    self.logger.info(
+                        f"DEBUG {instrument} @ {event.timestamp}: net_signal={net_signal:.3f} abs={abs_net:.3f} thr={req_threshold} votes={votes}"
+                    )
 
             if abs_net >= req_threshold:
                 # Block new entries if regime is unstable
@@ -560,16 +682,13 @@ class StrategyGenAgent(BaseAgent):
                 sl_pct, tp_pct = self._compute_dynamic_sl_tp(features_all, float(close))
                 self._pending_signal_levels[instrument] = {
                     "stop_loss_pct": sl_pct,
-                    "take_profit_pct": tp_pct
+                    "take_profit_pct": tp_pct,
                 }
                 consolidated = {
                     "direction": direction,
                     "confidence": confidence,
                     "price": float(close),
-                    "features": {
-                        "net_signal": net_signal,
-                        "votes": features_all
-                    }
+                    "features": {"net_signal": net_signal, "votes": features_all},
                 }
                 strategy_name = "consensus_ensemble"
                 if len(self._strategies) == 1:
@@ -577,12 +696,20 @@ class StrategyGenAgent(BaseAgent):
 
                 self._last_signal_direction[instrument] = direction
                 self._last_signal_time[instrument] = now
-                tracer.record_trace(event.metadata.correlation_id, "strategy_gen", (time.monotonic() - start_time) * 1000)
+                tracer.record_trace(
+                    event.metadata.correlation_id,
+                    "strategy_gen",
+                    (time.monotonic() - start_time) * 1000,
+                )
                 await self._emit_signal(
-                    instrument, strategy_name, consolidated,
-                    exchange=exchange, timestamp=event.timestamp,
-                    stop_loss_pct=sl_pct, take_profit_pct=tp_pct,
-                    correlation_id=event.metadata.correlation_id
+                    instrument,
+                    strategy_name,
+                    consolidated,
+                    exchange=exchange,
+                    timestamp=event.timestamp,
+                    stop_loss_pct=sl_pct,
+                    take_profit_pct=tp_pct,
+                    correlation_id=event.metadata.correlation_id,
                 )
 
     def _get_15m_trend(self, instrument: str) -> str:
@@ -592,17 +719,17 @@ class StrategyGenAgent(BaseAgent):
             closes = self._candle_prices.get(instrument, {}).get("15m", [])
         if not closes:
             closes = self._candle_prices.get(instrument, {}).get("15min", [])
-            
+
         if len(closes) < 20:
             if len(closes) < 5:
                 return "neutral"
-            return "bullish" if closes[-1] > sum(closes)/len(closes) else "bearish"
-        
+            return "bullish" if closes[-1] > sum(closes) / len(closes) else "bearish"
+
         ema = closes[0]
         multiplier = 2 / (20 + 1)
         for c in list(closes)[1:]:
             ema = (c - ema) * multiplier + ema
-            
+
         if closes[-1] > ema:
             return "bullish"
         elif closes[-1] < ema:
@@ -623,10 +750,14 @@ class StrategyGenAgent(BaseAgent):
         direction = signal.get("direction", "neutral")
         if direction in ("long", "short"):
             trend = self._get_15m_trend(instrument)
-            if (direction == "long" and trend == "bearish") or (direction == "short" and trend == "bullish"):
+            if (direction == "long" and trend == "bearish") or (
+                direction == "short" and trend == "bullish"
+            ):
                 self.logger.warning(
                     "Signal BLOCKED by 15m trend confirmation: %s %s (15m trend: %s)",
-                    instrument, direction, trend
+                    instrument,
+                    direction,
+                    trend,
                 )
                 return
 
@@ -646,10 +777,14 @@ class StrategyGenAgent(BaseAgent):
         )
         self.logger.info(
             "Signal: %s %s %.2f%% from %s",
-            instrument, signal["direction"], signal["confidence"] * 100, strategy,
+            instrument,
+            signal["direction"],
+            signal["confidence"] * 100,
+            strategy,
         )
         try:
             from src.monitoring.metrics import system_metrics
+
             system_metrics.count_signal(strategy, signal["direction"])
         except Exception:
             pass
@@ -678,7 +813,13 @@ class StrategyGenAgent(BaseAgent):
         # Override event type to CANDIDATE_SIGNAL
         event.event_type = EventType.CANDIDATE_SIGNAL
         event.stream = f"signal.candidate.{strategy}.{instrument}"
-        self.logger.debug("Candidate Signal: %s %s %.2f%% from %s", instrument, signal["direction"], signal["confidence"] * 100, strategy)
+        self.logger.debug(
+            "Candidate Signal: %s %s %.2f%% from %s",
+            instrument,
+            signal["direction"],
+            signal["confidence"] * 100,
+            strategy,
+        )
         await self.emit(event)
 
     def _normalize_weights(self) -> None:
@@ -691,13 +832,13 @@ class StrategyGenAgent(BaseAgent):
     def _load_default_strategies(self) -> None:
         """Initialize the core robust strategy portfolio from configuration."""
         from src.config.strategy_config import build_strategies_from_config, load_strategy_config
-        
+
         cfg = load_strategy_config(self._config_path)
         strategies = build_strategies_from_config(cfg)
         for name, strategy in strategies.items():
             weight = cfg.get("strategies", {}).get(name, {}).get("weight", 1.0)
             self.register_strategy(strategy, weight=weight)
-            
+
         self._normalize_weights()
 
     def _compute_dynamic_sl_tp(
@@ -731,7 +872,7 @@ class StrategyGenAgent(BaseAgent):
 
         if atr is not None and price > 0:
             sl_pct = min(max((2.0 * atr) / price, 0.005), 0.05)  # Clamp: 0.5%-5%
-            tp_pct = min(max((3.0 * atr) / price, 0.01), 0.10)   # Clamp: 1%-10%
+            tp_pct = min(max((3.0 * atr) / price, 0.01), 0.10)  # Clamp: 1%-10%
         else:
             sl_pct = 0.02
             tp_pct = 0.04
@@ -746,17 +887,16 @@ class StrategyGenAgent(BaseAgent):
 
     async def health(self) -> dict[str, Any]:
         base = await super().health()
-        base.update({
-            "strategies": list(self._strategies.keys()),
-            "instruments_tracked": len(self._tick_prices) + len(self._candle_prices),
-            "positions_tracked": len(position_registry.get_all_positions()),
-            "cooldown_active": [
-                k for k, v in self._last_signal_time.items()
-                if datetime.now(UTC).timestamp() - v < _SIGNAL_COOLDOWN_SECONDS
-            ],
-        })
+        base.update(
+            {
+                "strategies": list(self._strategies.keys()),
+                "instruments_tracked": len(self._tick_prices) + len(self._candle_prices),
+                "positions_tracked": len(position_registry.get_all_positions()),
+                "cooldown_active": [
+                    k
+                    for k, v in self._last_signal_time.items()
+                    if datetime.now(UTC).timestamp() - v < _SIGNAL_COOLDOWN_SECONDS
+                ],
+            }
+        )
         return base
-
-
-
-

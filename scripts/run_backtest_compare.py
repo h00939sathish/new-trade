@@ -49,7 +49,15 @@ def _print_comparison(results: dict[str, dict[str, Any]], duration_map: dict[str
     ]
 
     col_w = [
-        10, 18, 14, 12, 14, 14, 14, 14, 10,
+        10,
+        18,
+        14,
+        12,
+        14,
+        14,
+        14,
+        14,
+        10,
     ]
 
     print("  " + "  ".join(h.ljust(w) for h, w in zip(headers, col_w)))
@@ -64,10 +72,10 @@ def _print_comparison(results: dict[str, dict[str, Any]], duration_map: dict[str
             horizon,
             strategy,
             str(res.get("total_trades", 0)),
-            f"{res.get('win_rate', 0.0)*100:.1f}%",
+            f"{res.get('win_rate', 0.0) * 100:.1f}%",
             f"{res.get('profit_factor', 0.0):.3f}",
             f"{res.get('sharpe_ratio', 0.0):.3f}",
-            f"{res.get('max_drawdown', 0.0)*100:.1f}%",
+            f"{res.get('max_drawdown', 0.0) * 100:.1f}%",
             f"{res.get('final_value', 0.0):,.0f}",
             duration_str,
         ]
@@ -99,7 +107,8 @@ async def run_single_backtest(
         oos = result.get("overall_oos_performance", {})
         logger.info(
             "[%s] Done in %.1fs | trades=%d | sharpe=%.3f | final=%s",
-            name, elapsed,
+            name,
+            elapsed,
             oos.get("total_trades", 0),
             oos.get("sharpe_ratio", 0.0),
             f"{oos.get('final_value', 0.0):,.0f}",
@@ -117,11 +126,31 @@ async def _run_dual():
 
     # Instruments: use all 25 for 1y, top 5 for 5y to keep runtime sane
     all_nifty50 = [
-        "RELIANCE", "HDFCBANK", "INFY", "ICICIBANK", "TCS", "ITC", "LT",
-        "SBIN", "BHARTIARTL", "BAJFINANCE", "KOTAKBANK", "AXISBANK",
-        "ASIANPAINT", "MARUTI", "SUNPHARMA", "TITAN", "HINDUNILVR",
-        "TATAMOTORS", "M&M", "ULTRACEMCO", "NTPC", "POWERGRID",
-        "BAJAJFINSV", "TATASTEEL", "HCLTECH",
+        "RELIANCE",
+        "HDFCBANK",
+        "INFY",
+        "ICICIBANK",
+        "TCS",
+        "ITC",
+        "LT",
+        "SBIN",
+        "BHARTIARTL",
+        "BAJFINANCE",
+        "KOTAKBANK",
+        "AXISBANK",
+        "ASIANPAINT",
+        "MARUTI",
+        "SUNPHARMA",
+        "TITAN",
+        "HINDUNILVR",
+        "TATAMOTORS",
+        "M&M",
+        "ULTRACEMCO",
+        "NTPC",
+        "POWERGRID",
+        "BAJAJFINSV",
+        "TATASTEEL",
+        "HCLTECH",
     ]
     subset5 = all_nifty50[:5]
 
@@ -179,7 +208,9 @@ async def _run_dual():
             all_ticks[days] = ticks
             logger.info(
                 "[%s] Fetched %d ticks in %.1fs (%.0f ticks/s)",
-                horizon_label, len(ticks), fetch_elapsed,
+                horizon_label,
+                len(ticks),
+                fetch_elapsed,
                 len(ticks) / max(fetch_elapsed, 0.01),
             )
         else:

@@ -44,7 +44,16 @@ class TestAggregateCandles:
         assert result == {}
 
     def test_aggregate_single_candle(self):
-        candles = [{"timestamp": "2024-01-15T10:00:00", "open": 100, "high": 105, "low": 99, "close": 104, "volume": 1000}]
+        candles = [
+            {
+                "timestamp": "2024-01-15T10:00:00",
+                "open": 100,
+                "high": 105,
+                "low": 99,
+                "close": 104,
+                "volume": 1000,
+            }
+        ]
         result = aggregate_candles("minute", candles)
         assert "5minute" in result
         assert len(result["5minute"]) == 1
@@ -55,7 +64,16 @@ class TestAggregateCandles:
         candles = []
         for i in range(5):
             ts = f"2024-01-15T10:0{i}:00"
-            candles.append({"timestamp": ts, "open": 100 + i, "high": 105 + i, "low": 99 + i, "close": 104 + i, "volume": 100})
+            candles.append(
+                {
+                    "timestamp": ts,
+                    "open": 100 + i,
+                    "high": 105 + i,
+                    "low": 99 + i,
+                    "close": 104 + i,
+                    "volume": 100,
+                }
+            )
         result = aggregate_candles("minute", candles)
         assert len(result["5minute"]) == 1
         c = result["5minute"][0]
@@ -66,15 +84,38 @@ class TestAggregateCandles:
         assert c["volume"] == 500
 
     def test_aggregate_ignores_equal_or_lower(self):
-        candles = [{"timestamp": "2024-01-15T10:00:00", "open": 100, "high": 105, "low": 99, "close": 104, "volume": 1000}]
+        candles = [
+            {
+                "timestamp": "2024-01-15T10:00:00",
+                "open": 100,
+                "high": 105,
+                "low": 99,
+                "close": 104,
+                "volume": 1000,
+            }
+        ]
         result = aggregate_candles("5minute", candles)
         assert "5minute" not in result
         assert "minute" not in result
 
     def test_aggregate_sorts_by_timestamp(self):
         candles = [
-            {"timestamp": "2024-01-15T10:05:00", "open": 110, "high": 115, "low": 109, "close": 114, "volume": 100},
-            {"timestamp": "2024-01-15T10:00:00", "open": 100, "high": 105, "low": 99, "close": 104, "volume": 100},
+            {
+                "timestamp": "2024-01-15T10:05:00",
+                "open": 110,
+                "high": 115,
+                "low": 109,
+                "close": 114,
+                "volume": 100,
+            },
+            {
+                "timestamp": "2024-01-15T10:00:00",
+                "open": 100,
+                "high": 105,
+                "low": 99,
+                "close": 104,
+                "volume": 100,
+            },
         ]
         result = aggregate_candles("minute", candles)
         c = result["5minute"]
@@ -85,6 +126,7 @@ class TestAggregateCandles:
 @pytest.mark.asyncio
 async def test_market_intel_aggregation():
     from src.agents.market_intel import MarketIntelAgent
+
     src_interval = "minute"
 
     agent = MarketIntelAgent(event_store=None)
@@ -105,4 +147,3 @@ async def test_market_intel_aggregation():
 
     assert len(agent._candle_buffer[f"TEST.{src_interval}"]) >= 5
     await agent.stop()
-

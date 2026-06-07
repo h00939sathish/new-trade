@@ -2,10 +2,11 @@
 SSOT contract test: portfolio_opt._positions must not be writable directly.
 It is a read-only cache. The position_registry singleton is the SSOT.
 """
+
 import pytest
 
-from src.risk.position_registry import position_registry
 from src.agents.portfolio import PortfolioOptimizationAgent
+from src.risk.position_registry import position_registry
 
 
 @pytest.mark.asyncio
@@ -43,4 +44,5 @@ async def test_position_registry_is_singleton():
     Two imports of position_registry must return the same instance.
     """
     from src.risk.position_registry import position_registry as pr2
+
     assert position_registry is pr2

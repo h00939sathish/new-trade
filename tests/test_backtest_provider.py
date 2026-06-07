@@ -50,8 +50,22 @@ async def test_backtest_provider_no_instruments():
 @pytest.mark.asyncio
 async def test_backtest_provider_with_candles():
     candles = [
-        {"open": 100, "high": 105, "low": 99, "close": 103, "volume": 50000, "timestamp": "2026-05-20T00:00:00"},
-        {"open": 103, "high": 108, "low": 102, "close": 107, "volume": 60000, "timestamp": "2026-05-21T00:00:00"},
+        {
+            "open": 100,
+            "high": 105,
+            "low": 99,
+            "close": 103,
+            "volume": 50000,
+            "timestamp": "2026-05-20T00:00:00",
+        },
+        {
+            "open": 103,
+            "high": 108,
+            "low": 102,
+            "close": 107,
+            "volume": 60000,
+            "timestamp": "2026-05-21T00:00:00",
+        },
     ]
     provider = BacktestDataProvider(
         market_data_provider=FakeProvider(candles),

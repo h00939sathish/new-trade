@@ -27,12 +27,16 @@ async def print_events(system: TradingSystem, label: str):
                     print(f"  [{ts}] {e.event_type.value:25s} {e.stream}")
                     if e.event_type.value == "signal.generated":
                         d = e.data
-                        print(f"         → {d.get('direction','?')}:{d.get('confidence',0):.2f} [{d.get('strategy','?')}]")
+                        print(
+                            f"         → {d.get('direction', '?')}:{d.get('confidence', 0):.2f} [{d.get('strategy', '?')}]"
+                        )
                     if e.event_type.value in ("order.fill", "order.created"):
                         d = e.data
-                        print(f"         → {d.get('side','?')} {d.get('quantity',0)} @ {d.get('fill_price', d.get('price', 0))}")
+                        print(
+                            f"         → {d.get('side', '?')} {d.get('quantity', 0)} @ {d.get('fill_price', d.get('price', 0))}"
+                        )
                     if e.event_type.value == "risk.breach":
-                        print(f"         ⚠ BLOCKED: {e.data.get('check_name','?')}")
+                        print(f"         ⚠ BLOCKED: {e.data.get('check_name', '?')}")
                     if e.position:
                         last_pos = max(last_pos, e.position)
         except Exception:
@@ -57,8 +61,11 @@ async def main():
     print("\n📊 Injecting simulated market data...\n")
 
     scissors = [
-        ("RELIANCE", 2510), ("TCS", 3450), ("INFY", 1580),
-        ("HDFCBANK", 1620), ("ICICIBANK", 1050),
+        ("RELIANCE", 2510),
+        ("TCS", 3450),
+        ("INFY", 1580),
+        ("HDFCBANK", 1620),
+        ("ICICIBANK", 1050),
     ]
 
     for symbol, base_price in scissors:
@@ -84,9 +91,11 @@ async def main():
     print("\n📊 Agent health:\n")
     health = await system.health()
     for name, status in health.items():
-        print(f"   {name}: {status['status']} | "
-              f"patterns: {len(status['patterns'])} | "
-              f"streams: {len(status['resolved_streams'])}")
+        print(
+            f"   {name}: {status['status']} | "
+            f"patterns: {len(status['patterns'])} | "
+            f"streams: {len(status['resolved_streams'])}"
+        )
 
     await system.stop()
     viewer.cancel()

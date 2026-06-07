@@ -2,7 +2,9 @@ from src.strategies.base import Strategy
 
 
 class SidewaysReversionStrategy(Strategy):
-    def __init__(self, rsi_window: int = 14, bb_window: int = 20, bb_std: float = 2.0, atr_window: int = 14):
+    def __init__(
+        self, rsi_window: int = 14, bb_window: int = 20, bb_std: float = 2.0, atr_window: int = 14
+    ):
         self.name = "sideways_reversion"
         self.data_type = "candle"
         self.timeframe = "minute"
@@ -44,7 +46,13 @@ class SidewaysReversionStrategy(Strategy):
         timestamps: list[object] | None = None,
     ) -> dict[str, object] | None:
         required = max(self.bb_window, self.rsi_window, self.atr_window)
-        if not highs or not lows or len(highs) < required or len(lows) < required or len(prices) < required:
+        if (
+            not highs
+            or not lows
+            or len(highs) < required
+            or len(lows) < required
+            or len(prices) < required
+        ):
             return None
 
         rsi = self._calculate_rsi(prices)
@@ -56,7 +64,7 @@ class SidewaysReversionStrategy(Strategy):
             mean_of_squares = sum(p * p for p in recent_prices) / len(recent_prices)
             mean_squared = mean * mean
             variance = mean_of_squares - mean_squared
-            std = variance ** 0.5 if variance > 0 else 0.0
+            std = variance**0.5 if variance > 0 else 0.0
         upper = mean + self.bb_std * std
         lower = mean - self.bb_std * std
         current_price = prices[-1]

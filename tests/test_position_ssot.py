@@ -10,6 +10,7 @@ read from the registry, so they cannot diverge.
 Also verifies that fills flowing through the portfolio agent result in
 the same quantity/avg_cost view as direct registry queries.
 """
+
 import pytest
 
 from src.agents.portfolio import PortfolioOptimizationAgent
@@ -102,9 +103,11 @@ async def test_portfolio_cannot_diverge_from_registry():
     assert p.get_position("RELIANCE")["quantity"] == 10
 
     # External reconciliation injects a position directly into the registry
-    await position_registry.sync_from_portfolio({
-        "RELIANCE": {"quantity": 25, "avg_cost": 2480.0},  # different from 10
-    })
+    await position_registry.sync_from_portfolio(
+        {
+            "RELIANCE": {"quantity": 25, "avg_cost": 2480.0},  # different from 10
+        }
+    )
 
     # The portfolio agent should now reflect 25 (from registry), not 10
     pos = p.get_position("RELIANCE")

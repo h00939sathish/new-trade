@@ -46,7 +46,9 @@ async def test_personas_agent_fallback_no_api_key():
     await agent._evaluate_macro_sentiment()
 
     # Check if fallback event was emitted to the store
-    events = [e for e in await event_store.read("events.bus") if e.event_type == EventType.MACRO_SENTIMENT]
+    events = [
+        e for e in await event_store.read("events.bus") if e.event_type == EventType.MACRO_SENTIMENT
+    ]
     assert len(events) == 1
     assert events[0].data["composite_multiplier"] == 1.0
     assert "Fallback" in events[0].data["rationale"]
@@ -70,20 +72,26 @@ async def test_personas_agent_gemini_api_success():
     mock_response = MagicMock()
     mock_response.status_code = 200
     mock_response.json.return_value = {
-        "candidates": [{
-            "content": {
-                "parts": [{
-                    "text": '{\n  "geopolitical_score": 0.2,\n  "macro_score": 0.8,\n  "composite_multiplier": 1.2,\n  "rationale": "High domestic demand outweighs geopolitical risks."\n}'
-                }]
+        "candidates": [
+            {
+                "content": {
+                    "parts": [
+                        {
+                            "text": '{\n  "geopolitical_score": 0.2,\n  "macro_score": 0.8,\n  "composite_multiplier": 1.2,\n  "rationale": "High domestic demand outweighs geopolitical risks."\n}'
+                        }
+                    ]
+                }
             }
-        }]
+        ]
     }
 
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
         mock_post.return_value = mock_response
         await agent._evaluate_macro_sentiment()
 
-    events = [e for e in await event_store.read("events.bus") if e.event_type == EventType.MACRO_SENTIMENT]
+    events = [
+        e for e in await event_store.read("events.bus") if e.event_type == EventType.MACRO_SENTIMENT
+    ]
     assert len(events) == 1
     assert events[0].data["composite_multiplier"] == 1.2
     assert events[0].data["geopolitical_score"] == 0.2
@@ -105,7 +113,7 @@ async def test_strategy_gen_receives_macro_multiplier():
         geopolitical_score=0.1,
         macro_score=0.5,
         composite_multiplier=1.5,
-        rationale="Strong macro trend."
+        rationale="Strong macro trend.",
     )
 
     # Pass event directly to strategy_gen
@@ -118,24 +126,20 @@ async def test_strategy_gen_receives_macro_multiplier():
     mock_strategy = MagicMock()
     mock_strategy.name = "mock_strat"
     mock_strategy.data_type = "tick"
-    mock_strategy.evaluate = AsyncMock(return_value={
-        "direction": "long",
-        "confidence": 0.5,
-        "features": {}
-    })
+    mock_strategy.evaluate = AsyncMock(
+        return_value={"direction": "long", "confidence": 0.5, "features": {}}
+    )
 
     strategy_gen.register_strategy(mock_strategy, weight=1.0)
 
     # Force process a mock tick event
     tick = TickEvent.create(
-        instrument="RELIANCE",
-        exchange=Exchange.NSE,
-        last_price=2500.0,
-        volume=100
+        instrument="RELIANCE", exchange=Exchange.NSE, last_price=2500.0, volume=100
     )
 
     # We want to trace output signals, so we can mock emit or subscribe to signals
     signals_received = []
+
     async def mock_emit(event):
         if event.event_type == EventType.SIGNAL:
             signals_received.append(event)
@@ -150,7 +154,7 @@ async def test_strategy_gen_receives_macro_multiplier():
     # scaled by composite_multiplier(1.5) = 0.75
     # Since 0.75 >= threshold (0.3), it generates a signal
     assert len(signals_received) == 1
-    assert signals_received[0].confidence == 0.75 # min(0.75, 0.95)
+    assert signals_received[0].confidence == 0.75  # min(0.75, 0.95)
     assert signals_received[0].data["features"]["net_signal"] == 0.75
 
     await strategy_gen.stop()

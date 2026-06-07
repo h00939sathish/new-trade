@@ -34,14 +34,21 @@ class TradingSystem:
         else:
             if settings.angel_api_key:
                 from src.connectors.angel import AngelMarketDataProvider
+
                 self._angel_provider = AngelMarketDataProvider()
 
             if settings.groww_api_key:
                 from src.connectors.groww import GrowwMarketDataProvider
+
                 self._groww_provider = GrowwMarketDataProvider()
 
-            if settings.live_trading_enabled and settings.kite_api_key and settings.kite_access_token:
+            if (
+                settings.live_trading_enabled
+                and settings.kite_api_key
+                and settings.kite_access_token
+            ):
                 from src.connectors.kite import KiteBroker, KiteClient
+
                 self._kite_client = KiteClient()
                 self._kite_broker = KiteBroker(self._kite_client)
             elif settings.kite_api_key or settings.kite_access_token:
@@ -51,6 +58,7 @@ class TradingSystem:
 
         if not self._angel_provider and not self._groww_provider:
             from src.connectors.jugaad import JugaadMarketDataProvider
+
             self._jugaad_provider = JugaadMarketDataProvider()
         else:
             self._jugaad_provider = None
@@ -81,6 +89,7 @@ class TradingSystem:
 
         if market_data_provider is not None:
             from src.connectors.backtest_provider import BacktestDataProvider
+
             bt_provider = BacktestDataProvider(
                 market_data_provider=market_data_provider,
                 instruments=self.market_intel._instruments,
@@ -106,13 +115,15 @@ class TradingSystem:
             self._agents.append(self.alert)
         if settings.agent_reflection_enabled:
             self._agents.append(self.reflection)
-            
+
         # These agents are always enabled since they lack settings toggle
-        self._agents.extend([
-            self.portfolio_opt,
-            self.regime_detection,
-            self.reconciliation,
-        ])
+        self._agents.extend(
+            [
+                self.portfolio_opt,
+                self.regime_detection,
+                self.reconciliation,
+            ]
+        )
 
         for agent in self._agents:
             agent.system = self
@@ -126,6 +137,7 @@ class TradingSystem:
 
     async def start(self) -> None:
         from src.risk.kill_switch import KillSwitch
+
         KillSwitch().setup(
             daily_loss_pct=settings.kill_switch_daily_loss_pct,
             max_drawdown_pct=settings.kill_switch_max_drawdown_pct,
@@ -152,7 +164,9 @@ class TradingSystem:
             except Exception as e:
                 _logger = logging.getLogger("system")
                 if settings.live_trading_enabled:
-                    _logger.critical("Broker connection failed; live trading startup refused: %s", e)
+                    _logger.critical(
+                        "Broker connection failed; live trading startup refused: %s", e
+                    )
                     raise
                 _logger.warning("Broker connection failed, falling back to paper trading: %s", e)
                 self._kite_broker = None
@@ -213,6 +227,7 @@ class TradingSystem:
         exchange: str = "NSE",
     ) -> None:
         from src.schemas.events import Exchange as Ex
+
         await self.market_intel.ingest_tick(
             instrument=instrument,
             exchange=Ex(exchange),
@@ -233,6 +248,7 @@ class TradingSystem:
         timestamp: Any = None,
     ) -> None:
         from src.schemas.events import Exchange as Ex
+
         await self.market_intel.ingest_ohlcv(
             instrument=instrument,
             exchange=Ex(exchange),

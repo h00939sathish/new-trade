@@ -21,6 +21,7 @@ Preconditions for this script to work:
     - P0.4 applied (only 3 strategies enabled)
     - Run during IST market hours (9:15-15:30) for live Yahoo data
 """
+
 import asyncio
 import json
 import logging
@@ -89,7 +90,10 @@ async def _watch_fills(system: TradingSystem) -> None:
     # Use the bus to subscribe directly
     from src.event_store.async_bus import event_bus
 
-    queue = event_bus.subscribe("first_trade_watcher", {EventType.FILL, EventType.SIGNAL, EventType.RISK_BREACH, EventType.ORDER_CREATED})
+    queue = event_bus.subscribe(
+        "first_trade_watcher",
+        {EventType.FILL, EventType.SIGNAL, EventType.RISK_BREACH, EventType.ORDER_CREATED},
+    )
     logger.info("Subscribed to FILL/SIGNAL/RISK_BREACH/ORDER_CREATED")
 
     while not stop_event.is_set():
@@ -226,8 +230,12 @@ def _print_summary() -> None:
             net_pnl = gross_pnl - total_commission
             print()
             print(f"Round-trip details:")
-            print(f"  BUY  {qty:>4} @ ₹{buy['fill_price']:.2f}  commission=₹{buy['commission']:.2f}")
-            print(f"  SELL {qty:>4} @ ₹{sell['fill_price']:.2f}  commission=₹{sell['commission']:.2f}")
+            print(
+                f"  BUY  {qty:>4} @ ₹{buy['fill_price']:.2f}  commission=₹{buy['commission']:.2f}"
+            )
+            print(
+                f"  SELL {qty:>4} @ ₹{sell['fill_price']:.2f}  commission=₹{sell['commission']:.2f}"
+            )
             print(f"  Gross PnL:  ₹{gross_pnl:.2f}")
             print(f"  Net PnL:    ₹{net_pnl:.2f}")
 

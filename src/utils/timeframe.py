@@ -27,7 +27,9 @@ def round_timestamp(dt: datetime, minutes: int) -> datetime:
     return dt.replace(hour=rounded // 60, minute=rounded % 60, second=0, microsecond=0)
 
 
-def aggregate_candles(source_interval: str, candles: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+def aggregate_candles(
+    source_interval: str, candles: list[dict[str, Any]]
+) -> dict[str, list[dict[str, Any]]]:
     if not candles:
         return {}
 

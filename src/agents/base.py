@@ -39,7 +39,9 @@ SYSTEM_BUS = "events.bus"
 
 
 class BaseAgent(Agent):
-    def __init__(self, name: str, log_level: str | None = None, event_store: EventStore | None = None):
+    def __init__(
+        self, name: str, log_level: str | None = None, event_store: EventStore | None = None
+    ):
         self.name = name
         self.status = AgentStatus.CREATED
         self.event_store = event_store or create_event_store()
@@ -69,15 +71,14 @@ class BaseAgent(Agent):
         try:
             await self.event_store.connect()
             from src.event_store.async_bus import event_bus
+
             event_bus.set_event_store(self.event_store)
 
             await self.on_start()
             self.status = AgentStatus.RUNNING
             self._running = True
             if run_background_loop:
-                task = asyncio.create_task(
-                    self._subscribe_bus_loop(), name=f"{self.name}.bus"
-                )
+                task = asyncio.create_task(self._subscribe_bus_loop(), name=f"{self.name}.bus")
                 self._tasks.append(task)
             self._tasks.append(
                 asyncio.create_task(
@@ -106,9 +107,7 @@ class BaseAgent(Agent):
 
     async def run_forever(self) -> None:
         self._running = True
-        task = asyncio.create_task(
-            self._subscribe_bus_loop(), name=f"{self.name}.bus"
-        )
+        task = asyncio.create_task(self._subscribe_bus_loop(), name=f"{self.name}.bus")
         self._tasks.append(task)
         try:
             await asyncio.Event().wait()
@@ -148,9 +147,11 @@ class BaseAgent(Agent):
 
     async def emit(self, event: Event) -> None:
         from src.event_store.async_bus import event_bus
+
         await event_bus.publish(event)
         try:
             from src.monitoring.metrics import system_metrics
+
             system_metrics.count_event(event.event_type.value)
         except Exception:
             pass
@@ -166,6 +167,7 @@ class BaseAgent(Agent):
         import time
 
         from src.event_store.async_bus import event_bus
+
         self._queue = event_bus.subscribe(self.name, self._subscribed_event_types)
 
         while self._running:
@@ -182,13 +184,16 @@ class BaseAgent(Agent):
                         latency = time.monotonic() - start_time
                         try:
                             from src.monitoring.metrics import system_metrics
+
                             system_metrics.record_latency(latency)
                         except Exception:
                             pass
                     except Exception as e:
                         self.logger.error(
                             "Error handling event %s: %s",
-                            event.event_id, e, exc_info=True,
+                            event.event_id,
+                            e,
+                            exc_info=True,
                         )
             except asyncio.CancelledError:
                 break

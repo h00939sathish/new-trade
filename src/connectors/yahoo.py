@@ -48,7 +48,8 @@ async def get_ltp_yahoo(instruments: list[str]) -> dict[str, dict[str, float | i
 
 
 async def get_ltp_yahoo_single(
-    symbol: str, exchange: str = "NSE",
+    symbol: str,
+    exchange: str = "NSE",
 ) -> dict[str, float | int | None] | None:
     result = await get_ltp_yahoo([f"{exchange}:{symbol}"])
     return result.get(f"{exchange}:{symbol}")

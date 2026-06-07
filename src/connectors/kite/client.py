@@ -33,13 +33,13 @@ class KiteClient:
             return
         try:
             import kiteconnect
+
             self._kite = kiteconnect.KiteConnect(api_key=self.api_key)
             self._kite.set_access_token(self.access_token)
             from src.utils.retry import with_retry
+
             profile = await with_retry(
-                lambda: self._kite.profile(),
-                max_retries=3,
-                exceptions=(Exception,)
+                lambda: self._kite.profile(), max_retries=3, exceptions=(Exception,)
             )
             self._connected = True
             self._placeholder_mode = False
@@ -164,7 +164,11 @@ class KiteClient:
                     for i in range(5)
                 ],
                 "sell": [
-                    {"price": round(price + (i + 1) * 0.05, 2), "quantity": 80 * (i + 1), "orders": 2}
+                    {
+                        "price": round(price + (i + 1) * 0.05, 2),
+                        "quantity": 80 * (i + 1),
+                        "orders": 2,
+                    }
                     for i in range(5)
                 ],
             }

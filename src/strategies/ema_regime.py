@@ -1,4 +1,5 @@
 import math
+
 from src.strategies.base import Strategy
 
 
@@ -21,7 +22,7 @@ class Ema200RegimeGate(Strategy):
         if len(prices) < self.lookback:
             return None
 
-        closes = [float(p) for p in prices[-self.lookback:]]
+        closes = [float(p) for p in prices[-self.lookback :]]
         ema = closes[0]
         multiplier = 2.0 / (self.lookback + 1)
         for c in closes[1:]:

@@ -12,7 +12,14 @@ def _make_ticks(count: int = 60) -> list[dict]:
     ticks = []
     for i in range(count):
         price = 100.0 + (i * 0.5) if i > 20 else 100.0
-        ticks.append({"instrument": "TEST", "price": price, "volume": 1000, "timestamp": _BASE_TIME + timedelta(seconds=i)})
+        ticks.append(
+            {
+                "instrument": "TEST",
+                "price": price,
+                "volume": 1000,
+                "timestamp": _BASE_TIME + timedelta(seconds=i),
+            }
+        )
     return ticks
 
 

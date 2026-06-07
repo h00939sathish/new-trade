@@ -14,7 +14,18 @@ class TestMACDStrategy:
 
     @pytest.mark.asyncio
     async def test_long_signal(self, strategy: MACDStrategy):
-        prices = [100.0] * 30 + [105.0, 110.0, 115.0, 120.0, 125.0, 130.0, 135.0, 140.0, 145.0, 150.0]
+        prices = [100.0] * 30 + [
+            105.0,
+            110.0,
+            115.0,
+            120.0,
+            125.0,
+            130.0,
+            135.0,
+            140.0,
+            145.0,
+            150.0,
+        ]
         result = await strategy.evaluate("TEST", prices)
         assert result is not None, "MACD should give long on sharp uptrend"
         assert result["direction"] == "long"
@@ -24,7 +35,18 @@ class TestMACDStrategy:
 
     @pytest.mark.asyncio
     async def test_short_signal(self, strategy: MACDStrategy):
-        prices = [150.0] * 30 + [145.0, 140.0, 135.0, 130.0, 125.0, 120.0, 115.0, 110.0, 105.0, 100.0]
+        prices = [150.0] * 30 + [
+            145.0,
+            140.0,
+            135.0,
+            130.0,
+            125.0,
+            120.0,
+            115.0,
+            110.0,
+            105.0,
+            100.0,
+        ]
         result = await strategy.evaluate("TEST", prices)
         assert result is not None, "MACD should give short on sharp downtrend"
         assert result["direction"] == "short"
@@ -78,9 +100,38 @@ class TestIchimokuStrategy:
 
     @pytest.mark.asyncio
     async def test_long_signal(self, strategy: IchimokuStrategy):
-        prices = [100.0, 102.0, 101.0, 103.0, 102.0, 104.0, 103.0, 105.0, 104.0, 106.0,
-                   105.0, 107.0, 106.0, 108.0, 107.0, 109.0, 108.0, 110.0, 109.0, 111.0,
-                   112.0, 113.0, 114.0, 115.0, 116.0, 117.0, 118.0, 119.0, 120.0, 121.0]
+        prices = [
+            100.0,
+            102.0,
+            101.0,
+            103.0,
+            102.0,
+            104.0,
+            103.0,
+            105.0,
+            104.0,
+            106.0,
+            105.0,
+            107.0,
+            106.0,
+            108.0,
+            107.0,
+            109.0,
+            108.0,
+            110.0,
+            109.0,
+            111.0,
+            112.0,
+            113.0,
+            114.0,
+            115.0,
+            116.0,
+            117.0,
+            118.0,
+            119.0,
+            120.0,
+            121.0,
+        ]
         result = await strategy.evaluate("TEST", prices)
         assert result is not None
         assert result["direction"] == "long"
@@ -88,9 +139,38 @@ class TestIchimokuStrategy:
 
     @pytest.mark.asyncio
     async def test_short_signal(self, strategy: IchimokuStrategy):
-        prices = [120.0, 118.0, 119.0, 117.0, 118.0, 116.0, 117.0, 115.0, 116.0, 114.0,
-                   115.0, 113.0, 114.0, 112.0, 113.0, 111.0, 112.0, 110.0, 111.0, 109.0,
-                   108.0, 107.0, 106.0, 105.0, 104.0, 103.0, 102.0, 101.0, 100.0, 99.0]
+        prices = [
+            120.0,
+            118.0,
+            119.0,
+            117.0,
+            118.0,
+            116.0,
+            117.0,
+            115.0,
+            116.0,
+            114.0,
+            115.0,
+            113.0,
+            114.0,
+            112.0,
+            113.0,
+            111.0,
+            112.0,
+            110.0,
+            111.0,
+            109.0,
+            108.0,
+            107.0,
+            106.0,
+            105.0,
+            104.0,
+            103.0,
+            102.0,
+            101.0,
+            100.0,
+            99.0,
+        ]
         result = await strategy.evaluate("TEST", prices)
         assert result is not None
         assert result["direction"] == "short"

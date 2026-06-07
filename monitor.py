@@ -40,12 +40,14 @@ def _load_config():
         "dry_run": dry_run,
     }
 
+
 def run(cmd, cwd=WORKDIR):
     try:
         result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=30)
         return result.stdout.strip()
     except Exception:
         return ""
+
 
 def get_paper_report(api_url):
     out = run(["curl", "-s", api_url])
@@ -56,13 +58,20 @@ def get_paper_report(api_url):
     except Exception:
         return None
 
+
 def get_telegram_token():
-    out = run([
-        "railway", "variables", "list",
-        "--service", "new-trade",
-        "--environment", "production",
-        "--json"
-    ])
+    out = run(
+        [
+            "railway",
+            "variables",
+            "list",
+            "--service",
+            "new-trade",
+            "--environment",
+            "production",
+            "--json",
+        ]
+    )
     if not out:
         return ""
     try:
@@ -73,6 +82,7 @@ def get_telegram_token():
     except Exception:
         pass
     return ""
+
 
 def load_state():
     if os.path.exists(STATE_PATH):
@@ -89,9 +99,11 @@ def load_state():
         "alerted_breaches": {},
     }
 
+
 def save_state(state):
     with open(STATE_PATH, "w") as f:
         json.dump(state, f)
+
 
 def send_telegram(token, chat_id, text, dry_run=False):
     if not chat_id:
@@ -101,11 +113,11 @@ def send_telegram(token, chat_id, text, dry_run=False):
         print(f"[dry-run] would POST to telegram for chat_id={chat_id}: {text!r}")
         return
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    subprocess.run([
-        "curl", "-s", "-X", "POST", url,
-        "-d", f"chat_id={chat_id}",
-        "-d", f"text={text}"
-    ], timeout=15)
+    subprocess.run(
+        ["curl", "-s", "-X", "POST", url, "-d", f"chat_id={chat_id}", "-d", f"text={text}"],
+        timeout=15,
+    )
+
 
 def format_risk_breach(entry):
     ts = entry.get("timestamp", "?")
@@ -139,7 +151,7 @@ def format_risk_breach(entry):
             f"\nSIGNAL:\n"
             f"  Strategy  : {strategy}\n"
             f"  Action    : {direction}\n"
-            f"  Confid.   : {confidence*100:.1f}%\n"
+            f"  Confid.   : {confidence * 100:.1f}%\n"
             f"  Price     : {price}\n"
         )
 
@@ -150,7 +162,7 @@ def format_risk_breach(entry):
             for name, info in votes.items():
                 vdir = info.get("direction", "?").upper()
                 vconf = info.get("confidence", 0)
-                text += f"    • {name}: {vdir} ({vconf*100:.1f}%)\n"
+                text += f"    • {name}: {vdir} ({vconf * 100:.1f}%)\n"
 
         # SL/TP
         sl = signal.get("stop_loss_pct")
@@ -185,6 +197,7 @@ def format_risk_breach(entry):
 
     return text
 
+
 def parse_log_entries(raw):
     entries = []
     for line in raw.splitlines():
@@ -195,6 +208,7 @@ def parse_log_entries(raw):
         except Exception:
             pass
     return entries
+
 
 def main():
     config = _load_config()
@@ -244,12 +258,13 @@ def main():
     out = run(["railway", "logs", "--lines", "2000", "--json"])
     regime_active = "Regime instability detected" in out
 
-    if not regime_active and state["regime_suppression_active"] and not state["alerted_regime_clear"]:
+    if (
+        not regime_active
+        and state["regime_suppression_active"]
+        and not state["alerted_regime_clear"]
+    ):
         if token:
-            msg = (
-                "🟢 Regime instability cleared.\n"
-                "Entry suppression lifted."
-            )
+            msg = "🟢 Regime instability cleared.\nEntry suppression lifted."
             send_telegram(token, chat_id, msg, dry_run=dry_run)
         state["alerted_regime_clear"] = True
         state["regime_suppression_active"] = False
@@ -281,6 +296,7 @@ def main():
     if new_alerts:
         state["alerted_breaches"] = alerted
         save_state(state)
+
 
 if __name__ == "__main__":
     main()

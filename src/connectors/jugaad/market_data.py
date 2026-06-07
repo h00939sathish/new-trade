@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import time
 from collections import defaultdict
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta, timezone
@@ -36,8 +35,13 @@ class JugaadMarketDataProvider:
 
         # Configurable via constructor or settings
         from src.config.settings import settings
+
         self._poll_interval = poll_interval or getattr(settings, "yahoo_poll_interval", 60)
-        self._market_hours_only = market_hours_only if market_hours_only is not None else getattr(settings, "market_hours_only", True)
+        self._market_hours_only = (
+            market_hours_only
+            if market_hours_only is not None
+            else getattr(settings, "market_hours_only", True)
+        )
 
         # Synthetic candle accumulation: instrument -> list of tick prices within current minute
         self._minute_ticks: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -103,6 +107,7 @@ class JugaadMarketDataProvider:
         """Get live last traded prices via Yahoo Finance."""
         try:
             from src.connectors.yahoo import get_ltp_yahoo
+
             result = await get_ltp_yahoo(instruments)
             return result
         except Exception as e:
@@ -185,21 +190,25 @@ class JugaadMarketDataProvider:
             # ── Emit tick event ──
             if self._on_tick is not None:
                 try:
-                    await self._on_tick({
-                        "instrument": inst,
-                        "exchange": self._exchange,
-                        "last_price": price,
-                        "volume": volume,
-                    })
+                    await self._on_tick(
+                        {
+                            "instrument": inst,
+                            "exchange": self._exchange,
+                            "last_price": price,
+                            "volume": volume,
+                        }
+                    )
                 except Exception as e:
                     logger.error("Tick callback error for %s: %s", inst, e)
 
             # ── Accumulate for synthetic candle ──
-            self._minute_ticks[inst].append({
-                "price": price,
-                "volume": volume,
-                "time": now,
-            })
+            self._minute_ticks[inst].append(
+                {
+                    "price": price,
+                    "volume": volume,
+                    "time": now,
+                }
+            )
 
             # Emit a synthetic 1-minute OHLCV candle when the minute rolls over
             last_min = self._last_candle_minute.get(inst)
@@ -237,9 +246,14 @@ class JugaadMarketDataProvider:
         if self._on_ohlcv is not None:
             try:
                 await self._on_ohlcv(candle_data)
-                logger.debug("Emitted synthetic candle for %s: O=%.2f H=%.2f L=%.2f C=%.2f",
-                             instrument, candle_data["open"], candle_data["high"],
-                             candle_data["low"], candle_data["close"])
+                logger.debug(
+                    "Emitted synthetic candle for %s: O=%.2f H=%.2f L=%.2f C=%.2f",
+                    instrument,
+                    candle_data["open"],
+                    candle_data["high"],
+                    candle_data["low"],
+                    candle_data["close"],
+                )
             except Exception as e:
                 logger.error("OHLCV callback error for %s: %s", instrument, e)
 

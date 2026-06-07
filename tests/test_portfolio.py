@@ -102,16 +102,22 @@ class TestPositionTracking:
         await store.connect()
         p = PortfolioOptimizationAgent(initial_capital=1_000_000.0, event_store=store)
         await p.event_store.connect()
-        await p._on_fill(Event(
-            event_type=EventType.FILL, stream="fill.A",
-            data={"instrument": "A", "side": "buy", "fill_quantity": 5, "fill_price": 100.0},
-            metadata=EventMetadata(producer="execution"),
-        ))
-        await p._on_fill(Event(
-            event_type=EventType.FILL, stream="fill.B",
-            data={"instrument": "B", "side": "buy", "fill_quantity": 3, "fill_price": 200.0},
-            metadata=EventMetadata(producer="execution"),
-        ))
+        await p._on_fill(
+            Event(
+                event_type=EventType.FILL,
+                stream="fill.A",
+                data={"instrument": "A", "side": "buy", "fill_quantity": 5, "fill_price": 100.0},
+                metadata=EventMetadata(producer="execution"),
+            )
+        )
+        await p._on_fill(
+            Event(
+                event_type=EventType.FILL,
+                stream="fill.B",
+                data={"instrument": "B", "side": "buy", "fill_quantity": 3, "fill_price": 200.0},
+                metadata=EventMetadata(producer="execution"),
+            )
+        )
         assert p.get_position("A")["quantity"] == 5
         assert p.get_position("B")["quantity"] == 3
         await p.event_store.disconnect()
@@ -209,11 +215,19 @@ class TestHealthCapital:
     async def test_after_fill(self):
         p = PortfolioOptimizationAgent(initial_capital=500_000.0)
         await p.event_store.connect()
-        await p._on_fill(Event(
-            event_type=EventType.FILL, stream="fill.TEST",
-            data={"instrument": "TEST", "side": "buy", "fill_quantity": 10, "fill_price": 100.0},
-            metadata=EventMetadata(producer="execution"),
-        ))
+        await p._on_fill(
+            Event(
+                event_type=EventType.FILL,
+                stream="fill.TEST",
+                data={
+                    "instrument": "TEST",
+                    "side": "buy",
+                    "fill_quantity": 10,
+                    "fill_price": 100.0,
+                },
+                metadata=EventMetadata(producer="execution"),
+            )
+        )
         health = await p.health()
         assert health["open_positions"] == 1
         assert health["total_exposure"] == 1000.0

@@ -6,15 +6,18 @@ from src.strategies.base import Strategy
 
 try:
     from sklearn.ensemble import RandomForestClassifier
+
     SKLEARN_AVAILABLE = True
 except ImportError:
     SKLEARN_AVAILABLE = False
+
 
 class MLRegimeStrategy(Strategy):
     """
     Machine Learning Strategy using Random Forest to predict direction.
     Uses rolling training window to adapt to regimes.
     """
+
     def __init__(
         self,
         lookback_window: int = 100,
@@ -32,9 +35,9 @@ class MLRegimeStrategy(Strategy):
         # Simple feature set: 1-period return, 5-period return, 10-period volatility
         features = []
         for i in range(10, len(prices)):
-            r1 = (prices[i] - prices[i-1]) / prices[i-1]
-            r5 = (prices[i] - prices[i-5]) / prices[i-5]
-            vol10 = np.std(prices[i-10:i]) / prices[i-10]
+            r1 = (prices[i] - prices[i - 1]) / prices[i - 1]
+            r5 = (prices[i] - prices[i - 5]) / prices[i - 5]
+            vol10 = np.std(prices[i - 10 : i]) / prices[i - 10]
             features.append([r1, r5, vol10])
         return np.array(features)
 
@@ -63,7 +66,7 @@ class MLRegimeStrategy(Strategy):
 
         # Re-train model periodically (every evaluation for simplicity, in reality batch it)
         # We need N samples + prediction horizon
-        train_prices = prices[-self.lookback_window:]
+        train_prices = prices[-self.lookback_window :]
 
         X = self._extract_features(train_prices)
         y = self._create_labels(train_prices)
@@ -72,7 +75,7 @@ class MLRegimeStrategy(Strategy):
         if len(X) <= self.prediction_horizon or len(y) == 0:
             return None
 
-        X_train = X[:-self.prediction_horizon]
+        X_train = X[: -self.prediction_horizon]
 
         # Ensure we have both classes
         if len(np.unique(y)) < 2:
@@ -83,7 +86,7 @@ class MLRegimeStrategy(Strategy):
 
         # Predict current state
         # The latest feature vector uses the most recent prices
-        X_current = self._extract_features(prices[-(10+1):])
+        X_current = self._extract_features(prices[-(10 + 1) :])
         if len(X_current) == 0:
             return None
 
@@ -103,8 +106,5 @@ class MLRegimeStrategy(Strategy):
             "direction": direction,
             "confidence": confidence,
             "price": prices[-1],
-            "features": {
-                "ml_prob_up": float(prob[1]),
-                "ml_prob_down": float(prob[0])
-            },
+            "features": {"ml_prob_up": float(prob[1]), "ml_prob_down": float(prob[0])},
         }

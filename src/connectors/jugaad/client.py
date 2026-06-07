@@ -42,16 +42,18 @@ class JugaadClient:
                 ts = row.get("DATE")
                 if hasattr(ts, "to_pydatetime"):
                     ts = ts.to_pydatetime()
-                candles.append({
-                    "timestamp": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
-                    "open": float(row.get("OPEN", 0)),
-                    "high": float(row.get("HIGH", 0)),
-                    "low": float(row.get("LOW", 0)),
-                    "close": float(row.get("CLOSE", 0)),
-                    "volume": int(row.get("VOLUME", 0)),
-                    "ltp": float(row.get("LTP", 0)),
-                    "vwap": float(row.get("VWAP", 0)),
-                })
+                candles.append(
+                    {
+                        "timestamp": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
+                        "open": float(row.get("OPEN", 0)),
+                        "high": float(row.get("HIGH", 0)),
+                        "low": float(row.get("LOW", 0)),
+                        "close": float(row.get("CLOSE", 0)),
+                        "volume": int(row.get("VOLUME", 0)),
+                        "ltp": float(row.get("LTP", 0)),
+                        "vwap": float(row.get("VWAP", 0)),
+                    }
+                )
             return candles
         except Exception as e:
             raise JugaadError(f"Historical data failed for {symbol}: {e}")
@@ -73,6 +75,7 @@ class JugaadClient:
         """Get live last traded prices via Yahoo Finance."""
         try:
             from src.connectors.yahoo import get_ltp_yahoo
+
             return await get_ltp_yahoo(instruments)
         except Exception as e:
             logger.warning("Yahoo LTP fallback failed: %s", e)

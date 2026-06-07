@@ -1,7 +1,7 @@
-import os
 import logging
+import os
+
 import httpx
-from typing import Any
 
 logger = logging.getLogger("utils.vault")
 
@@ -22,14 +22,14 @@ def get_secret_from_vault(secret_path: str, secret_key: str) -> str | None:
             if resp.status_code == 200:
                 data = resp.json().get("data", {}).get("data", {})
                 return data.get(secret_key)
-            
+
             # KV V1 API fallback: GET /v1/{secret_path}
             url_v1 = f"{vault_addr}/v1/{secret_path}"
             resp_v1 = client.get(url_v1, headers=headers)
             if resp_v1.status_code == 200:
                 data = resp_v1.json().get("data", {})
                 return data.get(secret_key)
-            
+
             logger.warning("Vault returned status %d for path %s", resp.status_code, secret_path)
     except Exception as e:
         logger.error("Error fetching secret from Vault: %s", e)
@@ -43,16 +43,14 @@ def get_secret_from_aws(secret_id: str, secret_key: str) -> str | None:
     except ImportError as exc:
         raise RuntimeError(
             "AWS Secrets Manager support requires boto3. "
-            "Install with: pip install -e \".[vault]\" (or include the [vault] extra)."
+            'Install with: pip install -e ".[vault]" (or include the [vault] extra).'
         ) from exc
     try:
         import json
+
         region_name = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
         session = boto3.session.Session()
-        client = session.client(
-            service_name="secretsmanager",
-            region_name=region_name
-        )
+        client = session.client(service_name="secretsmanager", region_name=region_name)
         response = client.get_secret_value(SecretId=secret_id)
         if "SecretString" in response:
             secret = response["SecretString"]
@@ -66,10 +64,16 @@ def get_secret_from_aws(secret_id: str, secret_key: str) -> str | None:
     return None
 
 
-def load_secure_secret(env_var_name: str, vault_path: str = None, vault_key: str = None, aws_secret_id: str = None, aws_secret_key: str = None) -> str:
+def load_secure_secret(
+    env_var_name: str,
+    vault_path: str = None,
+    vault_key: str = None,
+    aws_secret_id: str = None,
+    aws_secret_key: str = None,
+) -> str:
     """Load secret from configured Vault provider, falling back to environment variable."""
     provider = os.environ.get("TRA_VAULT_PROVIDER", "").lower()
-    
+
     if not vault_path:
         vault_path = "trading-system"
     if not vault_key:
@@ -89,5 +93,5 @@ def load_secure_secret(env_var_name: str, vault_path: str = None, vault_key: str
         if val:
             logger.debug("Successfully loaded secret %s from AWS Secrets Manager", env_var_name)
             return val
-            
+
     return os.environ.get(env_var_name, "")

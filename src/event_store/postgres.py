@@ -63,7 +63,8 @@ class PostgresEventStore(EventStore):
                         except Exception as e:
                             logger.warning(
                                 "Failed to create TimescaleDB hypertable (extension might be missing): %s. "
-                                "Continuing with standard Postgres table.", e
+                                "Continuing with standard Postgres table.",
+                                e,
                             )
             except Exception:
                 await pool.close()
@@ -194,9 +195,7 @@ class PostgresEventStore(EventStore):
     async def get_stream_names(self) -> list[str]:
         pool = self._get_pool()
         async with pool.acquire() as conn:
-            rows = await conn.fetch(
-                "SELECT DISTINCT stream FROM events ORDER BY stream"
-            )
+            rows = await conn.fetch("SELECT DISTINCT stream FROM events ORDER BY stream")
             return [r["stream"] for r in rows]
 
     async def get_stream_length(self, stream: str) -> int:

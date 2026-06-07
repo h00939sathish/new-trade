@@ -5,6 +5,7 @@ analytics functions orphaned from the main agent pipeline.
 
 Scheduled for removal in a future version.
 """
+
 from __future__ import annotations
 
 import warnings
@@ -103,9 +104,7 @@ def compute_portfolio_risk(
     for position in positions:
         current_sector_value = sector_values.get(position.sector, 0.0)
         sector_values[position.sector] = current_sector_value + position.market_value
-    sector_exposure = {
-        sector: value / total_value for sector, value in sector_values.items()
-    }
+    sector_exposure = {sector: value / total_value for sector, value in sector_values.items()}
     historical_var = compute_historical_var(returns)
     max_drawdown = compute_max_drawdown(equity_curve)
     breaches = _find_breaches(

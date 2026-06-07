@@ -1,6 +1,7 @@
 import logging
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
+
 import yaml
 
 logger = logging.getLogger("risk.earnings_filter")
@@ -19,9 +20,15 @@ class EarningsCalendarFilter:
                     data = yaml.safe_load(f)
                     if isinstance(data, dict):
                         self._calendar = data
-                logger.info("Loaded earnings calendar from %s with %d symbols", self.yaml_path, len(self._calendar))
+                logger.info(
+                    "Loaded earnings calendar from %s with %d symbols",
+                    self.yaml_path,
+                    len(self._calendar),
+                )
             else:
-                logger.warning("Earnings calendar file %s not found. Using empty calendar.", self.yaml_path)
+                logger.warning(
+                    "Earnings calendar file %s not found. Using empty calendar.", self.yaml_path
+                )
                 self._calendar = {}
         except Exception as e:
             logger.error("Error loading earnings calendar: %s", e)
@@ -41,5 +48,7 @@ class EarningsCalendarFilter:
                 if abs((check_date - earnings_date).days) <= 1:
                     return True
             except ValueError as e:
-                logger.warning("Invalid date format in earnings calendar for %s: %s (%s)", symbol, date_str, e)
+                logger.warning(
+                    "Invalid date format in earnings calendar for %s: %s (%s)", symbol, date_str, e
+                )
         return False

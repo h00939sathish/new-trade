@@ -13,6 +13,7 @@ async def test_ml_regime_insufficient_data():
     assert result is None
     assert not strategy.is_trained
 
+
 @pytest.mark.asyncio
 async def test_ml_regime_training_and_prediction():
     if not SKLEARN_AVAILABLE:

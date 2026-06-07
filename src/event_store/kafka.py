@@ -46,14 +46,16 @@ class KafkaEventStore(EventStore):
         producer = self._get_producer()
         topic = self._stream_to_topic(stream)
         key = event.event_id.encode()
-        value = json.dumps({
-            "event_id": event.event_id,
-            "event_type": event.event_type.value,
-            "stream": stream,
-            "timestamp": event.timestamp.isoformat(),
-            "data": event.data,
-            "metadata": event.metadata.model_dump(mode="json"),
-        }).encode()
+        value = json.dumps(
+            {
+                "event_id": event.event_id,
+                "event_type": event.event_type.value,
+                "stream": stream,
+                "timestamp": event.timestamp.isoformat(),
+                "data": event.data,
+                "metadata": event.metadata.model_dump(mode="json"),
+            }
+        ).encode()
         future = await producer.send(topic, key=key, value=value)
         result = await future
         event.position = result.offset

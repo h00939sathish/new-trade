@@ -29,18 +29,17 @@ class KiteMarketDataProvider:
         exchange: str = "NSE",
         instrument_token: int | None = None,
     ) -> None:
-        self._instruments.append({
-            "tradingsymbol": tradingsymbol,
-            "exchange": exchange,
-            "instrument_token": instrument_token,
-        })
+        self._instruments.append(
+            {
+                "tradingsymbol": tradingsymbol,
+                "exchange": exchange,
+                "instrument_token": instrument_token,
+            }
+        )
         logger.info("Added instrument: %s (%s)", tradingsymbol, exchange)
 
     def remove_instrument(self, tradingsymbol: str) -> None:
-        self._instruments = [
-            i for i in self._instruments
-            if i["tradingsymbol"] != tradingsymbol
-        ]
+        self._instruments = [i for i in self._instruments if i["tradingsymbol"] != tradingsymbol]
 
     async def start(self, poll_interval: float = 1.0) -> None:
         if self._running:
@@ -67,6 +66,7 @@ class KiteMarketDataProvider:
         days: int = 30,
     ) -> list[dict[str, Any]]:
         from datetime import timedelta
+
         to_date = datetime.now(UTC)
         from_date = to_date - timedelta(days=days)
         return self._client.get_historical_data(
@@ -88,10 +88,7 @@ class KiteMarketDataProvider:
                 if not self._instruments:
                     await asyncio.sleep(interval)
                     continue
-                symbols = [
-                    f"{i['exchange']}:{i['tradingsymbol']}"
-                    for i in self._instruments
-                ]
+                symbols = [f"{i['exchange']}:{i['tradingsymbol']}" for i in self._instruments]
                 quote_data = self._client.get_quote(symbols)
                 for symbol, data in quote_data.items():
                     if self._on_tick:
@@ -101,15 +98,17 @@ class KiteMarketDataProvider:
                         bid = buy_levels[0].get("price") if buy_levels else None
                         ask = sell_levels[0].get("price") if sell_levels else None
 
-                        await self._on_tick({
-                            "instrument": symbol.split(":")[1] if ":" in symbol else symbol,
-                            "exchange": symbol.split(":")[0] if ":" in symbol else "NSE",
-                            "last_price": data.get("last_price", 0),
-                            "volume": data.get("volume"),
-                            "depth": data.get("depth"),
-                            "bid": bid,
-                            "ask": ask,
-                        })
+                        await self._on_tick(
+                            {
+                                "instrument": symbol.split(":")[1] if ":" in symbol else symbol,
+                                "exchange": symbol.split(":")[0] if ":" in symbol else "NSE",
+                                "last_price": data.get("last_price", 0),
+                                "volume": data.get("volume"),
+                                "depth": data.get("depth"),
+                                "bid": bid,
+                                "ask": ask,
+                            }
+                        )
             except Exception as e:
                 logger.error("Poll error: %s", e)
             await asyncio.sleep(interval)

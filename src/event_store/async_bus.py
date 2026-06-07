@@ -13,6 +13,7 @@ _CRITICAL_EVENT_TYPES = {
     EventType.SYSTEM_ERROR,
 }
 
+
 class AsyncEventBus:
     _instance = None
 
@@ -69,7 +70,9 @@ class AsyncEventBus:
 
     async def publish(self, event: Event) -> None:
         # Fan-out to subscriber queues
-        etype_str = event.event_type.value if hasattr(event.event_type, "value") else str(event.event_type)
+        etype_str = (
+            event.event_type.value if hasattr(event.event_type, "value") else str(event.event_type)
+        )
         queues = self._subscribers.get(etype_str, [])
         is_critical = event.event_type in _CRITICAL_EVENT_TYPES
         for queue in queues:
@@ -86,25 +89,30 @@ class AsyncEventBus:
                         logger.error(
                             "Event bus FULL: dropped older event %s to deliver critical %s "
                             "(total dropped: %d)",
-                            dropped.event_type.value, event.event_type.value,
+                            dropped.event_type.value,
+                            event.event_type.value,
                             self._dropped_events,
                         )
                     except Exception:
                         logger.error(
                             "Event bus FULL: FAILED to deliver critical event %s "
                             "(total dropped: %d)",
-                            event.event_type.value, self._dropped_events,
+                            event.event_type.value,
+                            self._dropped_events,
                         )
                 else:
                     # Non-critical: log at warning
                     logger.warning(
                         "Event bus FULL: dropped event %s (total dropped: %d, queue_size: %d)",
-                        event.event_type.value, self._dropped_events, queue.qsize(),
+                        event.event_type.value,
+                        self._dropped_events,
+                        queue.qsize(),
                     )
 
         # Persist to event store
         if self._event_store:
             from src.event_store.memory import InMemoryEventStore
+
             if isinstance(self._event_store, InMemoryEventStore):
                 await self._event_store.append("events.bus", event)
             else:
@@ -123,6 +131,7 @@ class AsyncEventBus:
                 event.event_id,
                 event.event_type.value,
             )
+
 
 # Singleton instance
 event_bus = AsyncEventBus()

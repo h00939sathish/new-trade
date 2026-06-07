@@ -44,7 +44,7 @@ class ReflectionEngineAgent(BaseAgent):
         self._last_evaluation_pnl = 0.0
         self._last_baseline_result: Any = None
         self._pending_mutation: dict[str, Any] | None = None
-        
+
         self._candidates: dict[str, Any] = {}
         self._candidates_path = Path("config/candidates.yaml")
         self._load_candidates()
@@ -54,7 +54,7 @@ class ReflectionEngineAgent(BaseAgent):
             with self._candidates_path.open() as f:
                 self._candidates = yaml.safe_load(f) or {}
             self.logger.info("Loaded %d shadow candidates", len(self._candidates))
-            
+
     def _save_candidates(self) -> None:
         self._candidates_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._candidates_path.with_suffix(".yaml.tmp")
@@ -67,6 +67,7 @@ class ReflectionEngineAgent(BaseAgent):
         if not system or not hasattr(system, "strategy_gen"):
             return
         from src.config.strategy_config import STRATEGY_REGISTRY
+
         for cand_id, cand_data in self._candidates.items():
             if cand_data.get("status") == "active":
                 strat_name = cand_data.get("strategy")
@@ -103,7 +104,9 @@ class ReflectionEngineAgent(BaseAgent):
         self._fill_buffer.append(fill)
         self.logger.debug(
             "Fill recorded: %s %d@%.2f",
-            fill.side.value, fill.fill_quantity, fill.fill_price,
+            fill.side.value,
+            fill.fill_quantity,
+            fill.fill_price,
         )
 
         if len(self._fill_buffer) >= settings.reflection_eval_window:
@@ -113,24 +116,25 @@ class ReflectionEngineAgent(BaseAgent):
         cand_id = event.data.get("strategy")
         if not cand_id or cand_id not in self._candidates:
             return
-        
+
         cand = self._candidates[cand_id]
         if cand.get("status") != "active":
             return
-            
+
         direction = event.data.get("direction")
         price = event.data.get("price")
         if not price or direction == "neutral":
             return
-            
+
         current_pos = cand.get("position", 0)
         from src.risk.costs import TransactionCostModel
+
         # Basic flat model for estimation
         cost_model = TransactionCostModel(brokerage_pct=0.0003, slippage_bps=5.0)
-        
+
         # Simple stop-and-reverse shadow execution
-        qty = 100 # fixed paper trade quantity for evaluation
-        
+        qty = 100  # fixed paper trade quantity for evaluation
+
         if direction == "long" and current_pos <= 0:
             if current_pos < 0:
                 # Cover short
@@ -145,7 +149,7 @@ class ReflectionEngineAgent(BaseAgent):
             cand["realized_pnl"] -= cost_model.total_cost("buy", qty, price)
             self._save_candidates()
             self.logger.info("Candidate %s went LONG at %.2f", cand_id, price)
-            
+
         elif direction == "short" and current_pos >= 0:
             if current_pos > 0:
                 # Sell long
@@ -169,7 +173,7 @@ class ReflectionEngineAgent(BaseAgent):
             "Reflection cycle triggered (%d fills accumulated)",
             len(self._fill_buffer),
         )
-        self._fill_buffer = self._fill_buffer[settings.reflection_eval_window:]
+        self._fill_buffer = self._fill_buffer[settings.reflection_eval_window :]
 
         self._evaluate_candidates()
 
@@ -194,7 +198,8 @@ class ReflectionEngineAgent(BaseAgent):
         rationale = hypothesis.get("rationale", "")[:100]
         self.logger.info(
             "Best Parameter Set found: %s -> %s",
-            hypothesis.get("strategy"), rationale,
+            hypothesis.get("strategy"),
+            rationale,
         )
 
         mutated_result = hypothesis.pop("result")
@@ -211,15 +216,17 @@ class ReflectionEngineAgent(BaseAgent):
             "realized_pnl": 0.0,
             "trades": 0,
             "status": "active",
-            "backtest_improvement": improvement
+            "backtest_improvement": improvement,
         }
         self._candidates[cand_id] = candidate
         self._save_candidates()
-        
+
         self.logger.warning(
             "CANDIDATE CREATED for 30-day shadow testing: %s. "
             "baseline_sharpe=%.3f -> proposed_sharpe=%.3f. ",
-            cand_id, current_result.sharpe_ratio, mutated_result.sharpe_ratio,
+            cand_id,
+            current_result.sharpe_ratio,
+            mutated_result.sharpe_ratio,
         )
         self._inject_candidates()
         self._last_baseline_result = current_result
@@ -233,15 +240,24 @@ class ReflectionEngineAgent(BaseAgent):
                 if end_date_str:
                     end_date = datetime.fromisoformat(end_date_str)
                     if now >= end_date:
-                        cand["status"] = "pending_live_approval" if cand.get("realized_pnl", 0) > 0 else "rejected"
+                        cand["status"] = (
+                            "pending_live_approval"
+                            if cand.get("realized_pnl", 0) > 0
+                            else "rejected"
+                        )
                         updated = True
-                        self.logger.warning("Candidate %s finished 30-day evaluation. Final PnL: %.2f. Status: %s", 
-                                            cand_id, cand.get("realized_pnl", 0), cand["status"])
+                        self.logger.warning(
+                            "Candidate %s finished 30-day evaluation. Final PnL: %.2f. Status: %s",
+                            cand_id,
+                            cand.get("realized_pnl", 0),
+                            cand["status"],
+                        )
         if updated:
             self._save_candidates()
 
     async def _find_best_mutation(self, baseline_result: Any) -> dict[str, Any] | None:
         from src.config.strategy_config import load_strategy_config
+
         cfg = load_strategy_config(str(self._strategy_config_path))
 
         best_strategy = None
@@ -279,10 +295,11 @@ class ReflectionEngineAgent(BaseAgent):
                 "window": [10, 14, 18],
                 "multiplier": [1.5, 2.0, 2.5],
                 "threshold": [0.005, 0.01, 0.015],
-            }
+            },
         }
 
         import itertools
+
         for strat_name, strat_cfg in cfg.get("strategies", {}).items():
             if not strat_cfg.get("enabled", True):
                 continue
@@ -323,7 +340,8 @@ class ReflectionEngineAgent(BaseAgent):
         return None
 
     async def _run_backtest(
-        self, strategy_config_override: dict[str, Any] | None = None,
+        self,
+        strategy_config_override: dict[str, Any] | None = None,
     ) -> Any:
         try:
             from src.backtest.engine import BacktestEngine
@@ -387,12 +405,18 @@ class ReflectionEngineAgent(BaseAgent):
         overall = score >= 2 and dd_ok
         self.logger.info(
             "Improvement check: sharpe=%s win_rate=%s pnl=%s dd=%s -> %s",
-            sharpe_improvement, win_rate_improvement, pnl_improvement, dd_ok, overall,
+            sharpe_improvement,
+            win_rate_improvement,
+            pnl_improvement,
+            dd_ok,
+            overall,
         )
         return overall
 
     async def _apply_mutation(
-        self, hypothesis: dict[str, Any], result: Any,
+        self,
+        hypothesis: dict[str, Any],
+        result: Any,
     ) -> None:
         if not settings.reflection_mutation_enabled:
             self.logger.warning(
@@ -407,7 +431,9 @@ class ReflectionEngineAgent(BaseAgent):
             return
 
         self.logger.info(
-            "Applying mutation: %s params=%s", strategy_name, param_changes,
+            "Applying mutation: %s params=%s",
+            strategy_name,
+            param_changes,
         )
 
         cfg = load_yaml_config(self._strategy_config_path)
@@ -417,32 +443,45 @@ class ReflectionEngineAgent(BaseAgent):
 
             logger.info(
                 "Mutation applied: strategy=%s params=%s sharpe=%.3f pnl=%.2f",
-                strategy_name, param_changes, result.sharpe_ratio, result.total_pnl,
+                strategy_name,
+                param_changes,
+                result.sharpe_ratio,
+                result.total_pnl,
             )
 
-            await self.emit(SystemEvent.health(
-                component=self.name,
-                status="mutation_applied",
-                details={
-                    "strategy": strategy_name,
-                    "params": param_changes,
-                    "sharpe": round(result.sharpe_ratio, 3),
-                    "win_rate": round(result.win_rate, 3),
-                    "pnl": round(result.total_pnl, 2),
-                    "total_trades": result.total_trades,
-                },
-            ))
+            await self.emit(
+                SystemEvent.health(
+                    component=self.name,
+                    status="mutation_applied",
+                    details={
+                        "strategy": strategy_name,
+                        "params": param_changes,
+                        "sharpe": round(result.sharpe_ratio, 3),
+                        "win_rate": round(result.win_rate, 3),
+                        "pnl": round(result.total_pnl, 2),
+                        "total_trades": result.total_trades,
+                    },
+                )
+            )
             self.logger.info("Mutation applied and committed: %s", strategy_name)
 
     async def health(self) -> dict[str, Any]:
         base = await super().health()
-        base.update({
-            "fill_buffer_size": len(self._fill_buffer),
-            "eval_window": settings.reflection_eval_window,
-            "active_candidates": sum(1 for c in self._candidates.values() if c.get("status") == "active"),
-            "pending_candidates": sum(1 for c in self._candidates.values() if c.get("status") == "pending_live_approval"),
-            "baseline_pnl": self._baseline_pnl,
-        })
+        base.update(
+            {
+                "fill_buffer_size": len(self._fill_buffer),
+                "eval_window": settings.reflection_eval_window,
+                "active_candidates": sum(
+                    1 for c in self._candidates.values() if c.get("status") == "active"
+                ),
+                "pending_candidates": sum(
+                    1
+                    for c in self._candidates.values()
+                    if c.get("status") == "pending_live_approval"
+                ),
+                "baseline_pnl": self._baseline_pnl,
+            }
+        )
         return base
 
     async def approve_candidate(self, candidate_id: str) -> bool:
@@ -451,65 +490,77 @@ class ReflectionEngineAgent(BaseAgent):
         if not cand:
             self.logger.warning("Candidate %s not found", candidate_id)
             return False
-        
+
         if cand.get("status") != "pending_live_approval":
-            self.logger.warning("Candidate %s is not pending approval (status: %s)", candidate_id, cand.get("status"))
+            self.logger.warning(
+                "Candidate %s is not pending approval (status: %s)",
+                candidate_id,
+                cand.get("status"),
+            )
             return False
-            
+
         strategy_name = cand.get("strategy")
         param_changes = cand.get("params", {})
 
         # 1. Backtest validation gating (Phase 2)
         self.logger.info("Running validation backtest for candidate %s...", candidate_id)
-        
+
         # Baseline backtest
         baseline_res = await self._run_backtest()
         if not baseline_res:
             self.logger.warning("Validation Gating: Baseline backtest failed. Aborting approval.")
             return False
-            
+
         # Mutated/Candidate backtest
         override = {strategy_name: {"params": param_changes, "enabled": True}}
         mutated_res = await self._run_backtest(strategy_config_override=override)
         if not mutated_res:
             self.logger.warning("Validation Gating: Mutated backtest failed. Aborting approval.")
             return False
-            
+
         # Check Sharpe ratio improvement
         sharpe_improvement = mutated_res.sharpe_ratio - baseline_res.sharpe_ratio
         req_improvement = getattr(settings, "reflection_backtest_gate_threshold", 0.0)
-        
+
         self.logger.info(
             "Validation Gate Sharpe ratios: baseline=%.3f, candidate=%.3f, improvement=%.3f (required >= %.3f)",
-            baseline_res.sharpe_ratio, mutated_res.sharpe_ratio, sharpe_improvement, req_improvement
+            baseline_res.sharpe_ratio,
+            mutated_res.sharpe_ratio,
+            sharpe_improvement,
+            req_improvement,
         )
-        
+
         if sharpe_improvement < req_improvement:
             self.logger.warning(
                 "Validation Gate FAILED: candidate improvement %.3f < %.3f. Rejecting candidate.",
-                sharpe_improvement, req_improvement
+                sharpe_improvement,
+                req_improvement,
             )
             cand["status"] = "failed_gate"
             self._save_candidates()
             return False
-            
+
         self.logger.info("Validation Gate PASSED! Approving candidate %s", candidate_id)
-        
-        self.logger.info("Approving Candidate %s -> %s params=%s", candidate_id, strategy_name, param_changes)
-        
+
+        self.logger.info(
+            "Approving Candidate %s -> %s params=%s", candidate_id, strategy_name, param_changes
+        )
+
         cfg = load_yaml_config(self._strategy_config_path)
         if strategy_name in cfg.get("strategies", {}):
             cfg["strategies"][strategy_name]["params"].update(param_changes)
             save_yaml_config(self._strategy_config_path, cfg)
-            
+
             cand["status"] = "approved"
             self._save_candidates()
-            
-            await self.emit(SystemEvent.health(
-                component=self.name,
-                status="candidate_approved",
-                details={"candidate_id": candidate_id, "strategy": strategy_name}
-            ))
+
+            await self.emit(
+                SystemEvent.health(
+                    component=self.name,
+                    status="candidate_approved",
+                    details={"candidate_id": candidate_id, "strategy": strategy_name},
+                )
+            )
             return True
         return False
 
@@ -519,11 +570,11 @@ class ReflectionEngineAgent(BaseAgent):
         if not cand:
             self.logger.warning("Candidate %s not found", candidate_id)
             return False
-            
+
         if cand.get("status") != "pending_live_approval":
             self.logger.warning("Candidate %s is not pending approval", candidate_id)
             return False
-            
+
         cand["status"] = "rejected"
         self._save_candidates()
         self.logger.info("Candidate REJECTED: %s", candidate_id)
@@ -585,6 +636,7 @@ class GeminiClient:
     def _build_prompt(self, result: Any, history: list[dict[str, Any]]) -> str:
         strat_lines = []
         from src.config.strategy_config import load_strategy_config
+
         cfg = load_strategy_config(str(STRATEGIES_PATH))
         for name, sc in cfg.get("strategies", {}).items():
             if sc.get("enabled", True):
@@ -614,12 +666,12 @@ class GeminiClient:
             f"  Profit factor: {result.profit_factor:.2f}\n\n"
             f"Recent mutation history:\n"
             f"{chr(10).join(history_lines) if history_lines else '  (none)'}\n\n"
-            'Suggest ONE strategy parameter mutation to improve performance.\n'
-            'Return JSON only:\n'
+            "Suggest ONE strategy parameter mutation to improve performance.\n"
+            "Return JSON only:\n"
             '{"strategy": "strategy_name", "params": {"param1": new_value}, '
             '"rationale": "why this change"}\n'
-            'Pick a strategy name from the config above. '
-            'Change only 1-2 numeric params slightly (+-10-30%).\n'
+            "Pick a strategy name from the config above. "
+            "Change only 1-2 numeric params slightly (+-10-30%).\n"
             "Do not change enabling/disabling or weight. Only mutate params.\n"
             "Return ONLY valid JSON, no markdown."
         )
@@ -639,6 +691,7 @@ class GeminiClient:
         if result.total_trades < 5:
             return None
         from src.config.strategy_config import load_strategy_config
+
         cfg = load_strategy_config(str(STRATEGIES_PATH))
         for name, sc in cfg.get("strategies", {}).items():
             if not sc.get("enabled", True):
@@ -667,6 +720,7 @@ def load_yaml_config(path: Path) -> dict[str, Any]:
         with path.open() as f:
             return yaml.safe_load(f) or {}
     from src.config.strategy_config import DEFAULT_CONFIG
+
     return dict(DEFAULT_CONFIG)
 
 
@@ -677,5 +731,3 @@ def save_yaml_config(path: Path, cfg: dict[str, Any]) -> None:
         yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
     tmp.rename(path)
     logger.info("Config saved to %s", path)
-
-

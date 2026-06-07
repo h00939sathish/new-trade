@@ -32,19 +32,19 @@ class PortfolioOptimizationAgent(BaseAgent):
         self._optimizer: InstitutionalPortfolioOptimizer | None = None
 
     async def on_start(self) -> None:
-        self.logger.info(
-            "Portfolio Optimization Agent initializing (capital=%.0f)", self._capital
-        )
+        self.logger.info("Portfolio Optimization Agent initializing (capital=%.0f)", self._capital)
         self.subscribe(EventType.FILL)
         self.subscribe(EventType.SIGNAL)
         self.subscribe(EventType.PORTFOLIO_UPDATE)
         self.subscribe(EventType.TICK)
 
         from src.monitoring.decay_detector import PerformanceDecayDetector
+
         self.decay_detector = PerformanceDecayDetector(system=getattr(self, "system", None))
 
         # Initialise the institutional optimizer from settings
         from src.config.settings import settings
+
         self._optimizer = InstitutionalPortfolioOptimizer(
             regime=getattr(settings, "portfolio_optimizer_regime", "risk_parity"),
             min_weight=getattr(settings, "portfolio_optimizer_min_weight", 0.05),
@@ -58,6 +58,7 @@ class PortfolioOptimizationAgent(BaseAgent):
     async def _reconciliation_loop(self) -> None:
         await asyncio.sleep(5.0)
         from src.risk.reconciliation import reconcile_positions
+
         while self._running:
             try:
                 system_ref = getattr(self, "system", None)
@@ -105,6 +106,7 @@ class PortfolioOptimizationAgent(BaseAgent):
 
         # Delegate quantity/avg_price to the registry
         from src.risk.position_registry import position_registry
+
         reg_pos = await position_registry.update_from_fill(instrument, side, quantity, price)
         reg_qty = reg_pos.get("quantity", 0)
         reg_avg = reg_pos.get("avg_price", 0.0)
@@ -112,26 +114,29 @@ class PortfolioOptimizationAgent(BaseAgent):
         txn_fee = event.data.get("commission")
         if txn_fee is None:
             from src.risk.costs import TransactionCostModel
+
             cost_model = TransactionCostModel()
             txn_fee = cost_model.total_cost(side, quantity, price, product=product)
 
         if side == "buy":
             pos["total_bought"] += quantity
-            self._capital -= (cost + txn_fee)  # Deduct cash and entry fees (Bug 2.2 + 3.1)
+            self._capital -= cost + txn_fee  # Deduct cash and entry fees (Bug 2.2 + 3.1)
         else:
             pos["total_sold"] += quantity
             # PnL uses registry's avg_price as the cost basis (SSOT)
             realized_pnl = (price - reg_avg) * quantity
             self._pnl += realized_pnl
-            self._capital += (cost - txn_fee)  # Credit cash and deduct exit fees (Bug 2.2 + 3.1)
-            self._trade_history.append({
-                "instrument": instrument,
-                "side": "sell",
-                "quantity": quantity,
-                "price": price,
-                "realized_pnl": realized_pnl,
-                "avg_cost": reg_avg,
-            })
+            self._capital += cost - txn_fee  # Credit cash and deduct exit fees (Bug 2.2 + 3.1)
+            self._trade_history.append(
+                {
+                    "instrument": instrument,
+                    "side": "sell",
+                    "quantity": quantity,
+                    "price": price,
+                    "realized_pnl": realized_pnl,
+                    "avg_cost": reg_avg,
+                }
+            )
 
             strategy_name = "unknown"
             system_ref = getattr(self, "system", None)
@@ -144,7 +149,9 @@ class PortfolioOptimizationAgent(BaseAgent):
                 if strategy_name not in self._strategy_returns:
                     self._strategy_returns[strategy_name] = deque(maxlen=500)
                 # Store return as fraction of allocated capital for that strategy
-                alloc = self._capital * self._strategy_weights.get(strategy_name, 1.0 / max(1, len(self._strategy_returns)))
+                alloc = self._capital * self._strategy_weights.get(
+                    strategy_name, 1.0 / max(1, len(self._strategy_returns))
+                )
                 ret_frac = realized_pnl / alloc if alloc > 0 else 0.0
                 self._strategy_returns[strategy_name].append(ret_frac)
 
@@ -153,7 +160,9 @@ class PortfolioOptimizationAgent(BaseAgent):
 
         self.logger.info(
             "Position %s: qty=%d avg_cost=%.2f",
-            instrument, reg_qty, reg_avg,
+            instrument,
+            reg_qty,
+            reg_avg,
         )
 
         await self._emit_portfolio_update(instrument, side)
@@ -167,7 +176,9 @@ class PortfolioOptimizationAgent(BaseAgent):
         self._kelly_fractions[instrument] = kelly
         self.logger.debug(
             "Kelly fraction for %s %s: %.2f%%",
-            instrument, direction, kelly * 100,
+            instrument,
+            direction,
+            kelly * 100,
         )
 
     def _on_portfolio_update(self, event: Event) -> None:
@@ -181,6 +192,7 @@ class PortfolioOptimizationAgent(BaseAgent):
         # The portfolio agent's _positions only tracks cumulative accounting
         # (total_bought, total_sold, product) which the registry does not.
         from src.risk.position_registry import position_registry
+
         reg = position_registry.get_position(instrument)
         local = self._positions.get(instrument, {})
         return {
@@ -196,6 +208,7 @@ class PortfolioOptimizationAgent(BaseAgent):
 
     def get_total_exposure(self) -> float:
         from src.risk.position_registry import position_registry
+
         return sum(
             abs(p.get("quantity", 0)) * p.get("avg_price", 0.0)
             for p in position_registry.get_all_positions().values()
@@ -250,21 +263,23 @@ class PortfolioOptimizationAgent(BaseAgent):
                 result.expected_vol,
             )
             # Emit rebalance event with enriched payload
-            await self.emit(Event(
-                event_type=EventType.PORTFOLIO_REBALANCE,
-                stream="portfolio.rebalance",
-                data={
-                    "weights": result.weights,
-                    "regime_used": result.regime_used,
-                    "expected_return": result.expected_return,
-                    "expected_vol": result.expected_vol,
-                    "sharpe": result.sharpe,
-                    "cov_condition_number": result.cov_condition_number,
-                    "shrinkage_intensity": result.shrinkage_intensity,
-                    "converged": result.converged,
-                },
-                metadata={"producer": self.name},
-            ))
+            await self.emit(
+                Event(
+                    event_type=EventType.PORTFOLIO_REBALANCE,
+                    stream="portfolio.rebalance",
+                    data={
+                        "weights": result.weights,
+                        "regime_used": result.regime_used,
+                        "expected_return": result.expected_return,
+                        "expected_vol": result.expected_vol,
+                        "sharpe": result.sharpe,
+                        "cov_condition_number": result.cov_condition_number,
+                        "shrinkage_intensity": result.shrinkage_intensity,
+                        "converged": result.converged,
+                    },
+                    metadata={"producer": self.name},
+                )
+            )
             return
 
         # --- Instrument-level fallback (if not enough strategy data yet) ---
@@ -286,20 +301,22 @@ class PortfolioOptimizationAgent(BaseAgent):
             result.regime_used,
             {k: f"{v:.1%}" for k, v in result.weights.items()},
         )
-        await self.emit(Event(
-            event_type=EventType.PORTFOLIO_REBALANCE,
-            stream="portfolio.rebalance",
-            data={
-                "weights": result.weights,
-                "regime_used": result.regime_used,
-                "expected_return": result.expected_return,
-                "expected_vol": result.expected_vol,
-                "sharpe": result.sharpe,
-                "converged": result.converged,
-                "level": "instrument_fallback",
-            },
-            metadata={"producer": self.name},
-        ))
+        await self.emit(
+            Event(
+                event_type=EventType.PORTFOLIO_REBALANCE,
+                stream="portfolio.rebalance",
+                data={
+                    "weights": result.weights,
+                    "regime_used": result.regime_used,
+                    "expected_return": result.expected_return,
+                    "expected_vol": result.expected_vol,
+                    "sharpe": result.sharpe,
+                    "converged": result.converged,
+                    "level": "instrument_fallback",
+                },
+                metadata={"producer": self.name},
+            )
+        )
 
     def get_strategy_weights(self) -> dict[str, float]:
         """Return the current optimal strategy weights for capital allocation."""
@@ -313,18 +330,19 @@ class PortfolioOptimizationAgent(BaseAgent):
         # Check KillSwitch limits before emitting
         from src.config.settings import settings
         from src.risk.kill_switch import KillSwitch
+
         ks = KillSwitch()
         ks.setup(
             daily_loss_pct=getattr(settings, "kill_switch_daily_loss_pct", 0.01),
             max_drawdown_pct=getattr(settings, "kill_switch_max_drawdown_pct", 0.05),
-            initial_capital=self._peak_capital
+            initial_capital=self._peak_capital,
         )
         system_ref = getattr(self, "system", None)
         await ks.check_limits(
             current_capital=total_value,
             current_pnl=self._pnl,
             peak_capital=self._peak_capital,
-            system=system_ref
+            system=system_ref,
         )
 
         event = PortfolioEvent.create(
@@ -341,42 +359,51 @@ class PortfolioOptimizationAgent(BaseAgent):
         """Combine registry (SSOT) with portfolio-local cumulative accounting
         into a single payload for the PORTFOLIO_UPDATE event."""
         from src.risk.position_registry import position_registry
-        all_instruments = set(self._positions.keys()) | set(position_registry.get_all_positions().keys())
+
+        all_instruments = set(self._positions.keys()) | set(
+            position_registry.get_all_positions().keys()
+        )
         out: list[dict[str, Any]] = []
         for instrument in sorted(all_instruments):
             reg = position_registry.get_position(instrument)
             local = self._positions.get(instrument, {})
-            out.append({
-                "instrument": instrument,
-                "quantity": reg.get("quantity", 0),
-                "avg_cost": reg.get("avg_price", 0.0),
-                "side": reg.get("side"),
-                "stop_loss": reg.get("stop_loss", 0.0),
-                "take_profit": reg.get("take_profit", 0.0),
-                "total_bought": local.get("total_bought", 0),
-                "total_sold": local.get("total_sold", 0),
-                "product": local.get("product", "mis"),
-            })
+            out.append(
+                {
+                    "instrument": instrument,
+                    "quantity": reg.get("quantity", 0),
+                    "avg_cost": reg.get("avg_price", 0.0),
+                    "side": reg.get("side"),
+                    "stop_loss": reg.get("stop_loss", 0.0),
+                    "take_profit": reg.get("take_profit", 0.0),
+                    "total_bought": local.get("total_bought", 0),
+                    "total_sold": local.get("total_sold", 0),
+                    "product": local.get("product", "mis"),
+                }
+            )
         return out
 
     async def health(self) -> dict[str, Any]:
         base = await super().health()
         from src.risk.position_registry import position_registry
+
         open_qty = sum(
             1 for p in position_registry.get_all_positions().values() if p.get("quantity", 0) != 0
         )
-        base.update({
-            "capital": self._capital,
-            "peak_capital": self._peak_capital,
-            "pnl": self._pnl,
-            "reconciliation_matched": self._reconciliation_matched,
-            "open_positions": open_qty,
-            "total_exposure": self.get_total_exposure(),
-        })
+        base.update(
+            {
+                "capital": self._capital,
+                "peak_capital": self._peak_capital,
+                "pnl": self._pnl,
+                "reconciliation_matched": self._reconciliation_matched,
+                "open_positions": open_qty,
+                "total_exposure": self.get_total_exposure(),
+            }
+        )
         return base
 
     async def on_stop(self) -> None:
         self.logger.info(
             "Portfolio Agent stopping. P&L: %.2f, Capital: %.2f",
-            self._pnl, self._capital,
+            self._pnl,
+            self._capital,
         )

@@ -9,6 +9,7 @@ class VolatilityBreakoutStrategy(Strategy):
     Goes long if price breaks highest high of N periods.
     Goes short if price breaks lowest low of N periods.
     """
+
     def __init__(
         self,
         window: int = 20,
@@ -34,8 +35,8 @@ class VolatilityBreakoutStrategy(Strategy):
             return None
 
         # The previous N periods (excluding current incomplete period)
-        prev_highs = highs[-(self.window + 1):-1]
-        prev_lows = lows[-(self.window + 1):-1]
+        prev_highs = highs[-(self.window + 1) : -1]
+        prev_lows = lows[-(self.window + 1) : -1]
 
         highest_high = max(prev_highs)
         lowest_low = min(prev_lows)
@@ -54,7 +55,11 @@ class VolatilityBreakoutStrategy(Strategy):
 
         channel_width = highest_high - lowest_low
         if channel_width > 0:
-            dist = (current_price - highest_high) if direction == "long" else (lowest_low - current_price)
+            dist = (
+                (current_price - highest_high)
+                if direction == "long"
+                else (lowest_low - current_price)
+            )
             confidence = min(0.5 + 0.5 * (dist / channel_width), 0.95)
         else:
             confidence = 0.6
@@ -66,6 +71,8 @@ class VolatilityBreakoutStrategy(Strategy):
             "features": {
                 "highest_high": highest_high,
                 "lowest_low": lowest_low,
-                "breakout_distance": current_price - highest_high if direction == "long" else lowest_low - current_price
+                "breakout_distance": current_price - highest_high
+                if direction == "long"
+                else lowest_low - current_price,
             },
         }

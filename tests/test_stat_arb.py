@@ -12,6 +12,7 @@ async def test_stat_arb_insufficient_data():
     assert result1 is None
     assert result2 is None
 
+
 @pytest.mark.asyncio
 async def test_stat_arb_signal():
     strategy = StatArbStrategy(window=10, entry_z=1.0)

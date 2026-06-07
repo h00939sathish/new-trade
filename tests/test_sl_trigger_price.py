@@ -16,20 +16,14 @@ These tests verify the trigger_price plumbing:
 5. After risk approval, the OrderEvent in _pending_orders has the
    correct trigger_price
 """
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock
 
 from src.agents.execution import ExecutionAgent
-from src.event_store.memory import InMemoryEventStore
 from src.risk.kill_switch import KillSwitch
 from src.schemas.events import (
-    Event,
-    EventMetadata,
     EventType,
-    Exchange,
-    ProductType,
     OrderSide,
-    OrderType,
 )
 
 
@@ -121,9 +115,7 @@ async def test_signal_without_sl_pct_has_no_trigger():
 
     assert len(agent._pending_orders) == 1
     order = next(iter(agent._pending_orders.values()))
-    assert order.trigger_price is None, (
-        f"Expected trigger_price=None, got {order.trigger_price}"
-    )
+    assert order.trigger_price is None, f"Expected trigger_price=None, got {order.trigger_price}"
 
 
 @pytest.mark.asyncio
@@ -192,9 +184,11 @@ async def test_order_proposed_event_has_trigger_price():
     # Capture emitted events
     emitted = []
     original_emit = agent.emit
+
     async def capture_emit(event):
         emitted.append(event)
         await original_emit(event)
+
     agent.emit = capture_emit
 
     signal = {

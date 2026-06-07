@@ -50,16 +50,20 @@ async def test_symbol_index_refreshes_and_persists_cache(tmp_path):
 @pytest.mark.asyncio
 async def test_symbol_index_loads_fresh_cache_without_network(tmp_path):
     path = tmp_path / "angel_symbols.json"
-    path.write_text(json.dumps({
-        "updated_at": 1_000.0,
-        "symbols": {
-            "2885": {
-                "tradingsymbol": "RELIANCE-EQ",
-                "name": "RELIANCE",
-                "exchange": "NSE",
-            },
-        },
-    }))
+    path.write_text(
+        json.dumps(
+            {
+                "updated_at": 1_000.0,
+                "symbols": {
+                    "2885": {
+                        "tradingsymbol": "RELIANCE-EQ",
+                        "name": "RELIANCE",
+                        "exchange": "NSE",
+                    },
+                },
+            }
+        )
+    )
 
     async def fetch_symbols():
         raise AssertionError("fresh cache should avoid network")
@@ -72,16 +76,20 @@ async def test_symbol_index_loads_fresh_cache_without_network(tmp_path):
 @pytest.mark.asyncio
 async def test_symbol_index_uses_stale_cache_when_refresh_fails(tmp_path):
     path = tmp_path / "angel_symbols.json"
-    path.write_text(json.dumps({
-        "updated_at": 1.0,
-        "symbols": {
-            "2885": {
-                "tradingsymbol": "RELIANCE-EQ",
-                "name": "RELIANCE",
-                "exchange": "NSE",
-            },
-        },
-    }))
+    path.write_text(
+        json.dumps(
+            {
+                "updated_at": 1.0,
+                "symbols": {
+                    "2885": {
+                        "tradingsymbol": "RELIANCE-EQ",
+                        "name": "RELIANCE",
+                        "exchange": "NSE",
+                    },
+                },
+            }
+        )
+    )
 
     async def fetch_symbols():
         raise TimeoutError("Angel master contract unavailable")

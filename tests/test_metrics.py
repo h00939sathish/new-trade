@@ -63,6 +63,7 @@ class TestMetricsCollector:
 
     def test_start_sets_uptime(self):
         import time
+
         m = MetricsCollector()
         m.start()
         time.sleep(0.01)

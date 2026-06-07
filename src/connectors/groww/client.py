@@ -89,12 +89,17 @@ class GrowwClient:
             return response.json()
 
         try:
-            return await with_retry(make_call, exceptions=(httpx.HTTPError, httpx.TimeoutException, httpx.RequestError))
+            return await with_retry(
+                make_call, exceptions=(httpx.HTTPError, httpx.TimeoutException, httpx.RequestError)
+            )
         except Exception as exc:
-            raise GrowwAPIError(f"Failed to execute Groww request at {path} after retries: {exc}") from exc
+            raise GrowwAPIError(
+                f"Failed to execute Groww request at {path} after retries: {exc}"
+            ) from exc
 
     async def _refresh_token(self) -> bool:
         import pyotp
+
         if not self.auth_token or not self.totp_secret:
             logger.error("Cannot refresh Groww token: missing auth_token or totp_secret")
             return False
@@ -126,23 +131,33 @@ class GrowwClient:
             logger.error("Groww token refresh error: %s", e)
             return False
 
-    async def get_live_quote(self, trading_symbol: str, exchange: str = "NSE", segment: str = "CASH") -> dict:
+    async def get_live_quote(
+        self, trading_symbol: str, exchange: str = "NSE", segment: str = "CASH"
+    ) -> dict:
         return await self._request(
             "GET",
             "/live-data/quote",
             params={"exchange": exchange, "segment": segment, "trading_symbol": trading_symbol},
         )
 
-    async def get_ltp(self, trading_symbols: list[str], exchange: str = "NSE", segment: str = "CASH") -> dict:
+    async def get_ltp(
+        self, trading_symbols: list[str], exchange: str = "NSE", segment: str = "CASH"
+    ) -> dict:
         exchange_symbols = ",".join(f"{exchange}_{s}" for s in trading_symbols)
         return await self._request(
-            "GET", "/live-data/ltp", params={"segment": segment, "exchange_symbols": exchange_symbols}
+            "GET",
+            "/live-data/ltp",
+            params={"segment": segment, "exchange_symbols": exchange_symbols},
         )
 
-    async def get_ohlc(self, trading_symbols: list[str], exchange: str = "NSE", segment: str = "CASH") -> dict:
+    async def get_ohlc(
+        self, trading_symbols: list[str], exchange: str = "NSE", segment: str = "CASH"
+    ) -> dict:
         exchange_symbols = ",".join(f"{exchange}_{s}" for s in trading_symbols)
         return await self._request(
-            "GET", "/live-data/ohlc", params={"segment": segment, "exchange_symbols": exchange_symbols}
+            "GET",
+            "/live-data/ohlc",
+            params={"segment": segment, "exchange_symbols": exchange_symbols},
         )
 
     async def get_historical_candles(

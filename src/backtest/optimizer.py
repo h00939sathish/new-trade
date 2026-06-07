@@ -24,7 +24,9 @@ class OptimizationResult:
         ]
         if self.best_result:
             r = self.best_result
-            lines.append(f"Sharpe: {r.sharpe_ratio:.3f}, Win Rate: {r.win_rate:.1%}, PnL: {r.total_pnl:.2f}")
+            lines.append(
+                f"Sharpe: {r.sharpe_ratio:.3f}, Win Rate: {r.win_rate:.1%}, PnL: {r.total_pnl:.2f}"
+            )
         return "\n".join(lines)
 
 

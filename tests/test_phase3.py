@@ -27,6 +27,7 @@ def test_transaction_cost_model():
     cost_sell = model.total_cost("sell", 100, 100.0, product="mis")
     assert cost_sell > 0
 
+
 def test_intelligent_position_sizing():
     agent = ExecutionAgent()
 
@@ -48,6 +49,7 @@ def test_intelligent_position_sizing():
     qty_low_vol = agent._calculate_quantity(0.8, 100.0, 100000.0, 0.1)
     assert qty_low_vol == 50
 
+
 @pytest.mark.asyncio
 async def test_async_event_bus_routing():
     bus = AsyncEventBus()
@@ -57,12 +59,13 @@ async def test_async_event_bus_routing():
         event_type=EventType.TICK,
         stream="tick.NSE.RELIANCE",
         data={"last_price": 2500.0},
-        metadata=EventMetadata(producer="market_intel")
+        metadata=EventMetadata(producer="market_intel"),
     )
     await bus.publish(event)
 
     received = await queue.get()
     assert received.event_id == event.event_id
+
 
 @pytest.mark.asyncio
 async def test_strategy_gen_sl_tp_exits():
@@ -74,9 +77,12 @@ async def test_strategy_gen_sl_tp_exits():
     # Register strategy and fake a position
     # Instrument: RELIANCE, qty: 10, avg_price: 100.0
     from src.risk.position_registry import position_registry
+
     position_registry.reset()
     await position_registry.update_from_fill("RELIANCE", "buy", 10, 100.0)
-    await position_registry.set_sl_tp("RELIANCE", stop_loss=98.0, take_profit=105.0, stop_loss_pct=0.02, take_profit_pct=0.05)
+    await position_registry.set_sl_tp(
+        "RELIANCE", stop_loss=98.0, take_profit=105.0, stop_loss_pct=0.02, take_profit_pct=0.05
+    )
 
     # 1. Trigger Tick below Stop Loss
     tick_event = Event(
@@ -84,13 +90,15 @@ async def test_strategy_gen_sl_tp_exits():
         stream="tick.NSE.RELIANCE",
         data={"instrument": "RELIANCE", "last_price": 97.0},
         metadata=EventMetadata(producer="market_intel"),
-        timestamp=datetime.now(UTC)
+        timestamp=datetime.now(UTC),
     )
 
     # Capture emitted events
     emitted = []
+
     async def mock_emit(evt):
         emitted.append(evt)
+
     agent.emit = mock_emit
 
     await agent.on_event(tick_event)
@@ -104,6 +112,7 @@ async def test_strategy_gen_sl_tp_exits():
 
     await agent.stop()
     await store.disconnect()
+
 
 @pytest.mark.asyncio
 async def test_strategy_gen_consensus_ensemble():
@@ -131,8 +140,10 @@ async def test_strategy_gen_consensus_ensemble():
     # Net = -0.2018 (absolute >= 0.2, direction="short")
 
     emitted = []
+
     async def mock_emit(evt):
         emitted.append(evt)
+
     agent.emit = mock_emit
 
     for p in [100.0, 100.0, 100.0, 100.0, 100.0]:
@@ -140,7 +151,7 @@ async def test_strategy_gen_consensus_ensemble():
             event_type=EventType.TICK,
             stream="tick.NSE.TEST",
             data={"instrument": "TEST", "last_price": p},
-            metadata=EventMetadata(producer="market_intel")
+            metadata=EventMetadata(producer="market_intel"),
         )
         await agent.on_event(tick)
 
@@ -148,7 +159,7 @@ async def test_strategy_gen_consensus_ensemble():
         event_type=EventType.TICK,
         stream="tick.NSE.TEST",
         data={"instrument": "TEST", "last_price": 105.0},
-        metadata=EventMetadata(producer="market_intel")
+        metadata=EventMetadata(producer="market_intel"),
     )
     await agent.on_event(tick_final)
 

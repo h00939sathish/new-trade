@@ -53,10 +53,13 @@ class BacktestEngine:
         slippage_bps: float = 5.0,
     ):
         from pathlib import Path
+
         self._event_store = InMemoryEventStore()
         self._strategy_gen = StrategyGenAgent(event_store=self._event_store)
         self._risk_mgmt = RiskManagementAgent(event_store=self._event_store)
-        self._execution = ExecutionAgent(event_store=self._event_store, order_db_path=Path(":memory:"))
+        self._execution = ExecutionAgent(
+            event_store=self._event_store, order_db_path=Path(":memory:")
+        )
         self._initial_capital = initial_capital
         self._capital = initial_capital
         self._peak_value = initial_capital
@@ -86,9 +89,11 @@ class BacktestEngine:
 
         # Reset the shared position registry so backtests are isolated
         from src.risk.position_registry import position_registry
+
         position_registry.reset()
 
-        from datetime import UTC, datetime, timedelta
+        from datetime import UTC, datetime
+
         base_time = datetime(2026, 5, 25, 9, 15, 0, tzinfo=UTC)
         self._current_time = base_time
 
@@ -99,7 +104,9 @@ class BacktestEngine:
             # Enforce real timestamps (BUG-7 fix)
             tick_timestamp = tick_data.get("timestamp")
             if not tick_timestamp:
-                raise ValueError(f"Tick data at index {i} is missing a timestamp. Synthetic timestamps are not allowed.")
+                raise ValueError(
+                    f"Tick data at index {i} is missing a timestamp. Synthetic timestamps are not allowed."
+                )
             elif isinstance(tick_timestamp, str):
                 tick_timestamp = datetime.fromisoformat(tick_timestamp)
             elif isinstance(tick_timestamp, (int, float)):
@@ -116,7 +123,9 @@ class BacktestEngine:
             )
             await self._event_store.append("events.bus", tick)
 
-            events = await self._event_store.read("events.bus", offset=last_event_offset, limit=1000)
+            events = await self._event_store.read(
+                "events.bus", offset=last_event_offset, limit=1000
+            )
             for event in events:
                 if event.position is not None:
                     last_event_offset = max(last_event_offset, event.position)
@@ -130,7 +139,9 @@ class BacktestEngine:
                 elif event.event_type == EventType.RISK_CHECK:
                     await self._execution.on_event(event)
 
-            orders = await self._event_store.read("events.bus", offset=last_order_offset, limit=1000)
+            orders = await self._event_store.read(
+                "events.bus", offset=last_order_offset, limit=1000
+            )
             for event in orders:
                 if event.position is not None:
                     last_order_offset = max(last_order_offset, event.position)
@@ -148,6 +159,7 @@ class BacktestEngine:
         price = order.price or 100.0
 
         from src.risk.costs import TransactionCostModel
+
         cost_model = TransactionCostModel(slippage_bps=self._slippage_bps)
         # Apply slippage to fill price
         fill_price = cost_model.effective_fill_price(order.side.value, price)
@@ -171,8 +183,13 @@ class BacktestEngine:
         cost = fill_price * quantity
 
         from src.risk.costs import TransactionCostModel
-        cost_model = TransactionCostModel(brokerage_pct=self._commission_pct, slippage_bps=self._slippage_bps)
-        txn_fee = cost_model.total_cost(side.value, quantity, fill_price, product=order.product.value)
+
+        cost_model = TransactionCostModel(
+            brokerage_pct=self._commission_pct, slippage_bps=self._slippage_bps
+        )
+        txn_fee = cost_model.total_cost(
+            side.value, quantity, fill_price, product=order.product.value
+        )
 
         if side == OrderSide.BUY:
             if instrument not in self._positions:
@@ -183,25 +200,33 @@ class BacktestEngine:
             pos["avg_cost"] = total_cost / total_qty if total_qty > 0 else 0.0
             pos["quantity"] = total_qty
             pos["cost"] = total_cost
-            self._capital -= (cost + txn_fee)
+            self._capital -= cost + txn_fee
         else:
             pos = self._positions.get(instrument, {"quantity": 0, "avg_cost": 0.0, "cost": 0.0})
-            pnl = (fill_price - pos["avg_cost"]) * quantity - txn_fee if pos["quantity"] > 0 else -txn_fee
-            self._capital += (cost - txn_fee)
+            pnl = (
+                (fill_price - pos["avg_cost"]) * quantity - txn_fee
+                if pos["quantity"] > 0
+                else -txn_fee
+            )
+            self._capital += cost - txn_fee
             if instrument in self._positions:
                 self._positions[instrument]["quantity"] -= quantity
                 self._positions[instrument]["cost"] -= pos["avg_cost"] * quantity
                 if self._positions[instrument]["quantity"] == 0:
                     self._positions[instrument]["cost"] = 0.0
                     self._positions[instrument]["avg_cost"] = 0.0
-            self._trade_log.append({
-                "instrument": instrument,
-                "side": "sell",
-                "quantity": quantity,
-                "price": fill_price,
-                "pnl": pnl,
-            })
-        exposure = sum(p.get("quantity", 0) * p.get("avg_cost", 0) for p in self._positions.values())
+            self._trade_log.append(
+                {
+                    "instrument": instrument,
+                    "side": "sell",
+                    "quantity": quantity,
+                    "price": fill_price,
+                    "pnl": pnl,
+                }
+            )
+        exposure = sum(
+            p.get("quantity", 0) * p.get("avg_cost", 0) for p in self._positions.values()
+        )
         total = self._capital + exposure
         self._equity_curve.append(total)
         if total > self._peak_value:
@@ -220,13 +245,17 @@ class BacktestEngine:
         losses = [t for t in self._trade_log if t.get("pnl", 0) <= 0]
         result.winning_trades = len(wins)
         result.losing_trades = len(losses)
-        result.win_rate = result.winning_trades / result.total_trades if result.total_trades > 0 else 0.0
+        result.win_rate = (
+            result.winning_trades / result.total_trades if result.total_trades > 0 else 0.0
+        )
         result.avg_win = sum(t["pnl"] for t in wins) / len(wins) if wins else 0.0
         result.avg_loss = abs(sum(t["pnl"] for t in losses)) / len(losses) if losses else 0.0
         result.profit_factor = (
             sum(t["pnl"] for t in wins) / abs(sum(t["pnl"] for t in losses))
             if losses and abs(sum(t["pnl"] for t in losses)) > 0
-            else float("inf") if wins else 0.0
+            else float("inf")
+            if wins
+            else 0.0
         )
 
         peak = self._initial_capital
@@ -243,7 +272,7 @@ class BacktestEngine:
         if len(returns) > 1:
             avg_r = sum(returns) / len(returns)
             variance = sum((r - avg_r) ** 2 for r in returns) / len(returns)
-            std = variance ** 0.5
-            result.sharpe_ratio = (avg_r / std) * (252 ** 0.5) if std > 0 else 0.0
+            std = variance**0.5
+            result.sharpe_ratio = (avg_r / std) * (252**0.5) if std > 0 else 0.0
 
         return result

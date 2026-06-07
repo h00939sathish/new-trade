@@ -7,6 +7,7 @@ from src.strategies.base import Strategy
 # This will hold dynamically discovered strategy classes
 STRATEGY_REGISTRY: dict[str, type[Strategy]] = {}
 
+
 def load_strategies():
     """Dynamically loads all Strategy classes from the src.strategies package."""
     import src.strategies as strategies_pkg
@@ -31,5 +32,6 @@ def load_strategies():
                     registry_key = name
 
                 STRATEGY_REGISTRY[registry_key] = obj
+
 
 load_strategies()

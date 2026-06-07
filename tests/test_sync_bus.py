@@ -15,12 +15,13 @@ after the outer subscriber chain completes.
 These tests verify the ordering guarantee directly without spinning up
 the full system.
 """
-import asyncio
-import pytest
+
 from dataclasses import dataclass, field
 
-from src.schemas.events import Event, EventMetadata, EventType
+import pytest
+
 from src.backtest.sync_bus import SyncEventBus
+from src.schemas.events import Event, EventMetadata, EventType
 
 
 # Minimal mock agent that records the order of events it receives and
@@ -139,7 +140,9 @@ async def test_multiple_nested_events_all_deferred():
 
     # Execution's view: SIGNAL, then RISK_CHECK, then ORDER_CREATED
     assert execution.received == [
-        EventType.SIGNAL, EventType.RISK_CHECK, EventType.ORDER_CREATED
+        EventType.SIGNAL,
+        EventType.RISK_CHECK,
+        EventType.ORDER_CREATED,
     ], f"Expected [SIGNAL, RISK_CHECK, ORDER_CREATED], got {execution.received}"
 
 
@@ -169,4 +172,6 @@ async def test_deferred_queue_clears_after_publish():
     _register(bus, emitter, {EventType.SIGNAL})
 
     await bus.publish(_make_event(EventType.SIGNAL, producer="other"))
-    assert len(bus._deferred) == 0, f"Deferred queue should be empty, has {len(bus._deferred)} events"
+    assert len(bus._deferred) == 0, (
+        f"Deferred queue should be empty, has {len(bus._deferred)} events"
+    )

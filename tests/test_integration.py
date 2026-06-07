@@ -9,6 +9,7 @@ from src.system import TradingSystem
 def clean_db():
     import os
     import time
+
     db = "trading_events.db"
     for f in (db, db + "-wal", db + "-shm"):
         for _ in range(5):
@@ -18,6 +19,8 @@ def clean_db():
                 break
             except PermissionError:
                 time.sleep(0.2)
+
+
 @pytest.fixture(autouse=True)
 def _isolated_order_db(tmp_path, monkeypatch):
     db_path = tmp_path / "order_state.db"
@@ -28,8 +31,9 @@ def _isolated_order_db(tmp_path, monkeypatch):
 @pytest.fixture
 def system():
     from src.event_store.memory import InMemoryEventStore
+
     es = InMemoryEventStore()
-    return TradingSystem(event_store=es, providers={'kite_client': None, 'kite_broker': None})
+    return TradingSystem(event_store=es, providers={"kite_client": None, "kite_broker": None})
 
 
 @pytest.mark.asyncio
@@ -39,16 +43,20 @@ async def test_system_start_stop(system: TradingSystem):
     for agent_name, status in health.items():
         assert status["status"] == "running"
     await system.stop()
-    for agent in [system.market_intel, system.strategy_gen, system.risk_mgmt, system.execution, system.portfolio_opt]:
+    for agent in [
+        system.market_intel,
+        system.strategy_gen,
+        system.risk_mgmt,
+        system.execution,
+        system.portfolio_opt,
+    ]:
         assert agent.status.value == "stopped"
 
 
 @pytest.mark.asyncio
 async def test_tick_through_full_pipeline(system: TradingSystem):
     await system.start()
-    system.strategy_gen.register_strategy(
-        system.strategy_gen._strategies["momentum"]
-    )
+    system.strategy_gen.register_strategy(system.strategy_gen._strategies["momentum"])
 
     for price in [100.0] * 15 + [105.0, 110.0, 115.0, 120.0, 125.0, 130.0]:
         await system.inject_tick("RELIANCE", price, volume=1000)
@@ -82,16 +90,17 @@ async def test_tick_through_full_pipeline(system: TradingSystem):
 @pytest.mark.asyncio
 async def test_ohlcv_through_full_pipeline(system: TradingSystem):
     await system.start()
-    system.strategy_gen.register_strategy(
-        system.strategy_gen._strategies["momentum"]
-    )
+    system.strategy_gen.register_strategy(system.strategy_gen._strategies["momentum"])
 
     for i in range(25):
         close = 100.0 + (i * 0.5)
         await system.inject_ohlcv(
-            "TCS", "minute",
-            open=close - 0.5, high=close + 0.25,
-            low=close - 0.5, close=close,
+            "TCS",
+            "minute",
+            open=close - 0.5,
+            high=close + 0.25,
+            low=close - 0.5,
+            close=close,
             volume=10000 + i * 100,
         )
         await asyncio.sleep(0.02)
@@ -110,9 +119,7 @@ async def test_ohlcv_through_full_pipeline(system: TradingSystem):
 @pytest.mark.asyncio
 async def test_full_pipeline_with_portfolio(system: TradingSystem):
     await system.start()
-    system.strategy_gen.register_strategy(
-        system.strategy_gen._strategies["momentum"]
-    )
+    system.strategy_gen.register_strategy(system.strategy_gen._strategies["momentum"])
 
     prices = [100.0] * 15 + [105.0, 110.0, 115.0, 120.0, 125.0, 130.0, 135.0, 140.0]
     for price in prices:
@@ -158,9 +165,7 @@ async def test_risk_rejects_large_signal(system: TradingSystem):
 @pytest.mark.asyncio
 async def test_portfolio_agent_tracks_fills(system: TradingSystem):
     await system.start()
-    system.strategy_gen.register_strategy(
-        system.strategy_gen._strategies["momentum"]
-    )
+    system.strategy_gen.register_strategy(system.strategy_gen._strategies["momentum"])
 
     prices = [100.0] * 15 + [105.0] * 10
     for price in prices:
@@ -194,9 +199,7 @@ async def test_system_health_endpoint(system: TradingSystem):
 @pytest.mark.asyncio
 async def test_multiple_instruments(system: TradingSystem):
     await system.start()
-    system.strategy_gen.register_strategy(
-        system.strategy_gen._strategies["momentum"]
-    )
+    system.strategy_gen.register_strategy(system.strategy_gen._strategies["momentum"])
 
     for price in [100.0] * 25 + [106.0, 107.0, 108.0]:
         await system.inject_tick("RELIANCE", price, volume=1000)

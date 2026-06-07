@@ -59,11 +59,7 @@ class InMemoryEventStore(EventStore):
         after: datetime | None = None,
         before: datetime | None = None,
     ) -> AsyncIterator[Event]:
-        source = (
-            self._events.get(stream, [])
-            if stream
-            else self._all_events
-        )
+        source = self._events.get(stream, []) if stream else self._all_events
         for event in source:
             if after and event.timestamp < after:
                 continue

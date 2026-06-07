@@ -40,8 +40,10 @@ async def replay_events(
         async for event in store.replay(stream=stream, after=after):
             if count >= limit:
                 break
-            print(f"[{event.position}] {event.timestamp.isoformat()} "
-                  f"{event.event_type.value:20s} {event.stream}")
+            print(
+                f"[{event.position}] {event.timestamp.isoformat()} "
+                f"{event.event_type.value:20s} {event.stream}"
+            )
             count += 1
 
         print("-" * 60)
@@ -64,11 +66,13 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=1000, help="Max events (default: 1000)")
     args = parser.parse_args()
 
-    asyncio.run(replay_events(
-        stream=args.stream,
-        days=args.days,
-        limit=args.limit,
-    ))
+    asyncio.run(
+        replay_events(
+            stream=args.stream,
+            days=args.days,
+            limit=args.limit,
+        )
+    )
 
 
 if __name__ == "__main__":

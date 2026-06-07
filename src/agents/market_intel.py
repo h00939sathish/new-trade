@@ -1,5 +1,5 @@
 from collections import defaultdict
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from typing import Any
 
 from src.agents.base import BaseAgent
@@ -25,7 +25,9 @@ class MarketIntelAgent(BaseAgent):
         self._max_buffer_size = 500
 
     async def on_start(self) -> None:
-        provider_name = type(self._market_data_provider).__name__ if self._market_data_provider else "None"
+        provider_name = (
+            type(self._market_data_provider).__name__ if self._market_data_provider else "None"
+        )
         self.logger.info(
             "Market Intelligence Agent initializing (provider=%s, instruments=%d)",
             provider_name,
@@ -116,7 +118,8 @@ class MarketIntelAgent(BaseAgent):
             producer=self.name,
         )
         if timestamp is not None:
-            from datetime import datetime, UTC
+            from datetime import UTC, datetime
+
             if isinstance(timestamp, str):
                 try:
                     event.timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
@@ -124,7 +127,7 @@ class MarketIntelAgent(BaseAgent):
                     pass
             elif isinstance(timestamp, datetime):
                 event.timestamp = timestamp
-            
+
             # Ensure timestamp is UTC timezone aware
             if event.timestamp.tzinfo is None:
                 event.timestamp = event.timestamp.replace(tzinfo=UTC)
@@ -137,14 +140,16 @@ class MarketIntelAgent(BaseAgent):
         if interval in ("minute", "1minute"):
             buf_key = f"{instrument}.{interval}"
             buf = self._candle_buffer[buf_key]
-            buf.append({
-                "timestamp": event.timestamp,
-                "open": open,
-                "high": high,
-                "low": low,
-                "close": close,
-                "volume": volume,
-            })
+            buf.append(
+                {
+                    "timestamp": event.timestamp,
+                    "open": open,
+                    "high": high,
+                    "low": low,
+                    "close": close,
+                    "volume": volume,
+                }
+            )
             if len(buf) > self._max_buffer_size:
                 buf.pop(0)
             await self._aggregate_from_buffer(instrument, exchange, interval)
@@ -175,6 +180,7 @@ class MarketIntelAgent(BaseAgent):
 
             # Emit aggregated candles directly instead of calling ingest_ohlcv recursively
             from datetime import UTC, datetime
+
             dt = datetime.fromtimestamp(agg["timestamp"], UTC)
             agg_event = OHLCVEvent.create(
                 instrument=instrument,
@@ -202,12 +208,14 @@ class MarketIntelAgent(BaseAgent):
 
     async def health(self) -> dict[str, Any]:
         base = await super().health()
-        base.update({
-            "instruments": len(self._instruments),
-            "latest_ticks": len(self._latest_ticks),
-            "latest_ohlcv": len(self._latest_ohlcv),
-            "live_data": self._market_data_provider is not None,
-        })
+        base.update(
+            {
+                "instruments": len(self._instruments),
+                "latest_ticks": len(self._latest_ticks),
+                "latest_ohlcv": len(self._latest_ohlcv),
+                "live_data": self._market_data_provider is not None,
+            }
+        )
         return base
 
     def _handle_tick(self, event: Event) -> None:
@@ -233,10 +241,10 @@ class MarketIntelAgent(BaseAgent):
     async def _on_provider_tick(self, data: dict[str, Any]) -> None:
         last_price = data.get("last_price", 0)
         instrument = data.get("instrument")
-        
+
         if not self._validate_tick(instrument, last_price):
             return
-            
+
         self.logger.debug(
             "Tick received: %s @ %.2f (vol=%s)",
             instrument,
@@ -301,19 +309,22 @@ class MarketIntelAgent(BaseAgent):
             except Exception as e:
                 self.logger.warning("Failed to load historical data for %s: %s", inst, e)
 
-    def _validate_tick(self, instrument: str, price: float, timestamp: datetime | None = None) -> bool:
+    def _validate_tick(
+        self, instrument: str, price: float, timestamp: datetime | None = None
+    ) -> bool:
         if price <= 0:
-            self.logger.warning("Invalid tick for %s: price is zero or negative (%.2f)", instrument, price)
+            self.logger.warning(
+                "Invalid tick for %s: price is zero or negative (%.2f)", instrument, price
+            )
             return False
-            
+
         if timestamp is not None:
             now = datetime.now(UTC)
             age = (now - timestamp).total_seconds()
             if age > 60.0:
                 self.logger.warning("Stale tick rejected for %s: age is %.1fs", instrument, age)
                 return False
-                
-            
+
         last_event = self._latest_ticks.get(instrument)
         if last_event:
             last_price = last_event.data.get("last_price", 0)
@@ -321,8 +332,13 @@ class MarketIntelAgent(BaseAgent):
                 # Check for >10% single-tick gap
                 pct_change = abs(price - last_price) / last_price
                 if pct_change > 0.10:
-                    self.logger.warning("Anomalous tick rejected for %s: price gap of %.1f%% (%.2f -> %.2f)", 
-                                        instrument, pct_change * 100, last_price, price)
+                    self.logger.warning(
+                        "Anomalous tick rejected for %s: price gap of %.1f%% (%.2f -> %.2f)",
+                        instrument,
+                        pct_change * 100,
+                        last_price,
+                        price,
+                    )
                     return False
         return True
 

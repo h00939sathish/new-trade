@@ -108,6 +108,10 @@ jobs:
         run: |
           ruff check src/ tests/
 
+      - name: Check formatting with ruff format
+        run: |
+          ruff format --check src/ tests/
+
       - name: Type check with Mypy
         run: |
           mypy src/

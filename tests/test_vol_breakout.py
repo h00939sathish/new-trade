@@ -12,6 +12,7 @@ async def test_vol_breakout_insufficient_data():
     result = await strategy.evaluate("RELIANCE", prices, highs=highs, lows=lows)
     assert result is None
 
+
 @pytest.mark.asyncio
 async def test_vol_breakout_long_signal():
     strategy = VolatilityBreakoutStrategy(window=5)

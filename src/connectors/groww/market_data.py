@@ -10,7 +10,12 @@ logger = logging.getLogger("connector.groww.market_data")
 
 
 class GrowwMarketDataProvider:
-    def __init__(self, client: GrowwClient | None = None, on_tick: Callable | None = None, on_ohlcv: Callable | None = None):
+    def __init__(
+        self,
+        client: GrowwClient | None = None,
+        on_tick: Callable | None = None,
+        on_ohlcv: Callable | None = None,
+    ):
         self._client = client or GrowwClient()
         self._on_tick = on_tick
         self._on_ohlcv = on_ohlcv
@@ -71,17 +76,24 @@ class GrowwMarketDataProvider:
                             parts = key.split("_", 1)
                             exchange = parts[0] if len(parts) > 1 else "NSE"
                             instr = parts[1] if len(parts) > 1 else key
-                            await self._on_tick({
-                                "instrument": instr,
-                                "exchange": exchange,
-                                "last_price": float(value) if not isinstance(value, dict) else value.get("last_price", 0),
-                                "volume": None,
-                            })
+                            await self._on_tick(
+                                {
+                                    "instrument": instr,
+                                    "exchange": exchange,
+                                    "last_price": float(value)
+                                    if not isinstance(value, dict)
+                                    else value.get("last_price", 0),
+                                    "volume": None,
+                                }
+                            )
 
                 now = datetime.now(UTC).timestamp()
                 for inst in self._instruments:
                     sym = inst["tradingsymbol"]
-                    if sym not in last_ohlcv_fetch or (now - last_ohlcv_fetch[sym]) >= ohlcv_interval:
+                    if (
+                        sym not in last_ohlcv_fetch
+                        or (now - last_ohlcv_fetch[sym]) >= ohlcv_interval
+                    ):
                         last_ohlcv_fetch[sym] = now
                         if self._on_ohlcv:
                             try:
@@ -92,16 +104,18 @@ class GrowwMarketDataProvider:
                                         instr = parts[1] if len(parts) > 1 else key
                                         exchange = parts[0] if len(parts) > 1 else "NSE"
                                         if isinstance(value, dict):
-                                            await self._on_ohlcv({
-                                                "instrument": instr,
-                                                "exchange": exchange,
-                                                "interval": "minute",
-                                                "open": value.get("open", 0.0),
-                                                "high": value.get("high", 0.0),
-                                                "low": value.get("low", 0.0),
-                                                "close": value.get("close", 0.0),
-                                                "volume": value.get("volume", 0),
-                                            })
+                                            await self._on_ohlcv(
+                                                {
+                                                    "instrument": instr,
+                                                    "exchange": exchange,
+                                                    "interval": "minute",
+                                                    "open": value.get("open", 0.0),
+                                                    "high": value.get("high", 0.0),
+                                                    "low": value.get("low", 0.0),
+                                                    "close": value.get("close", 0.0),
+                                                    "volume": value.get("volume", 0),
+                                                }
+                                            )
                             except GrowwAPIError as e:
                                 logger.debug("OHLC fetch skipped for %s: %s", sym, e)
 
@@ -133,12 +147,14 @@ class GrowwMarketDataProvider:
             if isinstance(c, dict):
                 parsed.append(c)
             elif isinstance(c, list) and len(c) >= 6:
-                parsed.append({
-                    "timestamp": c[0],
-                    "open": c[1],
-                    "high": c[2],
-                    "low": c[3],
-                    "close": c[4],
-                    "volume": c[5],
-                })
+                parsed.append(
+                    {
+                        "timestamp": c[0],
+                        "open": c[1],
+                        "high": c[2],
+                        "low": c[3],
+                        "close": c[4],
+                        "volume": c[5],
+                    }
+                )
         return parsed

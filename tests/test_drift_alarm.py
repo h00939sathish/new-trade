@@ -6,8 +6,10 @@ P1.4 it subscribes to FILL events and verifies that position_registry
 and portfolio_opt agree on the position quantity. If they diverge, it
 emits a SystemEvent.error so the alert agent can notify.
 """
-import pytest
+
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from src.agents.reconciliation import ReconciliationAgent
 from src.event_store.memory import InMemoryEventStore

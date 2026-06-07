@@ -1,3 +1,4 @@
+from datetime import UTC
 
 import pytest
 
@@ -9,6 +10,7 @@ from src.schemas.events import Event, EventType, Exchange
 @pytest.mark.asyncio
 async def test_regime_detection_and_reweighting():
     from src.event_store.memory import InMemoryEventStore
+
     es = InMemoryEventStore()
     await es.connect()
 
@@ -28,9 +30,11 @@ async def test_regime_detection_and_reweighting():
     # 2. Inject trending up ticks via OHLCV
     # To trigger trending up: price needs to go up steadily and trend_strength > 25
     # Let's inject 10 ticks going up
+    from datetime import datetime, timedelta
+
     from src.schemas.events import OHLCVEvent
-    from datetime import datetime, timezone, timedelta
-    base_time = datetime.now(timezone.utc)
+
+    base_time = datetime.now(UTC)
     for i in range(12):
         close_price = 100.0 + i * 2.0
         event = OHLCVEvent.create(
@@ -42,7 +46,7 @@ async def test_regime_detection_and_reweighting():
             low=close_price - 0.5,
             close=close_price,
             volume=5000.0,
-            producer="test"
+            producer="test",
         )
         event.timestamp = base_time + timedelta(seconds=i * 60)
         await regime_agent.on_event(event)
@@ -51,11 +55,12 @@ async def test_regime_detection_and_reweighting():
     assert regime_agent._current_regime == "trending_up"
 
     from src.schemas.events import EventMetadata
+
     event_change = Event(
         event_type=EventType.SYSTEM_STATE,
         stream="system.state",
         data={"regime": "trending_up"},
-        metadata=EventMetadata(producer="regime_detection")
+        metadata=EventMetadata(producer="regime_detection"),
     )
 
     # Seed weights first

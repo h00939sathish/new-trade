@@ -48,11 +48,13 @@ class AngelMarketDataProvider:
         exchange: str = "NSE",
         symbol_token: str | None = None,
     ) -> None:
-        self._instruments.append({
-            "tradingsymbol": tradingsymbol,
-            "exchange": exchange,
-            "symbol_token": symbol_token,
-        })
+        self._instruments.append(
+            {
+                "tradingsymbol": tradingsymbol,
+                "exchange": exchange,
+                "symbol_token": symbol_token,
+            }
+        )
         logger.info("Angel added instrument: %s (%s)", tradingsymbol, exchange)
 
     def remove_instrument(self, tradingsymbol: str) -> None:
@@ -103,8 +105,12 @@ class AngelMarketDataProvider:
         exchange: str = "NSE",
     ) -> list[dict[str, Any]]:
         interval_map = {
-            1: "minute", 3: "3minute", 5: "5minute",
-            15: "15minute", 60: "hour", 1440: "day",
+            1: "minute",
+            3: "3minute",
+            5: "5minute",
+            15: "15minute",
+            60: "hour",
+            1440: "day",
         }
         interval = interval_map.get(interval_minutes, "minute")
         now = datetime.now(UTC)
@@ -153,20 +159,25 @@ class AngelMarketDataProvider:
 
                     if not ltp_data:
                         try:
-                            ltp_data = await _yahoo_ltp([
-                                f"{inst['exchange']}:{inst['tradingsymbol']}",
-                            ])
+                            ltp_data = await _yahoo_ltp(
+                                [
+                                    f"{inst['exchange']}:{inst['tradingsymbol']}",
+                                ]
+                            )
                         except Exception:
                             pass
 
                     for value in ltp_data.values():
                         if self._on_tick:
-                            await _invoke_callback(self._on_tick, {
-                                "instrument": inst["tradingsymbol"],
-                                "exchange": inst["exchange"],
-                                "last_price": value.get("last_price", 0),
-                                "volume": value.get("volume"),
-                            })
+                            await _invoke_callback(
+                                self._on_tick,
+                                {
+                                    "instrument": inst["tradingsymbol"],
+                                    "exchange": inst["exchange"],
+                                    "last_price": value.get("last_price", 0),
+                                    "volume": value.get("volume"),
+                                },
+                            )
 
                 now = datetime.now(UTC).timestamp()
                 for inst in self._instruments:
@@ -190,16 +201,19 @@ class AngelMarketDataProvider:
                                 )
                                 if candles:
                                     c = candles[-1]
-                                    await _invoke_callback(self._on_ohlcv, {
-                                        "instrument": sym,
-                                        "exchange": inst["exchange"],
-                                        "interval": "minute",
-                                        "open": c["open"],
-                                        "high": c["high"],
-                                        "low": c["low"],
-                                        "close": c["close"],
-                                        "volume": c["volume"],
-                                    })
+                                    await _invoke_callback(
+                                        self._on_ohlcv,
+                                        {
+                                            "instrument": sym,
+                                            "exchange": inst["exchange"],
+                                            "interval": "minute",
+                                            "open": c["open"],
+                                            "high": c["high"],
+                                            "low": c["low"],
+                                            "close": c["close"],
+                                            "volume": c["volume"],
+                                        },
+                                    )
                             except AngelClientError as e:
                                 logger.debug("OHLCV fetch skipped for %s: %s", sym, e)
 
@@ -214,12 +228,14 @@ class AngelMarketDataProvider:
             return False
         try:
             await self._client.ensure_token()
-            if not all([
-                self._client.api_key,
-                self._client.client_id,
-                self._client.jwt_token,
-                self._client.feed_token,
-            ]):
+            if not all(
+                [
+                    self._client.api_key,
+                    self._client.client_id,
+                    self._client.jwt_token,
+                    self._client.feed_token,
+                ]
+            ):
                 return False
 
             subscriptions = []

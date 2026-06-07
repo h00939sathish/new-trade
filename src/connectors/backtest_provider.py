@@ -1,12 +1,13 @@
 import json
 import logging
 import math
-from pathlib import Path
 import random
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
-from zoneinfo import ZoneInfo
+from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
+
 import httpx
 
 logger = logging.getLogger("connector.backtest_provider")
@@ -71,7 +72,9 @@ class BacktestDataProvider:
                                 exchange=self._exchange,
                             )
                         except Exception as e:
-                            logger.warning("Failed to fetch 1m candles from provider for %s: %s", inst, e)
+                            logger.warning(
+                                "Failed to fetch 1m candles from provider for %s: %s", inst, e
+                            )
                     if not candles:
                         logger.info("Fetching real 1m candles for %s from Yahoo Finance...", inst)
                         try:
@@ -79,7 +82,7 @@ class BacktestDataProvider:
                         except Exception as e:
                             logger.warning("Failed to fetch real 1m candles for %s: %s", inst, e)
                             candles = None
-                        
+
                     if candles:
                         try:
                             with cache_file.open("w") as f:
@@ -87,28 +90,37 @@ class BacktestDataProvider:
                         except Exception as e:
                             logger.warning("Failed to save cache for %s: %s", inst, e)
             else:
-                logger.info("days=%d > 30, skipping Yahoo 1m fetch for %s to trigger daily fallback", days, inst)
+                logger.info(
+                    "days=%d > 30, skipping Yahoo 1m fetch for %s to trigger daily fallback",
+                    days,
+                    inst,
+                )
 
             if candles:
                 ticks = []
                 for c in candles:
-                    ticks.append({
-                        "instrument": inst,
-                        "exchange": self._exchange,
-                        "price": round(c["close"], 2),
-                        "volume": int(c["volume"]),
-                        "timestamp": c["timestamp"],
-                    })
+                    ticks.append(
+                        {
+                            "instrument": inst,
+                            "exchange": self._exchange,
+                            "price": round(c["close"], 2),
+                            "volume": int(c["volume"]),
+                            "timestamp": c["timestamp"],
+                        }
+                    )
                 all_ticks.extend(ticks)
                 logger.info(
                     "Backtest data: %s -> %d real 1m ticks",
-                    inst, len(ticks),
+                    inst,
+                    len(ticks),
                 )
                 if self._on_progress:
                     self._on_progress(inst)
 
         if not all_ticks:
-            logger.warning("No historical 1m data available — falling back to daily candle expansion")
+            logger.warning(
+                "No historical 1m data available — falling back to daily candle expansion"
+            )
             now = date.today()
             from_date = now - timedelta(days=days)
             for inst in targets:
@@ -120,7 +132,9 @@ class BacktestDataProvider:
                     all_ticks.extend(ticks)
                     logger.info(
                         "Fallback backtest data: %s -> %d candles, %d ticks",
-                        inst, len(candles), len(ticks),
+                        inst,
+                        len(candles),
+                        len(ticks),
                     )
                 except Exception as e:
                     logger.warning("Failed fallback fetch for %s: %s", inst, e)
@@ -136,10 +150,10 @@ class BacktestDataProvider:
             coverage = len(inst_ticks) / expected_candles if expected_candles > 0 else 0
             # We relax coverage for multi-year runs because we expect many non-trading days
             if coverage >= 0.0:
-                logger.info("Accepting >0%% coverage for multi-year run (coverage: %.1f%%)", coverage * 100)
-                logger.warning(
-                    f"Accepting low coverage for {inst} ({coverage*100:.1f}%)"
+                logger.info(
+                    "Accepting >0%% coverage for multi-year run (coverage: %.1f%%)", coverage * 100
                 )
+                logger.warning(f"Accepting low coverage for {inst} ({coverage * 100:.1f}%)")
 
         all_ticks.sort(key=lambda t: t.get("timestamp", ""))
         return all_ticks
@@ -164,9 +178,12 @@ class BacktestDataProvider:
 
         if not candles:
             # Fallback to Jugaad for real data instead of synthetic
-            logger.info("Falling back to JugaadMarketDataProvider for %s historical data", instrument)
+            logger.info(
+                "Falling back to JugaadMarketDataProvider for %s historical data", instrument
+            )
             try:
                 from src.connectors.jugaad.market_data import JugaadMarketDataProvider
+
                 jugaad_provider = JugaadMarketDataProvider()
                 candles = await jugaad_provider.get_historical(
                     tradingsymbol=instrument,
@@ -209,14 +226,16 @@ class BacktestDataProvider:
                 ts = ts.replace(
                     hour=TRADING_START_HOUR,
                     minute=TRADING_START_MINUTE,
-                    second=0, microsecond=0,
+                    second=0,
+                    microsecond=0,
                 )
             else:
                 base_dt = datetime.now(ist_tz) - timedelta(days=len(candles) - ci)
                 ts = base_dt.replace(
                     hour=TRADING_START_HOUR,
                     minute=TRADING_START_MINUTE,
-                    second=0, microsecond=0,
+                    second=0,
+                    microsecond=0,
                 )
 
             candles_ticks = []
@@ -230,13 +249,15 @@ class BacktestDataProvider:
                 volume_chunk = max(1, volume // TICKS_PER_CANDLE)
                 tick_ts = ts + timedelta(seconds=int(progress * 6 * 3600))
 
-                candles_ticks.append({
-                    "instrument": instrument,
-                    "exchange": self._exchange,
-                    "price": round(tick_price, 2),
-                    "volume": volume_chunk + random.randint(-5, 5),
-                    "timestamp": tick_ts.isoformat(),
-                })
+                candles_ticks.append(
+                    {
+                        "instrument": instrument,
+                        "exchange": self._exchange,
+                        "price": round(tick_price, 2),
+                        "volume": volume_chunk + random.randint(-5, 5),
+                        "timestamp": tick_ts.isoformat(),
+                    }
+                )
 
             ticks.extend(candles_ticks)
 
@@ -273,7 +294,7 @@ async def fetch_historical_1m_candles(
     candles: list[dict[str, Any]] = []
 
     async def _fetch_range(start_day: int, end_day: int) -> list[dict[str, Any]]:
-        r = max(2, end_day - start_day)
+        max(2, end_day - start_day)
         url = (
             f"https://query1.finance.yahoo.com/v8/finance/chart/"
             f"{symbol}{suffix}?period1={start_day}&period2={end_day}&interval=1m"
@@ -284,6 +305,7 @@ async def fetch_historical_1m_candles(
                 resp.raise_for_status()
             except httpx.HTTPStatusError as e:
                 import logging
+
                 logging.getLogger(__name__).warning(f"Yahoo Finance failed for {symbol}: {e}")
                 return []
             data = resp.json()
@@ -313,6 +335,7 @@ async def fetch_historical_1m_candles(
             return out
 
     import time as _time
+
     now_ts = int(_time.time())
     if days <= max_chunk_days:
         candles = await _fetch_range(now_ts - days * 86400, now_ts)
@@ -327,7 +350,9 @@ async def fetch_historical_1m_candles(
                 chunk_candles = await _fetch_range(start, end)
                 candles = chunk_candles + candles  # prepend so oldest-first
             except Exception as e:
-                logger.warning("Yahoo chunk fetch failed for %s %d-%dd: %s", symbol, days - remaining, days, e)
+                logger.warning(
+                    "Yahoo chunk fetch failed for %s %d-%dd: %s", symbol, days - remaining, days, e
+                )
             remaining -= chunk
             end = start
 
@@ -336,6 +361,7 @@ async def fetch_historical_1m_candles(
 
 def generate_synthetic_ticks(n: int = 5000) -> list[dict[str, Any]]:
     from datetime import UTC, datetime, timedelta
+
     base_time = datetime(2026, 5, 25, 9, 15, 0, tzinfo=UTC)
     ticks = []
     price = 100.0
@@ -344,11 +370,13 @@ def generate_synthetic_ticks(n: int = 5000) -> list[dict[str, Any]]:
         noise = (i % 7 - 3) * 0.1
         price += phase * 0.1 + noise
         price = max(price, 10.0)
-        ticks.append({
-            "instrument": "TEST",
-            "exchange": "NSE",
-            "price": round(price, 2),
-            "volume": 1000 + i % 5000,
-            "timestamp": base_time + timedelta(seconds=i),
-        })
+        ticks.append(
+            {
+                "instrument": "TEST",
+                "exchange": "NSE",
+                "price": round(price, 2),
+                "volume": 1000 + i % 5000,
+                "timestamp": base_time + timedelta(seconds=i),
+            }
+        )
     return ticks

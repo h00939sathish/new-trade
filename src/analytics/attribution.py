@@ -19,6 +19,7 @@ This is read-only over the event store and the position registry.
 It does NOT modify any system state. It is safe to run in parallel
 with the live system.
 """
+
 from __future__ import annotations
 
 import json
@@ -60,7 +61,13 @@ class AttributionAggregator:
         if side == "buy":
             # Record cost basis; don't realize PnL
             self._state[strategy]["trades"].append(
-                {"side": "buy", "qty": qty, "price": price, "pnl": 0.0, "ts": fill_data.get("timestamp")}
+                {
+                    "side": "buy",
+                    "qty": qty,
+                    "price": price,
+                    "pnl": 0.0,
+                    "ts": fill_data.get("timestamp"),
+                }
             )
         else:  # sell
             # For attribution we use a simple FIFO approximation:
@@ -68,7 +75,13 @@ class AttributionAggregator:
             avg_buy = self._avg_buy_price(strategy)
             pnl = (price - avg_buy) * qty if avg_buy else 0.0
             self._state[strategy]["trades"].append(
-                {"side": "sell", "qty": qty, "price": price, "pnl": pnl, "ts": fill_data.get("timestamp")}
+                {
+                    "side": "sell",
+                    "qty": qty,
+                    "price": price,
+                    "pnl": pnl,
+                    "ts": fill_data.get("timestamp"),
+                }
             )
             if pnl > 0:
                 self._state[strategy]["wins"] += 1
@@ -98,7 +111,13 @@ class AttributionAggregator:
             loss_pnls = [p for p in pnls if p < 0]
             gross_wins = sum(win_pnls)
             gross_losses = abs(sum(loss_pnls))
-            profit_factor = gross_wins / gross_losses if gross_losses > 0 else float("inf") if gross_wins > 0 else 0.0
+            profit_factor = (
+                gross_wins / gross_losses
+                if gross_losses > 0
+                else float("inf")
+                if gross_wins > 0
+                else 0.0
+            )
             win_rate = state["wins"] / n if n > 0 else 0.0
             expectancy = total_pnl / n if n > 0 else 0.0
             sharpe = self._rolling_sharpe(pnls, window=20) if len(pnls) >= 5 else 0.0
@@ -138,10 +157,7 @@ class AttributionAggregator:
         conn = sqlite3.connect(str(self.db_path))
         try:
             cursor = conn.cursor()
-            sql = (
-                "SELECT data, timestamp FROM events "
-                "WHERE event_type='order.fill' "
-            )
+            sql = "SELECT data, timestamp FROM events WHERE event_type='order.fill' "
             params: tuple = ()
             if since:
                 sql += " AND timestamp >= ?"

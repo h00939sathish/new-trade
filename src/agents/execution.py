@@ -1,14 +1,15 @@
 import asyncio
 import json
 import logging
-import aiosqlite
 import time
 from pathlib import Path
 from typing import Any
-from src.monitoring.latency_tracer import tracer
+
+import aiosqlite
 
 from src.agents.base import BaseAgent
 from src.config.settings import settings
+from src.monitoring.latency_tracer import tracer
 from src.schemas.events import (
     Event,
     EventType,
@@ -110,7 +111,9 @@ class ExecutionAgent(BaseAgent):
         self._db_lock = None
         self._latest_depth: dict[str, dict] = {}
         self._broker_seen_fills: dict[str, int] = {}
-        self._live_order_poll_interval = max(1.0, float(settings.broker_order_poll_interval_seconds))
+        self._live_order_poll_interval = max(
+            1.0, float(settings.broker_order_poll_interval_seconds)
+        )
 
     def _get_db_lock(self):
         if self._db_lock is None:
@@ -165,12 +168,12 @@ class ExecutionAgent(BaseAgent):
                     self.logger.warning("Failed to restore order %s: %s", row["event_id"], e)
             if count > 0:
                 self.logger.warning(
-                    "Restored %d outstanding orders from disk — verify with broker", count,
+                    "Restored %d outstanding orders from disk — verify with broker",
+                    count,
                 )
-                
+
             # If restart happens, we ensure orders map is populated properly
             # and triggers any reconciliation loops automatically via start methods
-
 
     async def _load_active_twaps(self) -> None:
         """Load active TWAP states from disk."""
@@ -206,6 +209,7 @@ class ExecutionAgent(BaseAgent):
         async with self._get_db_lock():
             try:
                 from datetime import UTC, datetime
+
                 now = datetime.now(UTC).isoformat()
                 await self._order_db.execute(
                     """INSERT OR REPLACE INTO orders
@@ -215,9 +219,13 @@ class ExecutionAgent(BaseAgent):
                     (
                         order.event_id,
                         order.instrument,
-                        order.exchange.value if hasattr(order.exchange, "value") else str(order.exchange),
+                        order.exchange.value
+                        if hasattr(order.exchange, "value")
+                        else str(order.exchange),
                         order.side.value if hasattr(order.side, "value") else str(order.side),
-                        order.order_type.value if hasattr(order.order_type, "value") else str(order.order_type),
+                        order.order_type.value
+                        if hasattr(order.order_type, "value")
+                        else str(order.order_type),
                         order.quantity,
                         order.price,
                         order.data.get("status", "pending"),
@@ -240,6 +248,7 @@ class ExecutionAgent(BaseAgent):
         async with self._get_db_lock():
             try:
                 from datetime import UTC, datetime
+
                 await self._order_db.execute(
                     "UPDATE orders SET status = ?, updated_at = ? WHERE event_id = ?",
                     (status, datetime.now(UTC).isoformat(), event_id),
@@ -255,6 +264,7 @@ class ExecutionAgent(BaseAgent):
         async with self._get_db_lock():
             try:
                 from datetime import UTC, datetime
+
                 await self._order_db.execute(
                     """INSERT OR IGNORE INTO fills
                    (fill_id, order_id, instrument, side, fill_price, fill_quantity, filled_at)
@@ -275,7 +285,7 @@ class ExecutionAgent(BaseAgent):
                 if order_id:
                     await self._order_db.execute(
                         "UPDATE orders SET status = ?, updated_at = ? WHERE event_id = ?",
-                        ("filled", datetime.now(UTC).isoformat(), order_id)
+                        ("filled", datetime.now(UTC).isoformat(), order_id),
                     )
                     await self._order_db.commit()
             except Exception as e:
@@ -308,8 +318,8 @@ class ExecutionAgent(BaseAgent):
                         twap["total"],
                         twap["last_executed_at"],
                         twap["interval"],
-                        bool(twap.get("iceberg", False))
-                    )
+                        bool(twap.get("iceberg", False)),
+                    ),
                 )
                 await self._order_db.commit()
             except Exception as e:
@@ -342,6 +352,7 @@ class ExecutionAgent(BaseAgent):
         confidence = signal.get("confidence", 0.0)
 
         from src.risk.kill_switch import KillSwitch
+
         if KillSwitch().active and direction != "neutral":
             self.logger.warning("Signal blocked: Kill Switch is active (%s)", KillSwitch().reason)
             return
@@ -350,7 +361,9 @@ class ExecutionAgent(BaseAgent):
         if direction == "neutral":
             qty = self._get_position_qty(instrument)
             if qty == 0:
-                self.logger.info("Neutral signal received for %s, but no open position found.", instrument)
+                self.logger.info(
+                    "Neutral signal received for %s, but no open position found.", instrument
+                )
                 return
             side = OrderSide.SELL if qty > 0 else OrderSide.BUY
             close_qty = abs(qty)
@@ -372,6 +385,7 @@ class ExecutionAgent(BaseAgent):
             self._order_strategies[order_event.event_id] = signal.get("strategy", "unknown")
             try:
                 from src.monitoring.metrics import system_metrics
+
                 system_metrics.count_order(order_event.status.value)
             except Exception:
                 pass
@@ -380,7 +394,9 @@ class ExecutionAgent(BaseAgent):
             if self._broker is not None:
                 existing_id = await self._is_order_placed(tag)
                 if existing_id:
-                    self.logger.warning("Duplicate exit order detected! Tag %s has order_id %s", tag, existing_id)
+                    self.logger.warning(
+                        "Duplicate exit order detected! Tag %s has order_id %s", tag, existing_id
+                    )
                     order_event.data["broker_order_id"] = existing_id
                     order_event.data["status"] = "accepted"
                     await self.emit(order_event)
@@ -410,8 +426,10 @@ class ExecutionAgent(BaseAgent):
             await self._persist_order(order_event, strategy=signal.get("strategy", "exit"))
             if self._paper_trading:
                 await self._simulate_fill(order_event)
-                
-            tracer.record_trace(event.metadata.correlation_id, "execution", (time.monotonic() - start_time) * 1000)
+
+            tracer.record_trace(
+                event.metadata.correlation_id, "execution", (time.monotonic() - start_time) * 1000
+            )
             return
 
         if confidence < 0.3:
@@ -424,7 +442,10 @@ class ExecutionAgent(BaseAgent):
         }
         self.logger.info(
             "Signal PENDING risk approval: %s %s %.0f%% (id=%s)",
-            instrument, direction, confidence * 100, event.event_id,
+            instrument,
+            direction,
+            confidence * 100,
+            event.event_id,
         )
 
         # Expire stale pending signals
@@ -449,7 +470,12 @@ class ExecutionAgent(BaseAgent):
             order_data = details.get("order", {})
             if order_data:
                 import asyncio
-                asyncio.create_task(self._submit_approved_order(order_data, correlation_id=event.metadata.correlation_id))
+
+                asyncio.create_task(
+                    self._submit_approved_order(
+                        order_data, correlation_id=event.metadata.correlation_id
+                    )
+                )
             return
 
         # Handle signal_validation checks
@@ -473,7 +499,9 @@ class ExecutionAgent(BaseAgent):
         if not passed:
             instrument = signal_data.get("instrument", "unknown")
             self.logger.warning(
-                "Signal REJECTED by risk manager: %s (check=%s)", instrument, check_name,
+                "Signal REJECTED by risk manager: %s (check=%s)",
+                instrument,
+                check_name,
             )
             return
 
@@ -483,12 +511,17 @@ class ExecutionAgent(BaseAgent):
             return
 
         # Risk check PASSED — now execute the order
-        await self._execute_approved_signal(pending["signal"], correlation_id=event.metadata.correlation_id)
+        await self._execute_approved_signal(
+            pending["signal"], correlation_id=event.metadata.correlation_id
+        )
 
-    async def _execute_approved_signal(self, signal: dict[str, Any], correlation_id: str | None = None) -> None:
+    async def _execute_approved_signal(
+        self, signal: dict[str, Any], correlation_id: str | None = None
+    ) -> None:
         """Create and execute an order for a risk-approved signal."""
         start_time = time.monotonic()
         from src.risk.kill_switch import KillSwitch
+
         if KillSwitch().active:
             self.logger.warning("Order blocked: Kill Switch is active (%s)", KillSwitch().reason)
             return
@@ -530,17 +563,30 @@ class ExecutionAgent(BaseAgent):
                 allocated_capital = self._available_capital * weight
                 self.logger.info(
                     "Strategy '%s' weight=%.1f%% → allocated capital=%.0f",
-                    strategy_name, weight * 100, allocated_capital,
+                    strategy_name,
+                    weight * 100,
+                    allocated_capital,
                 )
 
-        quantity = self._calculate_quantity(confidence, price, allocated_capital, volatility, strategy=strategy_name, instrument=instrument)
+        quantity = self._calculate_quantity(
+            confidence,
+            price,
+            allocated_capital,
+            volatility,
+            strategy=strategy_name,
+            instrument=instrument,
+        )
         if quantity <= 0:
             return
 
         # TWAP Smart Order Routing for large orders
         if quantity >= 500:
             is_iceberg = quantity >= 1000
-            self.logger.info("Order quantity %d >= 500, routing to TWAP engine (iceberg=%s)", quantity, is_iceberg)
+            self.logger.info(
+                "Order quantity %d >= 500, routing to TWAP engine (iceberg=%s)",
+                quantity,
+                is_iceberg,
+            )
             await self._start_twap(
                 instrument=instrument,
                 side=side,
@@ -566,7 +612,7 @@ class ExecutionAgent(BaseAgent):
             strategy=signal.get("strategy", "unknown"),
             correlation_id=correlation_id,
         )
-        
+
         # Change order state to PROPOSED
         order_event.event_type = EventType.ORDER_PROPOSED
         order_event.status = OrderStatus.PROPOSED
@@ -579,23 +625,35 @@ class ExecutionAgent(BaseAgent):
         if self._broker is not None:
             existing_id = await self._is_order_placed(tag)
             if existing_id:
-                self.logger.warning("Duplicate entry order detected! Tag %s has order_id %s", tag, existing_id)
+                self.logger.warning(
+                    "Duplicate entry order detected! Tag %s has order_id %s", tag, existing_id
+                )
                 return
 
         # Emit the proposed order to risk management
         await self.emit(order_event)
         self._pending_orders[order_event.event_id] = order_event
-        self.logger.info("Order PROPOSED to Risk Management: %s %s %d @ %.2f", side.value, instrument, quantity, price or 0)
-        tracer.record_trace(correlation_id, "execution_proposed", (time.monotonic() - start_time) * 1000)
+        self.logger.info(
+            "Order PROPOSED to Risk Management: %s %s %d @ %.2f",
+            side.value,
+            instrument,
+            quantity,
+            price or 0,
+        )
+        tracer.record_trace(
+            correlation_id, "execution_proposed", (time.monotonic() - start_time) * 1000
+        )
 
-    async def _submit_approved_order(self, order_data: dict[str, Any], correlation_id: str | None = None) -> None:
+    async def _submit_approved_order(
+        self, order_data: dict[str, Any], correlation_id: str | None = None
+    ) -> None:
         """Submit an order that has passed order-level risk validation."""
         start_time = time.monotonic()
         event_id = order_data.get("event_id")
         if not event_id or event_id not in self._pending_orders:
             self.logger.warning("Approved order %s not found in pending orders", event_id)
             return
-            
+
         order_event = self._pending_orders.pop(event_id)
         order_event.event_type = EventType.ORDER_CREATED
         order_event.status = OrderStatus.PENDING
@@ -607,9 +665,10 @@ class ExecutionAgent(BaseAgent):
         price = order_event.price
         side = order_event.side
         tag = order_event.event_id
-        
+
         try:
             from src.monitoring.metrics import system_metrics
+
             system_metrics.count_order(order_event.status.value)
         except Exception:
             pass
@@ -618,12 +677,16 @@ class ExecutionAgent(BaseAgent):
             exchange = order_event.exchange
             variety = order_event.variety
             trigger_price = order_event.trigger_price
-            
+
             # Upgrade MIS order to Cover Order if a trigger_price is provided (Native SL)
-            if order_event.product.value == "mis" and trigger_price is not None and trigger_price > 0:
+            if (
+                order_event.product.value == "mis"
+                and trigger_price is not None
+                and trigger_price > 0
+            ):
                 variety = "co"
                 order_event.variety = "co"
-            
+
             broker_start = time.monotonic()
             try:
                 broker_id = await self._broker.place_order(
@@ -647,15 +710,23 @@ class ExecutionAgent(BaseAgent):
                 order_event.status = OrderStatus.REJECTED
                 order_event.data["status"] = OrderStatus.REJECTED.value
                 order_event.data["reject_reason"] = str(e)
-                await self._persist_order(order_event, strategy=self._order_strategies.get(order_event.event_id, "unknown"))
+                await self._persist_order(
+                    order_event,
+                    strategy=self._order_strategies.get(order_event.event_id, "unknown"),
+                )
                 raise e
-            
+
         await self.emit(order_event)
         self._open_orders[order_event.event_id] = order_event
-        await self._persist_order(order_event, strategy=self._order_strategies.get(order_event.event_id, "unknown"))
+        await self._persist_order(
+            order_event, strategy=self._order_strategies.get(order_event.event_id, "unknown")
+        )
         self.logger.info(
             "Order APPROVED and placed: %s %s %d @ %.2f",
-            side.value, instrument, quantity, price or 0,
+            side.value,
+            instrument,
+            quantity,
+            price or 0,
         )
         if self._paper_trading:
             await self._simulate_fill(order_event)
@@ -666,7 +737,8 @@ class ExecutionAgent(BaseAgent):
         """Remove pending signals that have been waiting too long for risk approval."""
         now = time.monotonic()
         expired = [
-            sid for sid, pdata in self._pending_signals.items()
+            sid
+            for sid, pdata in self._pending_signals.items()
             if now - pdata["received_at"] > _RISK_CHECK_TIMEOUT_SECONDS
         ]
         for sid in expired:
@@ -674,7 +746,9 @@ class ExecutionAgent(BaseAgent):
             instrument = pdata["signal"].get("instrument", "unknown")
             self.logger.warning(
                 "Signal EXPIRED (no risk response in %.0fs): %s (id=%s)",
-                _RISK_CHECK_TIMEOUT_SECONDS, instrument, sid,
+                _RISK_CHECK_TIMEOUT_SECONDS,
+                instrument,
+                sid,
             )
 
     async def _start_twap(
@@ -719,7 +793,14 @@ class ExecutionAgent(BaseAgent):
             "correlation_id": correlation_id,
         }
         await self._persist_twap(twap_id)
-        self.logger.info("TWAP %s initialized: %d chunks of ~%d for %s (Iceberg=%s)", twap_id, len(chunks), chunk_size, instrument, iceberg)
+        self.logger.info(
+            "TWAP %s initialized: %d chunks of ~%d for %s (Iceberg=%s)",
+            twap_id,
+            len(chunks),
+            chunk_size,
+            instrument,
+            iceberg,
+        )
 
     async def _twap_loop(self) -> None:
         """Background loop executing TWAP slices."""
@@ -730,14 +811,14 @@ class ExecutionAgent(BaseAgent):
                 for twap_id, twap in self._twap_orders.items():
                     if twap.get("status") == "quarantined":
                         continue
-                        
+
                     if not twap["chunks"]:
                         completed.append(twap_id)
                         continue
 
                     # Exponential backoff based on retries
                     retries = twap.get("retries", 0)
-                    delay = twap["interval"] * (2 ** retries)
+                    delay = twap["interval"] * (2**retries)
                     if now - twap["last_executed_at"] >= delay:
                         chunk_qty = twap["chunks"].pop(0)
 
@@ -760,7 +841,8 @@ class ExecutionAgent(BaseAgent):
                             price=twap["price"],
                             disclosed_quantity=disclosed_qty,
                             producer=self.name,
-                            signal_id=twap["signal"].get("event_id") or twap["signal"].get("_signal_event_id"),
+                            signal_id=twap["signal"].get("event_id")
+                            or twap["signal"].get("_signal_event_id"),
                             strategy=twap["signal"].get("strategy", "unknown"),
                             correlation_id=twap.get("correlation_id"),
                         )
@@ -781,10 +863,14 @@ class ExecutionAgent(BaseAgent):
                                 broker_start = time.monotonic()
                                 trigger_price = order_event.trigger_price
                                 variety = order_event.variety
-                                if order_event.product.value == "mis" and trigger_price is not None and trigger_price > 0:
+                                if (
+                                    order_event.product.value == "mis"
+                                    and trigger_price is not None
+                                    and trigger_price > 0
+                                ):
                                     variety = "co"
                                     order_event.variety = "co"
-                                    
+
                                 broker_id = await self._broker.place_order(
                                     tradingsymbol=twap["instrument"],
                                     exchange=order_event.exchange,
@@ -799,21 +885,31 @@ class ExecutionAgent(BaseAgent):
                                     disclosed_quantity=disclosed_qty,
                                 )
                                 broker_rtt = (time.monotonic() - broker_start) * 1000
-                                tracer.record_trace(twap.get("correlation_id"), "broker_rtt", broker_rtt)
+                                tracer.record_trace(
+                                    twap.get("correlation_id"), "broker_rtt", broker_rtt
+                                )
                                 order_event.data["broker_order_id"] = broker_id
                             except Exception as e:
                                 self.logger.error("TWAP broker failure on chunk: %s", e)
                                 twap["retries"] = twap.get("retries", 0) + 1
                                 if twap["retries"] > 3:
-                                    self.logger.critical("TWAP %s quarantined after 3 retries. Manual intervention required.", twap_id)
+                                    self.logger.critical(
+                                        "TWAP %s quarantined after 3 retries. Manual intervention required.",
+                                        twap_id,
+                                    )
                                     twap["status"] = "quarantined"
                                     # Create incident event
-                                    from src.schemas.events import EventType, Event, EventMetadata
+                                    from src.schemas.events import Event, EventMetadata, EventType
+
                                     err_event = Event(
                                         event_type=EventType.SYSTEM_ERROR,
                                         stream="system.errors",
-                                        data={"fatal": False, "reason": f"TWAP {twap_id} broker failure", "details": str(e)},
-                                        metadata=EventMetadata(producer=self.name)
+                                        data={
+                                            "fatal": False,
+                                            "reason": f"TWAP {twap_id} broker failure",
+                                            "details": str(e),
+                                        },
+                                        metadata=EventMetadata(producer=self.name),
                                     )
                                     await self.emit(err_event)
                                 else:
@@ -823,16 +919,22 @@ class ExecutionAgent(BaseAgent):
 
                         await self.emit(order_event)
                         self._open_orders[order_event.event_id] = order_event
-                        await self._persist_order(order_event, strategy=twap["signal"].get("strategy", "unknown"))
+                        await self._persist_order(
+                            order_event, strategy=twap["signal"].get("strategy", "unknown")
+                        )
 
                         twap["executed"] += chunk_qty
                         twap["last_executed_at"] = now
                         twap["retries"] = 0
                         await self._persist_twap(twap_id)
-                        
+
                         self.logger.info(
                             "TWAP %s executed chunk %d/%d. Progress: %d/%d",
-                            twap_id, chunk_qty, chunk_qty, twap["executed"], twap["total"]
+                            twap_id,
+                            chunk_qty,
+                            chunk_qty,
+                            twap["executed"],
+                            twap["total"],
                         )
 
                         if self._paper_trading:
@@ -879,6 +981,7 @@ class ExecutionAgent(BaseAgent):
         self._order_strategies[order_event.event_id] = strategy
         try:
             from src.monitoring.metrics import system_metrics
+
             system_metrics.count_order(order_event.status.value)
         except Exception:
             pass
@@ -890,7 +993,9 @@ class ExecutionAgent(BaseAgent):
         if self._broker is not None:
             existing_id = await self._is_order_placed(tag)
             if existing_id:
-                self.logger.warning("Duplicate placed order detected! Tag %s has order_id %s", tag, existing_id)
+                self.logger.warning(
+                    "Duplicate placed order detected! Tag %s has order_id %s", tag, existing_id
+                )
                 order_event.data["broker_order_id"] = existing_id
                 order_event.data["status"] = "accepted"
                 await self.emit(order_event)
@@ -898,7 +1003,7 @@ class ExecutionAgent(BaseAgent):
                 if self._paper_trading:
                     await self._simulate_fill(order_event)
                 return order_event
-            
+
             variety = "regular"
             if product.value == "mis" and trigger_price is not None and trigger_price > 0:
                 variety = "co"
@@ -937,9 +1042,8 @@ class ExecutionAgent(BaseAgent):
         price = float(order.price) if order.price is not None else None
         notional = order.quantity * price if price is not None else None
         current_qty = self._get_position_qty(order.instrument)
-        is_reducing = (
-            (order.side == OrderSide.SELL and current_qty > 0)
-            or (order.side == OrderSide.BUY and current_qty < 0)
+        is_reducing = (order.side == OrderSide.SELL and current_qty > 0) or (
+            order.side == OrderSide.BUY and current_qty < 0
         )
 
         checks: list[dict[str, Any]] = [
@@ -950,31 +1054,38 @@ class ExecutionAgent(BaseAgent):
             },
         ]
 
-        checks.append({
-            "name": "price_available",
-            "passed": is_reducing or self._paper_trading or price is not None,
-            "details": {
-                "price": price,
-                "is_reducing": is_reducing,
-                "paper_trading": self._paper_trading,
-            },
-        })
+        checks.append(
+            {
+                "name": "price_available",
+                "passed": is_reducing or self._paper_trading or price is not None,
+                "details": {
+                    "price": price,
+                    "is_reducing": is_reducing,
+                    "paper_trading": self._paper_trading,
+                },
+            }
+        )
 
         if notional is not None:
-            checks.append({
-                "name": "max_order_value",
-                "passed": is_reducing or notional <= settings.risk_max_order_value,
-                "details": {"order_value": notional, "max": settings.risk_max_order_value},
-            })
-            checks.append({
-                "name": "available_leverage",
-                "passed": is_reducing or notional <= self._available_capital * settings.risk_max_leverage,
-                "details": {
-                    "order_value": notional,
-                    "available_capital": self._available_capital,
-                    "max_leverage": settings.risk_max_leverage,
-                },
-            })
+            checks.append(
+                {
+                    "name": "max_order_value",
+                    "passed": is_reducing or notional <= settings.risk_max_order_value,
+                    "details": {"order_value": notional, "max": settings.risk_max_order_value},
+                }
+            )
+            checks.append(
+                {
+                    "name": "available_leverage",
+                    "passed": is_reducing
+                    or notional <= self._available_capital * settings.risk_max_leverage,
+                    "details": {
+                        "order_value": notional,
+                        "available_capital": self._available_capital,
+                        "max_leverage": settings.risk_max_leverage,
+                    },
+                }
+            )
 
         return checks
 
@@ -1015,6 +1126,7 @@ class ExecutionAgent(BaseAgent):
                     self.logger.error("Failed to cancel order %s on broker: %s", broker_order_id, e)
             try:
                 from src.monitoring.metrics import system_metrics
+
                 system_metrics.count_order("cancelled")
             except Exception:
                 pass
@@ -1066,22 +1178,26 @@ class ExecutionAgent(BaseAgent):
     async def _simulate_fill(self, order: OrderEvent) -> None:
         import asyncio
         import random
+
         price = self._resolve_paper_fill_price(order)
 
         from src.risk.costs import TransactionCostModel
+
         cost_model = TransactionCostModel()
-        
+
         # Add realistic exchange latency delay (50-150ms depending on load)
         latency = random.uniform(0.05, 0.15)
         await asyncio.sleep(latency)
-        
+
         depth = self._latest_depth.get(order.instrument)
         fill_price = cost_model.effective_fill_price_with_depth(
             order.side.value, price, order.quantity, depth
         )
-        
+
         product = order.product.value if hasattr(order.product, "value") else order.product
-        commission = cost_model.total_cost(order.side.value, order.quantity, fill_price, product=product)
+        commission = cost_model.total_cost(
+            order.side.value, order.quantity, fill_price, product=product
+        )
         slippage_bps = abs(fill_price - price) / price * 10000 if price else 0.0
 
         fill_event = FillEvent.create(
@@ -1099,6 +1215,7 @@ class ExecutionAgent(BaseAgent):
         )
         try:
             from src.monitoring.metrics import system_metrics
+
             system_metrics.count_order("filled")
         except Exception:
             pass
@@ -1111,7 +1228,10 @@ class ExecutionAgent(BaseAgent):
         self._filled_orders[order.event_id].append(fill_event)
         self.logger.info(
             "Fill simulated: %s %d @ %.2f (base=%.2f)",
-            order.instrument, order.quantity, fill_price, price,
+            order.instrument,
+            order.quantity,
+            fill_price,
+            price,
         )
 
     def _calculate_quantity(
@@ -1130,6 +1250,7 @@ class ExecutionAgent(BaseAgent):
         if settings.risk_sizing_method == "kelly" and strategy != "unknown":
             try:
                 from src.risk.kelly_sizing import KellySizer
+
                 sizer = KellySizer()
                 # Dynamically calculate the sizing multiplier from performance database
                 sizing_factor = sizer.get_position_sizing_factor(strategy)
@@ -1150,6 +1271,7 @@ class ExecutionAgent(BaseAgent):
                 # Ideally, we call hrp_allocator here with recent returns, but that is blocking.
                 # Assuming the risk_mgmt or portfolio agent has published hrp_weights to a global state:
                 from src.risk.position_registry import position_registry
+
                 hrp_weight = getattr(position_registry, "hrp_weights", {}).get(instrument, 0.05)
                 # Max weight is provided by HRP
                 raw_qty = (available_capital * hrp_weight) / price
@@ -1171,6 +1293,7 @@ class ExecutionAgent(BaseAgent):
 
     def _get_position_qty(self, instrument: str) -> int:
         from src.risk.position_registry import position_registry
+
         return position_registry.get_quantity(instrument)
 
     async def _is_order_placed(self, tag: str) -> str | None:
@@ -1194,7 +1317,7 @@ class ExecutionAgent(BaseAgent):
             broker_orders = await self._broker.get_orders()
             broker_orders_by_id = {o.get("order_id"): o for o in broker_orders if o.get("order_id")}
             broker_orders_by_tag = {o.get("tag"): o for o in broker_orders if o.get("tag")}
-            
+
             reconciled_count = 0
             for event_id, order in list(self._open_orders.items()):
                 b_order = None
@@ -1203,19 +1326,20 @@ class ExecutionAgent(BaseAgent):
                     b_order = broker_orders_by_id.get(broker_order_id)
                 if not b_order:
                     b_order = broker_orders_by_tag.get(event_id)
-                    
+
                 if b_order:
                     broker_status = b_order.get("status", "").upper()
                     if broker_status == "COMPLETE":
                         self.logger.warning(
-                            "Reconciliation: Order %s was FILLED while offline. Emitting FillEvent.", event_id
+                            "Reconciliation: Order %s was FILLED while offline. Emitting FillEvent.",
+                            event_id,
                         )
                         self._open_orders.pop(event_id, None)
                         await self._update_order_status(event_id, OrderStatus.FILLED.value)
-                        
+
                         fill_qty = int(b_order.get("filled_quantity", order.quantity))
                         avg_price = float(b_order.get("average_price", order.price or 0.0))
-                        
+
                         fill_event = FillEvent.create(
                             order_id=event_id,
                             instrument=order.instrument,
@@ -1224,23 +1348,28 @@ class ExecutionAgent(BaseAgent):
                             fill_price=avg_price,
                             fill_quantity=fill_qty,
                             signal_id=order.signal_id,
-                            strategy=order.strategy or self._order_strategies.get(event_id, "unknown"),
+                            strategy=order.strategy
+                            or self._order_strategies.get(event_id, "unknown"),
                             broker_order_id=broker_order_id,
                         )
                         await self.emit(fill_event)
                         await self._persist_fill(fill_event)
                         reconciled_count += 1
-                        
+
                     elif broker_status in ("REJECTED", "CANCELLED", "FAILED"):
                         self.logger.warning(
-                            "Reconciliation: Order %s was %s while offline. Updating local status.", event_id, broker_status
+                            "Reconciliation: Order %s was %s while offline. Updating local status.",
+                            event_id,
+                            broker_status,
                         )
                         self._open_orders.pop(event_id, None)
                         await self._update_order_status(event_id, OrderStatus.CANCELLED.value)
                         reconciled_count += 1
                 else:
-                    self.logger.warning("Reconciliation: Outstanding local order %s not found on broker", event_id)
-                    
+                    self.logger.warning(
+                        "Reconciliation: Outstanding local order %s not found on broker", event_id
+                    )
+
             if reconciled_count > 0:
                 self.logger.info("Successfully reconciled %d orders with broker", reconciled_count)
             else:
@@ -1271,18 +1400,30 @@ class ExecutionAgent(BaseAgent):
             portfolio_agent = getattr(system_ref, "portfolio_opt", None)
             if portfolio_agent:
                 open_positions = {
-                    inst: data for inst, data in portfolio_agent._positions.items()
-                    if data.get("quantity", 0) != 0 and (
+                    inst: data
+                    for inst, data in portfolio_agent._positions.items()
+                    if data.get("quantity", 0) != 0
+                    and (
                         str(data.get("product", "mis")).lower() == "mis"
-                        or (hasattr(data.get("product"), "value") and str(data.get("product").value).lower() == "mis")
+                        or (
+                            hasattr(data.get("product"), "value")
+                            and str(data.get("product").value).lower() == "mis"
+                        )
                     )
                 }
                 if open_positions:
-                    self.logger.warning("Graceful Shutdown: Closing %d open MIS positions...", len(open_positions))
+                    self.logger.warning(
+                        "Graceful Shutdown: Closing %d open MIS positions...", len(open_positions)
+                    )
                     for inst, data in open_positions.items():
                         qty = data.get("quantity", 0)
                         side = OrderSide.SELL if qty > 0 else OrderSide.BUY
-                        self.logger.warning("Graceful Shutdown: Market closing position for %s (qty=%d, side=%s)", inst, qty, side.value)
+                        self.logger.warning(
+                            "Graceful Shutdown: Market closing position for %s (qty=%d, side=%s)",
+                            inst,
+                            qty,
+                            side.value,
+                        )
                         try:
                             await self.place_order(
                                 instrument=inst,
@@ -1292,16 +1433,24 @@ class ExecutionAgent(BaseAgent):
                                 product=ProductType.MIS,
                             )
                         except Exception as e:
-                            self.logger.error("Graceful Shutdown: Failed to place close order for %s: %s", inst, e)
+                            self.logger.error(
+                                "Graceful Shutdown: Failed to place close order for %s: %s", inst, e
+                            )
 
                     # Wait for fill confirmations (with a 5-second timeout)
                     for _ in range(50):
-                        if all(p.get("quantity", 0) == 0 for p in portfolio_agent._positions.values()):
-                            self.logger.info("Graceful Shutdown: All positions closed successfully.")
+                        if all(
+                            p.get("quantity", 0) == 0 for p in portfolio_agent._positions.values()
+                        ):
+                            self.logger.info(
+                                "Graceful Shutdown: All positions closed successfully."
+                            )
                             break
                         await asyncio.sleep(0.1)
                     else:
-                        self.logger.warning("Graceful Shutdown: Timeout waiting for position close confirmations.")
+                        self.logger.warning(
+                            "Graceful Shutdown: Timeout waiting for position close confirmations."
+                        )
         if self._order_db is not None:
             await self._order_db.close()
             self._order_db = None
@@ -1318,20 +1467,24 @@ class ExecutionAgent(BaseAgent):
                     for order in orders:
                         broker_order_id = order.get("order_id")
                         status = order.get("status")
-                        
+
                         # Find the matching order event from self._open_orders
                         matching_order = None
                         for o_id, o_event in list(self._open_orders.items()):
                             if o_event.data.get("broker_order_id") == broker_order_id:
                                 matching_order = o_event
                                 break
-                        
+
                         if matching_order:
                             if status in ("COMPLETE", "FILLED"):
                                 # Emit a fill event!
-                                fill_price = float(order.get("average_price", 0.0) or order.get("price", 0.0))
-                                fill_qty = int(order.get("filled_quantity", matching_order.quantity))
-                                
+                                fill_price = float(
+                                    order.get("average_price", 0.0) or order.get("price", 0.0)
+                                )
+                                fill_qty = int(
+                                    order.get("filled_quantity", matching_order.quantity)
+                                )
+
                                 fill_event = FillEvent.create(
                                     order_id=matching_order.event_id,
                                     instrument=matching_order.instrument,
@@ -1340,26 +1493,44 @@ class ExecutionAgent(BaseAgent):
                                     fill_price=fill_price,
                                     fill_quantity=fill_qty,
                                     signal_id=matching_order.signal_id,
-                                    strategy=matching_order.strategy or self._order_strategies.get(matching_order.event_id, "unknown"),
+                                    strategy=matching_order.strategy
+                                    or self._order_strategies.get(
+                                        matching_order.event_id, "unknown"
+                                    ),
                                     broker_order_id=broker_order_id,
                                 )
-                                self.logger.info("Live order status loop detected FILL: %s %d @ %.2f", matching_order.instrument, fill_qty, fill_price)
+                                self.logger.info(
+                                    "Live order status loop detected FILL: %s %d @ %.2f",
+                                    matching_order.instrument,
+                                    fill_qty,
+                                    fill_price,
+                                )
                                 await self.emit(fill_event)
                                 await self._persist_fill(fill_event)
-                                
+
                                 # Update order event status to complete
                                 matching_order.data["status"] = "filled"
                                 matching_order.data["fill_price"] = fill_price
                                 matching_order.data["filled_quantity"] = fill_qty
-                                await self._persist_order(matching_order, strategy=matching_order.strategy or "unknown")
-                                
+                                await self._persist_order(
+                                    matching_order, strategy=matching_order.strategy or "unknown"
+                                )
+
                                 if matching_order.event_id in self._open_orders:
                                     del self._open_orders[matching_order.event_id]
                             elif status in ("REJECTED", "CANCELLED", "FAILED"):
-                                self.logger.warning("Live order status loop detected terminal failure: %s for %s", status, matching_order.instrument)
+                                self.logger.warning(
+                                    "Live order status loop detected terminal failure: %s for %s",
+                                    status,
+                                    matching_order.instrument,
+                                )
                                 matching_order.data["status"] = status.lower()
-                                matching_order.data["rejection_reason"] = order.get("status_message", "Cancelled or rejected by broker")
-                                await self._persist_order(matching_order, strategy=matching_order.strategy or "unknown")
+                                matching_order.data["rejection_reason"] = order.get(
+                                    "status_message", "Cancelled or rejected by broker"
+                                )
+                                await self._persist_order(
+                                    matching_order, strategy=matching_order.strategy or "unknown"
+                                )
                                 if matching_order.event_id in self._open_orders:
                                     del self._open_orders[matching_order.event_id]
             except Exception as e:
@@ -1368,10 +1539,12 @@ class ExecutionAgent(BaseAgent):
 
     async def health(self) -> dict[str, Any]:
         base = await super().health()
-        base.update({
-            "paper_trading": self._paper_trading,
-            "open_orders": len(self._open_orders),
-            "filled_orders": sum(len(v) for v in self._filled_orders.values()),
-            "pending_signals": len(self._pending_signals),
-        })
+        base.update(
+            {
+                "paper_trading": self._paper_trading,
+                "open_orders": len(self._open_orders),
+                "filled_orders": sum(len(v) for v in self._filled_orders.values()),
+                "pending_signals": len(self._pending_signals),
+            }
+        )
         return base

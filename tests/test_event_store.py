@@ -1,4 +1,3 @@
-
 import pytest
 
 from src.event_store.memory import InMemoryEventStore
@@ -104,7 +103,11 @@ async def test_ohlcv_event(event_store: InMemoryEventStore):
 async def test_signal_event(event_store: InMemoryEventStore):
     await event_store.connect()
     event = SignalEvent.create(
-        "RELIANCE", "momentum", "long", 0.85, price=2500.0,
+        "RELIANCE",
+        "momentum",
+        "long",
+        0.85,
+        price=2500.0,
         features={"rsi": 65, "ma_cross": True},
     )
     pos = await event_store.append(event.stream, event)
@@ -118,8 +121,13 @@ async def test_signal_event(event_store: InMemoryEventStore):
 async def test_order_event(event_store: InMemoryEventStore):
     await event_store.connect()
     event = OrderEvent.create(
-        "RELIANCE", Exchange.NSE, OrderSide.BUY, OrderType.LIMIT,
-        10, ProductType.MIS, price=2500.0,
+        "RELIANCE",
+        Exchange.NSE,
+        OrderSide.BUY,
+        OrderType.LIMIT,
+        10,
+        ProductType.MIS,
+        price=2500.0,
     )
     pos = await event_store.append(event.stream, event)
     assert pos > 0
@@ -150,7 +158,9 @@ async def test_fill_event(event_store: InMemoryEventStore):
 async def test_risk_check_event(event_store: InMemoryEventStore):
     await event_store.connect()
     event = RiskCheckEvent.create(
-        "position_limit", True, instrument="RELIANCE",
+        "position_limit",
+        True,
+        instrument="RELIANCE",
         details={"current": 50, "limit": 100},
     )
     pos = await event_store.append(event.stream, event)
@@ -164,7 +174,8 @@ async def test_risk_check_event(event_store: InMemoryEventStore):
 async def test_risk_breach_event(event_store: InMemoryEventStore):
     await event_store.connect()
     event = RiskCheckEvent.create(
-        "drawdown_limit", False,
+        "drawdown_limit",
+        False,
         details={"drawdown": 0.2, "limit": 0.15},
     )
     pos = await event_store.append(event.stream, event)

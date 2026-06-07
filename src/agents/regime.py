@@ -1,4 +1,3 @@
-import time
 import logging
 from collections import deque
 from typing import Any
@@ -9,6 +8,7 @@ from src.agents.base import BaseAgent
 from src.schemas.events import Event, EventType
 
 logger = logging.getLogger("agent.regime")
+
 
 class RegimeDetectionAgent(BaseAgent):
     def __init__(self, event_store=None, window: int = 20, min_stable_seconds: int = 0):
@@ -30,6 +30,7 @@ class RegimeDetectionAgent(BaseAgent):
         # Broadcast initial regime so StrategyGenAgent doesn't default to
         # wrong weights after a restart (T8 fix from plan.md)
         from src.schemas.events import Event, EventMetadata
+
         initial_regime_event = Event(
             event_type=EventType.SYSTEM_STATE,
             stream="system.state",
@@ -67,22 +68,18 @@ class RegimeDetectionAgent(BaseAgent):
         lows = list(self._lows[instrument])
 
         # 1. Moving Average (SMA)
-        sma = np.mean(prices[-self._window:])
+        sma = np.mean(prices[-self._window :])
         current_price = close
 
         # 2. Average True Range (ATR)
         trs = []
         for j in range(1, len(prices)):
-            closes_prev = prices[j-1]
-            tr = max(
-                highs[j] - lows[j],
-                abs(highs[j] - closes_prev),
-                abs(lows[j] - closes_prev)
-            )
+            closes_prev = prices[j - 1]
+            tr = max(highs[j] - lows[j], abs(highs[j] - closes_prev), abs(lows[j] - closes_prev))
             trs.append(tr)
 
-        atr = np.mean(trs[-self._window:]) if trs else 0.0
-        atr_ma = np.mean(trs[-self._window*2:]) if len(trs) >= self._window*2 else atr
+        atr = np.mean(trs[-self._window :]) if trs else 0.0
+        atr_ma = np.mean(trs[-self._window * 2 :]) if len(trs) >= self._window * 2 else atr
 
         # 3. Trend strength (ADX / DX equivalent)
         trend_strength = self._compute_trend_strength(highs, lows, prices, self._window)
@@ -126,6 +123,7 @@ class RegimeDetectionAgent(BaseAgent):
             self._last_emit_ts[instrument] = now_ts
             self.logger.warning("Market regime changed to: %s (%s)", new_regime, instrument)
             from src.schemas.events import Event, EventMetadata
+
             regime_event = Event(
                 event_type=EventType.SYSTEM_STATE,
                 stream="system.state",
@@ -140,7 +138,9 @@ class RegimeDetectionAgent(BaseAgent):
         self._pending_regime = None
         self._pending_since = None
 
-    def _compute_trend_strength(self, highs: list[float], lows: list[float], closes: list[float], period: int) -> float:
+    def _compute_trend_strength(
+        self, highs: list[float], lows: list[float], closes: list[float], period: int
+    ) -> float:
         if len(closes) < period + 1:
             return 0.0
 
@@ -149,8 +149,8 @@ class RegimeDetectionAgent(BaseAgent):
         tr = []
 
         for i in range(1, len(closes)):
-            up = highs[i] - highs[i-1]
-            down = lows[i-1] - lows[i]
+            up = highs[i] - highs[i - 1]
+            down = lows[i - 1] - lows[i]
 
             p_dm = up if (up > down and up > 0) else 0.0
             m_dm = down if (down > up and down > 0) else 0.0
@@ -159,9 +159,7 @@ class RegimeDetectionAgent(BaseAgent):
             minus_dm.append(m_dm)
 
             true_range = max(
-                highs[i] - lows[i],
-                abs(highs[i] - closes[i-1]),
-                abs(lows[i] - closes[i-1])
+                highs[i] - lows[i], abs(highs[i] - closes[i - 1]), abs(lows[i] - closes[i - 1])
             )
             tr.append(true_range)
 
@@ -184,8 +182,10 @@ class RegimeDetectionAgent(BaseAgent):
 
     async def health(self) -> dict[str, Any]:
         base = await super().health()
-        base.update({
-            "current_regime": self._current_regime,
-            "tracked_instruments": list(self._prices.keys()),
-        })
+        base.update(
+            {
+                "current_regime": self._current_regime,
+                "tracked_instruments": list(self._prices.keys()),
+            }
+        )
         return base

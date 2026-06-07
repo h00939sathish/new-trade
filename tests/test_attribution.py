@@ -1,7 +1,6 @@
 """
 Tests for P2.2 — per-strategy attribution aggregator.
 """
-import pytest
 
 from src.analytics.attribution import AttributionAggregator
 

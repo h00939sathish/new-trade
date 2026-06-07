@@ -16,12 +16,14 @@ class MockSystem:
             "mean_reversion": 1.0,
         }
 
+
 class MockMarketIntel:
     def __init__(self):
         self.emitted_events = []
 
     async def emit(self, event):
         self.emitted_events.append(event)
+
 
 @pytest.mark.asyncio
 async def test_performance_decay_detector():
@@ -30,10 +32,7 @@ async def test_performance_decay_detector():
 
     system = MockSystem(es)
     detector = PerformanceDecayDetector(
-        system=system,
-        rolling_window=5,
-        min_trades=5,
-        min_sharpe=0.5
+        system=system, rolling_window=5, min_trades=5, min_sharpe=0.5
     )
 
     # 1. Record some winning trades for 'momentum' with variance
