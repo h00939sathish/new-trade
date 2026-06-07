@@ -1,0 +1,53 @@
+Task 7: Rewrite init.md to match actual Python architecture
+Date: 2026-06-07
+
+PREVIOUS init.md (57 lines) claimed:
+  - Rust core engine (NautilusTrader patterns)
+  - Go message routing
+  - Apache Kafka + Schema Registry
+  - Apache Flink
+  - Feast feature store
+  - Ray RLlib
+  - Kubernetes + Istio
+
+NONE OF THIS EXISTS in the actual codebase. Verified by:
+  - Get-ChildItem src/engine/ -> not found
+  - Get-ChildItem src/routing/ -> not found
+  - Get-ChildItem src/api/ -> not found (api is dashboard/server.py)
+  - pyproject.toml deps: NO rust/ray/flink/feast/k8s libs
+  - docker-compose.yml: no kafka service (Task 5 removed the
+    kafka reference; it was never defined)
+  - deploy/ directory: not present at project root
+  - AIOKAFKA is in deps but only as a forward-compat client
+    (Wave 8 / Phase 3); not used in hot path
+
+REWRITTEN init.md (223 lines) now describes:
+  - Pure Python 3.12 (single pyproject.toml)
+  - 11 agents in src/agents/ (alert, base, execution, market_intel,
+    personas, portfolio, reconciliation, reflection_engine, regime,
+    risk_mgmt, strategy_gen)
+  - 14 strategies in src/strategies/ (3 active: momentum,
+    sideways_reversion, vwap_reversion; 2 filters: ema200_regime_gate,
+    adx_regime_filter; 9 disabled/legacy)
+  - 3 data connectors in src/connectors/ (yahoo, alternative_data,
+    backtest_provider) — true broker connectors are kite/groww stubs
+    in src/auth/, not full live routers
+  - SQLite/Postgres/Redis (no Kafka/Flink in hot path)
+  - FastAPI/React dashboard
+  - 56 test files, 329 tests passing
+
+INCLUDES:
+  - Banner stating "Rewritten 2026-06-07" with link to
+    docs/ARCHITECTURE.md
+  - Real tech stack from pyproject.toml
+  - Real project structure from filesystem survey
+  - Conventions section preserved (event sourcing, replay,
+    pre-trade risk, metrics)
+  - Updated getting-started with current make targets
+  - graphify note downgraded to accurate description (not "every
+    change", just "after making changes")
+
+MUST-NOT-DO CHECK:
+  - Did NOT delete init.md (rewrote in place)
+  - Did NOT add Rust/Go/Kafka claims even as future plans
+  - Did NOT modify plan.md (referenced for paper run gate only)
