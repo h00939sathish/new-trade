@@ -47,6 +47,7 @@ class MetricsCollector:
         self._signal_counter: Counter[str] = Counter()
         self._order_counter: Counter[str] = Counter()
         self._error_counter: Counter[str] = Counter()
+        self._attribution_pnl: Counter[str] = Counter()
         self._latency_history: deque[float] = deque(maxlen=max_history)
         self._event_rate_history: deque[float] = deque(maxlen=100)
         self._start_time: float = 0.0
@@ -127,6 +128,8 @@ class MetricsCollector:
                 self._order_counter[labels.get("status", "")] += iv
             elif metric == "trading_errors_total":
                 self._error_counter[labels.get("component", "")] += iv
+            elif metric == "trading_attribution_pnl_total":
+                self._attribution_pnl[labels.get("strategy", "")] += iv
             else:
                 # Unknown metric (forward-compat); ignore
                 continue
@@ -222,6 +225,30 @@ class MetricsCollector:
                 ("trading_errors_total", {"component": component}, 1.0)
             )
 
+    def record_attribution_pnl(self, strategy: str, pnl: float) -> None:
+        """Accumulate realized PnL for a strategy's attribution counter.
+
+        Called by ``PortfolioOptimizationAgent._on_fill`` on every
+        sell-side fill (the only side that realizes PnL). The PnL
+        value is added to the in-memory counter and queued for
+        durable storage; the flush task writes it within 10s.
+
+        Cardinality safety: callers MUST pass a known strategy name
+        or one of the explicit sentinels ``"other"`` / ``"unknown"``.
+        This method does NOT enforce the whitelist — the portfolio
+        agent is the right place to map raw strategy names to
+        known labels before calling here.
+        """
+        self._attribution_pnl[strategy] += pnl
+        if self._store is not None:
+            self._pending_writes.append(
+                (
+                    "trading_attribution_pnl_total",
+                    {"strategy": strategy},
+                    float(pnl),
+                )
+            )
+
     def record_latency(self, seconds: float) -> None:
         self._latency_history.append(seconds)
         # Latency is not persisted: it's a rolling window by design
@@ -309,6 +336,7 @@ class MetricsCollector:
             "signals_by_strategy": dict(self._signal_counter),
             "orders_by_status": dict(self._order_counter),
             "errors_by_component": dict(self._error_counter),
+            "attribution_pnl_by_strategy": dict(self._attribution_pnl),
             "avg_latency_ms": (
                 (sum(self._latency_history) / len(self._latency_history) * 1000)
                 if self._latency_history
@@ -379,6 +407,17 @@ class MetricsCollector:
                 "# HELP trading_errors_total Errors by component",
                 "# TYPE trading_errors_total counter",
                 f'trading_errors_total {{component="all"}} {sum(snapshot["errors_by_component"].values())}',
+                "",
+                "# HELP trading_attribution_pnl_total Realized PnL by strategy",
+                "# TYPE trading_attribution_pnl_total counter",
+            ]
+        )
+        for strat, pnl in snapshot["attribution_pnl_by_strategy"].items():
+            safe = strat.replace(".", "_").replace(":", "_")
+            lines.append(f'trading_attribution_pnl_total{{strategy="{safe}"}} {pnl}')
+
+        lines.extend(
+            [
                 "",
                 "# HELP trading_pnl_daily Realized PnL since local midnight",
                 "# TYPE trading_pnl_daily gauge",

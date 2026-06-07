@@ -389,3 +389,93 @@ def test_prometheus_text_includes_new_gauges():
     assert "trading_open_positions 2" in text
     assert "# TYPE trading_pnl_daily gauge" in text
     assert "# HELP trading_pnl_daily" in text
+
+
+# ---------------------------------------------------------------------------
+# Task 23: per-strategy attribution PnL counter
+# ---------------------------------------------------------------------------
+
+
+def test_record_attribution_pnl_accumulates_in_memory():
+    m = MetricsCollector()
+    m.record_attribution_pnl("momentum", 500.0)
+    m.record_attribution_pnl("momentum", -200.0)
+    m.record_attribution_pnl("sideways_reversion", 100.0)
+    snap = m.snapshot()
+    assert snap["attribution_pnl_by_strategy"]["momentum"] == 300.0
+    assert snap["attribution_pnl_by_strategy"]["sideways_reversion"] == 100.0
+
+
+@pytest.mark.asyncio
+async def test_record_attribution_pnl_persists_to_store(tmp_path):
+    store = MetricsStore(tmp_path / "m.db")
+    m = MetricsCollector(store=store)
+    m.record_attribution_pnl("momentum", 500.0)
+    m.record_attribution_pnl("vwap_reversion", -150.0)
+    await m.flush()
+
+    totals = await store.load_recent_totals()
+    assert totals[("trading_attribution_pnl_total", '{"strategy": "momentum"}')] == 500.0
+    assert totals[("trading_attribution_pnl_total", '{"strategy": "vwap_reversion"}')] == -150.0
+    await store.close()
+
+
+@pytest.mark.asyncio
+async def test_attribution_pnl_restores_after_restart(tmp_path):
+    db_path = tmp_path / "m.db"
+    store1 = MetricsStore(db_path)
+    m1 = MetricsCollector(store=store1)
+    m1.record_attribution_pnl("momentum", 500.0)
+    m1.record_attribution_pnl("momentum", 200.0)
+    m1.record_attribution_pnl("sideways_reversion", -100.0)
+    await m1.flush()
+    await store1.close()
+
+    store2 = MetricsStore(db_path)
+    m2 = MetricsCollector(store=store2)
+    await m2.load_from_store()
+    snap = m2.snapshot()
+    assert snap["attribution_pnl_by_strategy"]["momentum"] == 700.0
+    assert snap["attribution_pnl_by_strategy"]["sideways_reversion"] == -100.0
+    await store2.close()
+
+
+def test_prometheus_text_exports_per_strategy_attribution():
+    m = MetricsCollector()
+    m.record_attribution_pnl("momentum", 500.0)
+    m.record_attribution_pnl("sideways_reversion", -100.0)
+    m.record_attribution_pnl("vwap_reversion", 250.0)
+    m.record_attribution_pnl("ema200_regime_gate", 0.0)
+    m.record_attribution_pnl("adx_regime_filter", 0.0)
+    text = m.prometheus_text()
+    assert "trading_attribution_pnl_total" in text
+    assert '# TYPE trading_attribution_pnl_total counter' in text
+    assert '# HELP trading_attribution_pnl_total' in text
+    assert 'strategy="momentum" 500.0' in text
+    assert 'strategy="sideways_reversion" -100.0' in text
+    assert 'strategy="vwap_reversion" 250.0' in text
+    assert 'strategy="ema200_regime_gate" 0.0' in text
+    assert 'strategy="adx_regime_filter" 0.0' in text
+
+
+def test_known_strategies_constant_bounded():
+    """Plan must-NOT-do: no unbounded label cardinality.
+
+    The portfolio agent's whitelist must contain exactly the 3
+    active strategies + 2 filter strategies (5 total). Adding
+    new strategies requires a code change to the whitelist —
+    this is intentional: it forces a review of the label-cardinality
+    impact before exposing a new label to Prometheus.
+    """
+    from src.agents.portfolio import _KNOWN_STRATEGIES
+
+    assert _KNOWN_STRATEGIES == frozenset(
+        {
+            "momentum",
+            "sideways_reversion",
+            "vwap_reversion",
+            "ema200_regime_gate",
+            "adx_regime_filter",
+        }
+    )
+    assert len(_KNOWN_STRATEGIES) == 5

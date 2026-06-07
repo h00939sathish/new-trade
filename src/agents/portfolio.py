@@ -14,6 +14,23 @@ from src.schemas.events import (
 )
 
 
+# Whitelist of known strategy names for attribution PnL metrics.
+# Order matches docs/active_strategy_set.md:
+#   3 active strategies: momentum, sideways_reversion, vwap_reversion
+#   2 filter strategies: ema200_regime_gate, adx_regime_filter
+# Any strategy name outside this set is mapped to "other" before
+# being exported to Prometheus, bounding label cardinality at 6.
+_KNOWN_STRATEGIES: frozenset[str] = frozenset(
+    {
+        "momentum",
+        "sideways_reversion",
+        "vwap_reversion",
+        "ema200_regime_gate",
+        "adx_regime_filter",
+    }
+)
+
+
 class PortfolioOptimizationAgent(BaseAgent):
     def __init__(self, event_store=None, initial_capital: float = 1_000_000.0):
         super().__init__("portfolio_opt", event_store=event_store)
@@ -157,6 +174,19 @@ class PortfolioOptimizationAgent(BaseAgent):
 
             if hasattr(self, "decay_detector"):
                 self.decay_detector.record_trade(strategy_name, realized_pnl)
+
+            # Push per-strategy attribution PnL to system_metrics.
+            # Cardinality safety: map any non-whitelisted strategy to
+            # "other" so a misconfigured order_id can't blow up the
+            # Prometheus label cardinality.
+            from src.monitoring.metrics import system_metrics
+
+            attribution_label = (
+                strategy_name
+                if strategy_name in _KNOWN_STRATEGIES
+                else "other"
+            )
+            system_metrics.record_attribution_pnl(attribution_label, realized_pnl)
 
         self.logger.info(
             "Position %s: qty=%d avg_cost=%.2f",

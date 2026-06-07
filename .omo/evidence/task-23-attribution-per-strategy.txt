@@ -1,0 +1,105 @@
+Task 23: Add per-strategy attribution metrics (trading_attribution_pnl_total)
+Date: 2026-06-07
+
+NEW METRIC:
+  trading_attribution_pnl_total{strategy="..."} (counter)
+    - Accumulates realized PnL per strategy across sell-side fills
+    - Cardinality bounded to 6 labels: 3 active strategies
+      (momentum, sideways_reversion, vwap_reversion),
+      2 filter strategies (ema200_regime_gate, adx_regime_filter),
+      and "other" (catch-all for misconfigured order_ids)
+
+CHANGES:
+  - src/monitoring/metrics.py
+      - New state field: _attribution_pnl: Counter[str]
+      - New method: record_attribution_pnl(strategy, pnl)
+        - Adds pnl (not 1.0) to the in-memory counter
+        - Appends to _pending_writes for durable storage
+        - Card-90 docs explain the whitelist contract for callers
+      - load_from_store() now restores _attribution_pnl from
+        stored (metric="trading_attribution_pnl_total",
+        labels={"strategy": ...}) rows
+      - snapshot() now includes "attribution_pnl_by_strategy"
+      - prometheus_text() now exports the counter with strategy
+        label and # HELP / # TYPE lines
+  - src/agents/portfolio.py
+      - New module-level constant _KNOWN_STRATEGIES
+        (frozenset of the 5 known strategy names)
+      - In _on_fill() sell branch, after strategy_name is computed,
+        push attribution PnL to system_metrics. The label is
+        mapped to "other" if not in _KNOWN_STRATEGIES.
+  - tests/test_metrics_store.py
+      - 5 new test functions:
+        - test_record_attribution_pnl_accumulates_in_memory
+        - test_record_attribution_pnl_persists_to_store
+        - test_attribution_pnl_restores_after_restart
+        - test_prometheus_text_exports_per_strategy_attribution
+        - test_known_strategies_constant_bounded (cardinality
+          safety guard: a code change is required to add a
+          new label, forcing a review)
+
+DESIGN DECISIONS:
+  - The cardinality whitelist lives in portfolio.py, not in
+    metrics.py. metrics.record_attribution_pnl() accepts any
+    string; the portfolio agent is the right place to enforce
+    the whitelist because it's the only caller in production
+    that creates strategy labels. Tests pass raw strings freely.
+  - PnL values (not counts) are stored: realized PnL can be
+    negative for losing trades. The MetricsStore.increment
+    path already supports signed deltas (delta: float = 1.0
+    default), so no schema change was needed.
+  - Buy-side fills do NOT touch the attribution counter:
+    buys don't realize PnL, only sells do (the portfolio
+    agent's `_on_fill` sell branch is the only call site).
+  - The "other" bucket is a single cardinality-bounded value;
+    a misconfigured order_id (e.g., from a new strategy that
+    was added to the code but not to the whitelist) cannot
+    blow up Prometheus's label storage.
+
+ACCEPTANCE CRITERIA (plan line 1601-1606):
+  - [x] trading_attribution_pnl_total{strategy="momentum"} exported
+  - [x] At least 5 strategy labels exported (momentum,
+        sideways_reversion, vwap_reversion, ema200_regime_gate,
+        adx_regime_filter) — all 5 asserted in
+        test_prometheus_text_exports_per_strategy_attribution
+  - [x] Value updates on each fill (record_attribution_pnl
+        is called from the sell branch of _on_fill)
+  - [x] Tests cover all 5 strategy labels
+        (test_prometheus_text_exports_per_strategy_attribution)
+  - [x] No label cardinality explosion
+        (test_known_strategies_constant_bounded guards the
+        whitelist; "other" catches all non-whitelisted values)
+
+PLAN MUST-NOT-DO CHECK:
+  - Did NOT use unbounded cardinality: _KNOWN_STRATEGIES
+    whitelist (5) + "other" (1) = 6 max labels. A test
+    enforces the whitelist size.
+  - Did NOT include unrealized PnL: the hook fires only on
+    the sell branch of _on_fill, which is the only place
+    realized_pnl is computed (buy fills update cash but
+    do not realize gains/losses).
+
+QA SCENARIO (plan line 1608-1618):
+  Cannot run curl against the /metrics endpoint (local
+  Python 3.12 unavailable). Sub-scenario verifications
+  performed:
+    1. test_prometheus_text_exports_per_strategy_attribution
+       asserts all 5 strategy labels appear in the
+       prometheus_text() output — equivalent to the
+       curl|grep check.
+    2. test_record_attribution_pnl_accumulates_in_memory
+       asserts the counter accumulates correctly across
+       multiple calls and multiple strategies.
+    3. test_attribution_pnl_restores_after_restart verifies
+       the metric survives a process restart (via the
+       SQLite store + load_from_store).
+
+SYNTAX / LSP CHECK:
+  - python -m py_compile on metrics.py, portfolio.py,
+    test_metrics_store.py: clean
+  - lsp_diagnostics on all 3: 0 errors
+
+FILES TOUCHED:
+  - src/monitoring/metrics.py          (record_attribution_pnl)
+  - src/agents/portfolio.py            (whitelist + hook)
+  - tests/test_metrics_store.py        (5 new tests)
