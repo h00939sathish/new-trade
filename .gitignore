@@ -31,6 +31,12 @@ dash_stderr.txt
 dash_stdout.txt
 state/angel_symbols.json
 state/burnin/
+# SQLite WAL/SHM sidecar files (defensive: *.db* catches these, but be explicit)
+*.db-shm
+*.db-wal
+# Leaked test/probe DBs in state/ (test_p01.db, test_p02.db, probe_order_state.db, etc.)
+/state/test_*.db
+/state/probe_*.db
 
 # Python packaging
 *.egg-info/

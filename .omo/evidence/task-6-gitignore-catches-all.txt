@@ -1,0 +1,36 @@
+Task 6: Update .gitignore to include playwright, graphify, tmp, db-wal
+Date: 2026-06-07
+
+ADDITIONS to .gitignore (lines 33-39):
+  *.db-shm
+  *.db-wal
+  /state/test_*.db
+  /state/probe_*.db
+
+NOTE: existing patterns already cover many of the audit concerns:
+  - .playwright-mcp/  (line 46)
+  - graphify-out/      (line 41)
+  - .tmp/              (line 47)
+  - *.db*              (line 44) — covers all .db, .db-shm, .db-wal
+  - state/angel_symbols.json (line 32)
+  - state/burnin/      (line 33)
+The new explicit *.db-shm / *.db-wal lines are defensive: in case
+someone later removes the broad *.db* pattern, the sidecar files
+remain ignored.
+
+QA SCENARIO (from plan, line 627-640):
+  foreach file in [
+    state/trading_events.db, state/order_state.db, state/angel_symbols.json,
+    state/test_p01.db, state/test_p02.db, state/test_risk.db,
+    state/test_execution.db, state/probe_order_state.db,
+    state/trading_events.db-wal, state/trading_events.db-shm,
+    state/order_state.db-wal, state/order_state.db-shm,
+    .playwright-mcp/test.log, graphify-out/index.html, .tmp/scratch.txt,
+    data/historical/x.parquet
+  ]:
+    git check-ignore -v $file  -> exit 0
+  RESULT: IGNORED OK (all 16 files report as ignored)
+
+git status shows no untracked state/*.db* leak files.
+Only intentional work artifacts remain untracked: .omo/boulder.json,
+.omo/plans/*.md, .omo/run-continuation/*.json.
