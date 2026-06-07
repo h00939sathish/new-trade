@@ -1,0 +1,71 @@
+Task 13: Create docs/OPERATIONS.md (deploy/monitor/recover)
+Date: 2026-06-07
+
+NEW FILE: docs/OPERATIONS.md (680 lines)
+
+7 REQUIRED SECTIONS (all present, all reference actual deploy
+artifacts):
+  1. Local development setup (venv, .env, run; no Docker required)
+  2. Docker Compose (5 services: postgres, redis, prometheus,
+     grafana, trading-app; with service table, start/stop, env vars,
+     health checks)
+  3. Railway Deploy (railway.json parsed: DOCKERFILE builder,
+     numReplicas=1, restartPolicyType=ALWAYS, healthcheckPath=/health,
+     healthcheckTimeout=30; 2-stage Dockerfile: node:20 frontend
+     builder + python:3.12-slim backend)
+  4. Monitoring setup (prometheus.yml: scrape_interval 15s, target
+     trading-app:8080, /metrics; 3 current alerts in table;
+     Grafana data sources + dashboard JSON panels listed)
+  5. Common failures (6 sub-sections: container won't start, no
+     signals firing, broker API errors, Prometheus alert, DB locked,
+     state files growing)
+  6. Recovery procedures (6 sub-sections: SQLite corruption, Postgres
+     corruption, stuck reconciliation, angel_symbols.json corruption,
+     bad deploy rollback, lost Kite token)
+  7. Backup strategy (what to back up table; backup script template
+     with sqlite3 .backup; recovery procedure; monthly drill)
+
+8TH SECTION (Disaster Recovery) — 6 sub-scenarios:
+  8.1 Total state directory loss (acknowledge to stakeholders,
+     reset burn-in clock, document)
+  8.2 Broker compromise (revoke key at broker, rotate creds +
+     TRA_HTTP_AUTH_TOKEN, audit event log, document)
+  8.3 Region outage (restartPolicyType ALWAYS handles it; long
+     outages pause burn-in gate)
+  8.4 Container OOM-killed (Railway 512 MB default; 1 GB upgrade;
+     Wave 4 fixes planned)
+  8.5 Git history corruption (reflog recovery; never force-push
+     to master)
+  8.6 Contact + escalation matrix (4 severity tiers, response times)
+
+ADDITIONAL VALUE-ADD SECTIONS:
+  - Quick reference: ports (8080, 5432, 6379, 9090, 3000, 5173)
+  - Quick reference: compose service dependencies graph
+
+QA SCENARIO (from plan, line 1059-1070):
+  foreach target in [docker, railway, prometheus, grafana, postgres, sqlite]:
+    Select-String docs/OPERATIONS.md -Pattern $target
+  RESULT: ALL DEPLOY TARGETS OK (all 6 substrings present, case-insensitive)
+
+MUST-NOT-DO CHECK:
+  - No default passwords — explicitly warned: "Do not use the
+    default admin / admin Grafana credentials in any non-local
+    environment. Override GF_SECURITY_ADMIN_PASSWORD..."
+  - rm -rf not recommended without backup — section 6.1
+    explicitly states "Do NOT rm state/trading_events.db to
+    start fresh"; section 8.1 says "If you rm -rf state/, the
+    event log is destroyed"
+
+ACCURACY VERIFIED against source:
+  - prometheus.yml: 12 lines, scrape_interval 15s, target
+    trading-app:8080, /metrics — all match
+  - prometheus_alerts.yml: 3 alerts (TradingSystemDown,
+    KillSwitchTriggered, BrokerConnectionLost) — all match
+    with correct severities and `for` durations
+  - Dockerfile: 2-stage (node:20 → python:3.12-slim), EXPOSE
+    8080, HEALTHCHECK /health, CMD python -m src.main — all
+    match
+  - railway.json: DOCKERFILE builder, numReplicas 1, ALWAYS
+    restart, /health path, 30s timeout — all match
+  - docker-compose.yml: 5 services (postgres/redis/prometheus/
+    grafana/trading-app) — all match
