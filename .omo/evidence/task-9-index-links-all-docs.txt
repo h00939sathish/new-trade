@@ -1,0 +1,40 @@
+Task 9: Create docs/INDEX.md linking all docs
+Date: 2026-06-07
+
+NEW FILE: docs/INDEX.md (138 lines)
+
+STRUCTURE:
+  - Header with "Last updated: 2026-06-07"
+  - Plans & Roadmap (project root): plan.md, init.md, CHANGELOG.md,
+    SECURITY.md, .omo/plans/complete-audit-remediation.md
+  - Live-trading Gate: live_trading_gate.md, PAPER_5D_LAUNCH.md,
+    active_strategy_set.md, strategy_menu.md, remediation_plan_2026-06-02.md
+  - Audits: trading_engine_audit_2026-06-02.md, delta_audit_post_stage1.md,
+    backtest_audit.md, old_vs_new_comparison.md
+  - Research: backtest_data_providers_research.md, strategy_research_10.md,
+    strategy_scoring_better_alternatives.md
+  - Planned (Wave 2): ARCHITECTURE.md, RUNBOOK.md, CONTRIBUTING.md,
+    OPERATIONS.md (4 placeholder rows referencing plan tasks)
+  - Conventions + "How to keep this index current" section
+
+GROUPING LOGIC:
+  - "Live-trading Gate" first because anyone considering paper → live
+    promotion needs that as the entry point
+  - "Audits" next because the remediation plan was derived from them
+  - "Research" last because it informs future strategy work, not
+    current operations
+  - "Planned" section makes the Wave 2 deliverables visible so future
+    contributors know what is coming
+
+QA SCENARIO (from plan, line 811-826):
+  $allDocs = Get-ChildItem docs -Recurse -Filter *.md
+  foreach doc in $allDocs:
+    check if docs/<relpath> appears in docs/INDEX.md
+  RESULT: All 12 docs/*.md files are linked.
+  Note: INDEX.md itself is excluded from the self-link check (a doc
+  index does not need to self-reference; that is what the
+  repo-root README convention is for).
+
+DESCRIPTIONS: 1 line per doc, distinguishes each from its neighbors
+(e.g., the 4 audit files are described by what unique bug/decision
+they produced, not by "audit findings" boilerplate).
