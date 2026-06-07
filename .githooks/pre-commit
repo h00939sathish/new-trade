@@ -1,0 +1,62 @@
+#!/usr/bin/env pwsh
+# Pre-commit hook: scan staged changes for credential patterns
+# Install: git config core.hooksPath .githooks
+
+$ErrorActionPreference = "Stop"
+
+# Get list of staged files
+$staged = git diff --cached --name-only
+if (-not $staged) { exit 0 }
+
+# Patterns to detect (case-insensitive)
+$patterns = @(
+    @{ name = "KITE_API_KEY";        pattern = "TRA_KITE_API_KEY\s*=\s*\S+" },
+    @{ name = "KITE_API_SECRET";     pattern = "TRA_KITE_API_SECRET\s*=\s*\S+" },
+    @{ name = "KITE_ACCESS_TOKEN";   pattern = "TRA_KITE_ACCESS_TOKEN\s*=\s*\S+" },
+    @{ name = "GROWW_API_KEY";       pattern = "TRA_GROWW_API_KEY\s*=\s*\S+" },
+    @{ name = "GROWW_API_SECRET";    pattern = "TRA_GROWW_API_SECRET\s*=\s*\S+" },
+    @{ name = "GROWW_AUTH_TOKEN";    pattern = "TRA_GROWW_AUTH_TOKEN\s*=\s*\S+" },
+    @{ name = "ANGEL_API_KEY";       pattern = "TRA_ANGEL_API_KEY\s*=\s*\S+" },
+    @{ name = "ANGEL_PASSWORD";      pattern = "TRA_ANGEL_PASSWORD\s*=\s*\S+" },
+    @{ name = "GEMINI_API_KEY";      pattern = "TRA_GEMINI_API_KEY\s*=\s*[^$]" },
+    @{ name = "JWT";                 pattern = "eyJ[A-Za-z0-9_-]{20,}\.eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}" },
+    @{ name = "Generic_API_Key";     pattern = "(?i)(api[_-]?key|apikey)\s*[=:]\s*['\"]?[A-Za-z0-9]{16,}" },
+    @{ name = "Generic_Secret";      pattern = "(?i)(api[_-]?secret|secret)\s*[=:]\s*['\"]?[A-Za-z0-9]{16,}" },
+    @{ name = "Generic_Password";    pattern = "(?i)(password|passwd|pwd)\s*[=:]\s*['\"]?[^\s'\"]{6,}" },
+)
+
+$found = @()
+
+foreach ($file in $staged) {
+    # Skip this hook file and SECURITY.md (they contain pattern documentation)
+    if ($file -in @(".githooks\pre-commit", "SECURITY.md", ".githooks/pre-commit")) { continue }
+
+    # Get the staged content (not the working tree)
+    $content = git show ":$file" 2>$null
+    if (-not $content) { continue }
+
+    foreach ($p in $patterns) {
+        if ($content -match $p.pattern) {
+            $found += [PSCustomObject]@{
+                File    = $file
+                Pattern = $p.name
+                Match   = $matches[0].Substring(0, [Math]::Min(40, $matches[0].Length)) + "..."
+            }
+        }
+    }
+}
+
+if ($found.Count -gt 0) {
+    Write-Host ""
+    Write-Host "[SECURITY] Possible credentials detected in staged files:" -ForegroundColor Red
+    Write-Host ""
+    $found | Format-Table -AutoSize | Out-String | Write-Host
+    Write-Host "If these are false positives (e.g., placeholder values)," -ForegroundColor Yellow
+    Write-Host "edit .githooks/pre-commit to add the file to the skip list." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "To bypass (NOT recommended): git commit --no-verify" -ForegroundColor Yellow
+    Write-Host ""
+    exit 1
+}
+
+exit 0
