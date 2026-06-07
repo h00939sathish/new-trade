@@ -110,8 +110,12 @@ committing secrets; the recent `k1bpotx2f133yrms` leak
 is designed to catch.
 
 > The hook is currently a **single PowerShell script** that
-> checks string patterns. It is *not* gitleaks; a full gitleaks
-> integration is planned in Wave 3 (Task 15).
+> checks string patterns. CI also runs
+> [`gitleaks/gitleaks-action@v2`](../.github/workflows/ci.yml)
+> on every push and pull request as a deeper second-layer
+> scan (full git history, more patterns). The two are
+> complementary: the pre-commit hook is fast and local;
+> gitleaks in CI is comprehensive and blocks the PR.
 
 ---
 
