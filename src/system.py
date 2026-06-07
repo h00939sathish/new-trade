@@ -6,7 +6,6 @@ from typing import Any
 from src.agents import (
     AlertAgent,
     ExecutionAgent,
-    ExpertPersonasAgent,
     MarketIntelAgent,
     PortfolioOptimizationAgent,
     ReflectionEngineAgent,

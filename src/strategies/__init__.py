@@ -11,7 +11,7 @@ def load_strategies():
     """Dynamically loads all Strategy classes from the src.strategies package."""
     import src.strategies as strategies_pkg
 
-    ignore_list = ["ml_regime", "pca_statarb", "sideways_reversion", "stat_arb", "tsmom"]
+    ignore_list = ["ml_regime", "pca_statarb", "stat_arb"]
 
     for _, module_name, is_pkg in pkgutil.iter_modules(strategies_pkg.__path__):
         if is_pkg or module_name == "base" or module_name in ignore_list:

@@ -5,6 +5,13 @@ from src.agents.execution import ExecutionAgent
 from src.schemas.events import Event, EventType, OrderSide
 
 
+@pytest.fixture(autouse=True)
+def _isolated_order_db(tmp_path, monkeypatch):
+    db_path = tmp_path / "order_state.db"
+    monkeypatch.setattr("src.agents.execution._ORDER_DB_PATH", db_path)
+    yield db_path
+
+
 @pytest.mark.asyncio
 async def test_twap_order_slicing():
     agent = ExecutionAgent()

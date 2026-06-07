@@ -64,8 +64,8 @@ class Settings(BaseSettings):
     kill_switch_max_drawdown_pct: float = 0.05
     kill_switch_auto_reset: bool = True
 
-    consensus_threshold: float = 0.03
-    consensus_short_threshold: float = 0.03
+    consensus_threshold: float = 0.65
+    consensus_short_threshold: float = 0.70
     signal_cooldown_seconds: int = 120
 
     reflection_mutation_enabled: bool = False

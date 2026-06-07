@@ -1,11 +1,12 @@
-"""Centralized position registry — single source of truth for all position state.
+"""
+SSOT: This module's `position_registry` singleton is the single source of truth
+for all position state in the system. All writes (fills, SL/TP, trailing stops)
+go through this registry. Reads from other modules (e.g., portfolio analytics)
+must treat their caches as read-only.
 
-All agents should read positions from this registry rather than maintaining
-separate position trackers. Only PortfolioOptimizationAgent should write to it
-(via FILL event processing).
-
-This eliminates the divergence bug where strategy_gen, execution, and portfolio
-each maintained separate position state that could fall out of sync.
+Related: src/agents/portfolio.py contains `portfolio_opt._positions` which is
+a read-only cache used for analytics/attribution snapshots. It must NEVER be
+written to directly — it is rebuilt from position_registry on demand.
 """
 import asyncio
 import logging
@@ -26,6 +27,9 @@ class PositionRegistry:
     """
 
     _instance = None
+    # TODO(phase-2): migrate to asyncio.Lock for live mode. threading.Lock is
+    # functionally equivalent in single-thread asyncio (paper mode), but mixing
+    # threads with live broker I/O would race.
     _lock = threading.Lock()
 
     def __new__(cls) -> "PositionRegistry":

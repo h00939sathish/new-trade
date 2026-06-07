@@ -52,10 +52,11 @@ class BacktestEngine:
         commission_pct: float = 0.0003,
         slippage_bps: float = 5.0,
     ):
+        from pathlib import Path
         self._event_store = InMemoryEventStore()
         self._strategy_gen = StrategyGenAgent(event_store=self._event_store)
         self._risk_mgmt = RiskManagementAgent(event_store=self._event_store)
-        self._execution = ExecutionAgent(event_store=self._event_store)
+        self._execution = ExecutionAgent(event_store=self._event_store, order_db_path=Path(":memory:"))
         self._initial_capital = initial_capital
         self._capital = initial_capital
         self._peak_value = initial_capital

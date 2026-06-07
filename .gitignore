@@ -45,3 +45,25 @@ node_modules/
 dashboard/node_modules/
 .playwright-mcp/
 .tmp/
+
+# Runtime artifacts (paper burn-in, traces, run logs)
+/data/
+/logs/runtime_traces/
+/logs/first_trade_*.jsonl
+/logs/run3_*.log
+
+# IDE / AI assistant local settings
+.claude/
+
+# Throwaway root-level debug scripts (real tests live under tests/)
+/test_strat.py
+/test_strat2.py
+/test_strategies.py
+/test_pipeline.py
+
+# Root-level runtime artifacts (tests dumps, validation runs)
+/tests_output.log
+/validation_results.json
+/run_validation.1y.log
+/results_1yr.json
+/results_5yr.json

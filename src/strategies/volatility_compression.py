@@ -121,7 +121,7 @@ class VolatilityCompressionStrategy(Strategy):
         
         return {
             "direction": direction,
-            "confidence": 0.8,
+            "confidence": min(0.5 + 0.5 * (1.0 - percentile / self.percentile_threshold), 0.95),
             "price": current_price,
             "features": {
                 "bb_width_percentile": percentile,

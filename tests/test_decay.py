@@ -58,5 +58,5 @@ async def test_performance_decay_detector():
     # System event should have been emitted
     assert len(system.market_intel.emitted_events) > 0
     decay_event = system.market_intel.emitted_events[0]
-    assert decay_event.event_type.value == "system.error"
-    assert "Strategy decay detected: momentum" in decay_event.data["reason"]
+    assert decay_event.event_type.value == "strategy.decay"
+    assert decay_event.data["strategy"] == "momentum"

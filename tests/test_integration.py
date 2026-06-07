@@ -18,12 +18,18 @@ def clean_db():
                 break
             except PermissionError:
                 time.sleep(0.2)
-    yield
+@pytest.fixture(autouse=True)
+def _isolated_order_db(tmp_path, monkeypatch):
+    db_path = tmp_path / "order_state.db"
+    monkeypatch.setattr("src.agents.execution._ORDER_DB_PATH", db_path)
+    yield db_path
 
 
 @pytest.fixture
 def system():
-    return TradingSystem(providers={'kite_client': None, 'kite_broker': None})
+    from src.event_store.memory import InMemoryEventStore
+    es = InMemoryEventStore()
+    return TradingSystem(event_store=es, providers={'kite_client': None, 'kite_broker': None})
 
 
 @pytest.mark.asyncio
@@ -76,6 +82,9 @@ async def test_tick_through_full_pipeline(system: TradingSystem):
 @pytest.mark.asyncio
 async def test_ohlcv_through_full_pipeline(system: TradingSystem):
     await system.start()
+    system.strategy_gen.register_strategy(
+        system.strategy_gen._strategies["momentum"]
+    )
 
     for i in range(25):
         close = 100.0 + (i * 0.5)

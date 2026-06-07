@@ -4,7 +4,7 @@ import asyncio
 
 from src.agents.base import BaseAgent
 from src.event_store import EventStore
-from src.schemas.events import SystemEvent, Event
+from src.schemas.events import SystemEvent, Event, EventType
 from src.risk.position_registry import position_registry
 
 logger = logging.getLogger("agent.reconciliation")

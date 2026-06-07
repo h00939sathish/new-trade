@@ -43,7 +43,6 @@ class VolatilityBreakoutStrategy(Strategy):
         current_price = prices[-1]
 
         direction = None
-        confidence = 0.8  # Breakout signals usually have a fixed high confidence in trend models
 
         if current_price > highest_high:
             direction = "long"
@@ -52,6 +51,13 @@ class VolatilityBreakoutStrategy(Strategy):
 
         if not direction:
             return None
+
+        channel_width = highest_high - lowest_low
+        if channel_width > 0:
+            dist = (current_price - highest_high) if direction == "long" else (lowest_low - current_price)
+            confidence = min(0.5 + 0.5 * (dist / channel_width), 0.95)
+        else:
+            confidence = 0.6
 
         return {
             "direction": direction,

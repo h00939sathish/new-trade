@@ -6,11 +6,18 @@ from src.agents.execution import ExecutionAgent
 from src.schemas.events import OrderSide
 
 
+@pytest.fixture(autouse=True)
+def _isolated_order_db(tmp_path, monkeypatch):
+    db_path = tmp_path / "order_state.db"
+    monkeypatch.setattr("src.agents.execution._ORDER_DB_PATH", db_path)
+    yield db_path
+
+
 class MockBroker:
     def __init__(self):
         self.orders = []
 
-    async def place_order(self, tradingsymbol, exchange, side, order_type, quantity, product, price=None, trigger_price=None, tag=None, disclosed_quantity=None):
+    async def place_order(self, tradingsymbol, exchange, side, order_type, quantity, product, price=None, trigger_price=None, tag=None, disclosed_quantity=None, variety=None, **kwargs):
         order = {
             "tradingsymbol": tradingsymbol,
             "quantity": quantity,

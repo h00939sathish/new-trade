@@ -110,9 +110,16 @@ class OpeningRangeBreakoutStrategy(Strategy):
         sl_pct = (1.0 * atr) / current_price if atr > 0 else 0.01
         tp_pct = (2.0 * atr) / current_price if atr > 0 else 0.02
 
+        range_size = or_high - or_low
+        if range_size > 0:
+            breakout_dist = (current_price - or_high) if direction == "long" else (or_low - current_price)
+            confidence = min(0.5 + 0.5 * (breakout_dist / range_size), 0.95)
+        else:
+            confidence = 0.6
+
         return {
             "direction": direction,
-            "confidence": 0.8,
+            "confidence": confidence,
             "price": current_price,
             "features": {
                 "or_high": or_high,

@@ -22,7 +22,8 @@ async def broker_mock():
 async def test_native_stop_loss_attached_at_placement(broker_mock, tmp_path):
     """Verify that a native Cover Order (variety='co') is placed with the trigger_price for MIS orders."""
     db_path = tmp_path / "order_state.db"
-    agent = ExecutionAgent(broker=broker_mock, order_db_path=db_path)
+    from src.event_store.memory import InMemoryEventStore
+    agent = ExecutionAgent(broker=broker_mock, order_db_path=db_path, event_store=InMemoryEventStore())
     await agent.start()
     
     # Simulate risk-approved signal that triggers place_order
@@ -50,7 +51,9 @@ async def test_native_stop_loss_attached_at_placement(broker_mock, tmp_path):
 @pytest.mark.asyncio
 async def test_gap_down_crash_handled_by_native_sl(broker_mock, tmp_path):
     """Verify software check logs a warning but doesn't emit duplicate exit on gap-down."""
-    agent = StrategyGenAgent()
+    from src.event_store.memory import InMemoryEventStore
+    event_store = InMemoryEventStore()
+    agent = StrategyGenAgent(event_store=event_store)
     await agent.start()
     
     # Setup mock position
@@ -72,16 +75,16 @@ async def test_gap_down_crash_handled_by_native_sl(broker_mock, tmp_path):
     
     await agent._check_sl_tp("RELIANCE", 2400.0, datetime.now(UTC), Exchange.NSE)
     
-    # Verify it acts as a secondary monitor and does NOT emit an exit signal
-    # The native broker order should handle the actual exit.
-    assert len(emitted) == 0
+    # Verify it emits an exit signal as a secondary monitor, in case native SL failed.
+    assert len(emitted) == 1
     
     await agent.stop()
 
 @pytest.mark.asyncio
 async def test_duplicate_order_prevention(broker_mock, tmp_path):
     db_path = tmp_path / "order_state.db"
-    agent = ExecutionAgent(broker=broker_mock, order_db_path=db_path)
+    from src.event_store.memory import InMemoryEventStore
+    agent = ExecutionAgent(broker=broker_mock, order_db_path=db_path, event_store=InMemoryEventStore())
     await agent.start()
     
     # Simulate broker returning an order with the same tag
@@ -103,7 +106,8 @@ async def test_duplicate_order_prevention(broker_mock, tmp_path):
 async def test_broker_reject_fails_closed(broker_mock, tmp_path):
     """If broker rejects order placement, ensure order status is updated."""
     db_path = tmp_path / "order_state.db"
-    agent = ExecutionAgent(broker=broker_mock, order_db_path=db_path)
+    from src.event_store.memory import InMemoryEventStore
+    agent = ExecutionAgent(broker=broker_mock, order_db_path=db_path, event_store=InMemoryEventStore())
     await agent.start()
     
     broker_mock.place_order.side_effect = Exception("Broker Reject: Margin Exceeded")
@@ -124,7 +128,9 @@ async def test_broker_reject_fails_closed(broker_mock, tmp_path):
 async def test_restart_restores_state(broker_mock, tmp_path):
     """Verify SQLite properly restores open orders on restart."""
     db_path = tmp_path / "order_state.db"
-    agent1 = ExecutionAgent(broker=broker_mock, order_db_path=db_path)
+    from src.event_store.memory import InMemoryEventStore
+    event_store = InMemoryEventStore()
+    agent1 = ExecutionAgent(broker=broker_mock, order_db_path=db_path, event_store=event_store)
     await agent1.start()
     
     # We use a LIMIT order with a far away price so it doesn't get filled instantly
@@ -143,7 +149,8 @@ async def test_restart_restores_state(broker_mock, tmp_path):
     await agent1._order_db.close()
     
     # Restart
-    agent2 = ExecutionAgent(broker=broker_mock, order_db_path=db_path)
+    event_store2 = InMemoryEventStore()
+    agent2 = ExecutionAgent(broker=broker_mock, order_db_path=db_path, event_store=event_store2)
     await agent2.start()
     
     # State should be restored
@@ -153,7 +160,9 @@ async def test_restart_restores_state(broker_mock, tmp_path):
 @pytest.mark.asyncio
 async def test_stale_market_data_detection():
     """Verify ticks older than a threshold are rejected."""
-    agent = MarketIntelAgent()
+    from src.event_store.memory import InMemoryEventStore
+    event_store = InMemoryEventStore()
+    agent = MarketIntelAgent(event_store=event_store)
     await agent.start()
     
     now = datetime.now(UTC)

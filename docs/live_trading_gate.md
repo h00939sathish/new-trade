@@ -70,6 +70,25 @@ Live trading uses real money. Even a successful 30-day paper run is not a guaran
 - Operational requirements: **PARTIAL** (Kite credentials not yet configured for production)
 - Decision process: **READY**
 
+## Post-Audit Recovery Update (2026-06-06)
+
+The audit (`docs/trading_engine_audit_2026-06-02.md`) flagged 6 test failures + 2 import errors that blocked all runtime verification. As of this update:
+
+- [x] `src/system.py` import of `ExpertPersonasAgent` removed — `from src.system import TradingSystem` now works.
+- [x] `test_integration.py` (8 tests) and `test_dashboard.py` (7 tests) collect and pass.
+- [x] `src/agents/strategy_gen.py:234,247` SL exits now emit in-system exit signal (was relying on native broker CO).
+- [x] `src/backtest/sync_bus.py` nested-event deferral fix verified — `test_multiple_nested_events_all_deferred` passes.
+- [x] `tests/test_decay.py`, `tests/test_regime.py` updated to match post-fix code.
+- [x] `tests/test_execution_twap.py`, `tests/test_iceberg_execution.py` isolation fixed with `tmp_path` fixture.
+- [x] `tests/test_position_registry_ssot.py` added — SSOT contract test.
+- [x] `.githooks/pre-commit` credential scanner added.
+- [x] `SECURITY.md` documents the credential leak in git history and remediation steps.
+- [x] `scripts/scrub_credentials.sh` and `scripts/scrub_credentials.ps1` provided for git history scrub.
+
+**Test status (post-recovery):** 329 passed, 1 xfailed, 2 xpassed, 0 failed, 0 errors.
+
+**Backtest status (post-recovery):** `BacktestEngine` verified with synthetic data (runs without errors, processes ticks). Real NSE data fetch (`scripts/run_validation.py`) hangs on the jugaad/yfinance network call. `results_1yr.json` and `results_5yr.json` remain empty `{}`. This is a network/data-source issue, not a code bug.
+
 ## Timeline
 
 Paper run started: 2026-06-05 (this commit)

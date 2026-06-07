@@ -1,5 +1,6 @@
 from enum import StrEnum
 
+
 class RegimeState(StrEnum):
     TREND_LONG_ALLOWED = "TREND_LONG_ALLOWED"
     TREND_SHORT_ALLOWED = "TREND_SHORT_ALLOWED"
@@ -8,36 +9,23 @@ class RegimeState(StrEnum):
 
 
 class EMA200Filter:
-    """
-    EMA200 Regime Filter to evaluate broader market/instrument trends.
-    """
     def __init__(self, period: int = 200, slope_lookback: int = 5):
         self.period = period
         self.slope_lookback = slope_lookback
 
     def evaluate(self, closes: list[float]) -> RegimeState:
-        """
-        Evaluates the current regime based on Close vs EMA200 and EMA200 slope.
-        """
         if len(closes) < self.period + self.slope_lookback:
             return RegimeState.NO_TRADE
 
         multiplier = 2.0 / (self.period + 1)
-        
-        # Initialize EMA with Simple Moving Average for the first 'period' elements
-        # For a truly robust EMA, standard practice is to use SMA of first N as initial EMA
-        sma = sum(closes[:self.period]) / self.period
-        
+        sma = sum(closes[: self.period]) / self.period
         ema = [sma]
-        # Calculate EMA for the rest
         for i in range(self.period, len(closes)):
             ema.append((closes[i] - ema[-1]) * multiplier + ema[-1])
 
         current_ema = ema[-1]
-        # slope lookback from the END of the ema list
         past_ema = ema[-self.slope_lookback]
         current_close = closes[-1]
-
         slope = current_ema - past_ema
 
         if current_close > current_ema and slope > 0:

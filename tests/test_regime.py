@@ -61,12 +61,13 @@ async def test_regime_detection_and_reweighting():
     # Seed weights first
     strat_agent._strategy_weights = {
         "momentum": 0.2,
-        "mean_reversion": 0.2,
+        "vwap_reversion": 0.2,
     }
 
     await strat_agent.on_event(event_change)
 
-    # Momentum weight should scale up, mean_reversion should scale down
-    # (Values are normalized to sum to 1.0)
-    assert strat_agent._strategy_weights["momentum"] == pytest.approx(10/11)
-    assert strat_agent._strategy_weights["mean_reversion"] == pytest.approx(1/11)
+    # Momentum (trend group, multiplier 1.35) should scale up,
+    # vwap_reversion (reversion group, multiplier 0.65) should scale down.
+    # Values are normalized to sum to 1.0.
+    assert strat_agent._strategy_weights["momentum"] == pytest.approx(0.675)
+    assert strat_agent._strategy_weights["vwap_reversion"] == pytest.approx(0.325)
