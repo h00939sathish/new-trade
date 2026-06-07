@@ -1,0 +1,23 @@
+Task 5: Fix Makefile db-up target
+Date: 2026-06-07
+
+ISSUE: `make db-up` referenced a `kafka` service that does not exist
+in docker-compose.yml. Compose errored:
+  "service 'kafka' not found"
+
+FIX: Makefile line 18 now reads:
+  docker compose up -d postgres redis
+
+VERIFICATION:
+  Docker daemon not available on this Windows host, so verified by:
+  1) `grep` against docker-compose.yml: only `postgres` and `redis`
+     are top-level services that need to be started for the app.
+     `prometheus`/`grafana`/`trading-app` are not brought up by
+     db-up (trading-app is invoked via `run`; observability stack
+     is started separately).
+  2) Updated Makefile is consistent with docker-compose.yml service
+     names.
+
+NOTE: Full `make db-up` end-to-end requires Docker Desktop running.
+The fix removes the bogus service reference; if Docker is absent
+on the host, that's a separate environment issue.

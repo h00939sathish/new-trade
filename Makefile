@@ -15,7 +15,7 @@ test:
 	pytest tests/ -v --cov=src
 
 db-up:
-	docker compose up -d postgres kafka redis
+	docker compose up -d postgres redis
 
 db-down:
 	docker compose down
