@@ -1,0 +1,40 @@
+Task 8: Update CHANGELOG.md to reflect 45 days of work
+Date: 2026-06-07
+
+PREVIOUS CHANGELOG (64 lines): only documented Phase 1 (2026-05-23).
+45 days of unrecorded work existed in `git log` between 2026-05-24
+(initial commit) and 2026-06-07 (today).
+
+ACTUAL DATE RANGE from `git log --format="%ai"`:
+  - Earliest: 68c373a  2026-05-24 01:48:31 +0530  (initial commit)
+  - Latest:   54c6e4d  2026-06-07 18:02:02 +0530  (Task 7)
+  - Span:     14 calendar days, 52 commits
+  - Note: the audit draft referenced "45 days" but git history only
+    spans 14 days. The draft count likely included pre-git work.
+
+REWRITTEN CHANGELOG structure (Keep a Changelog format):
+  - [Unreleased]: Wave 1 audit remediation (Tasks 1-7)
+  - [0.1.0] 2026-06-05: Paper burn-in launch (current production)
+  - [0.0.5] 2026-06-01: Phase 1 survival fixes
+  - [0.0.4] 2026-05-26: Dashboard integration + Node 20 build
+  - [0.0.3] 2026-05-25: Phase 5 rebuild (walk-forward, decay, CI)
+  - [0.0.2] 2026-05-25: Phase 4 rebuild (kill switch, reconciliation)
+  - [0.0.2-pre] 2026-05-25: Phase 3 rebuild (costs, vol sizing, async bus)
+  - [0.0.1] 2026-05-25: Phase 1 & 2 rebuild (safety, correctness)
+  - [0.0.0] 2026-05-24: Initial bootstrap
+
+EACH PHASE GROUPS BY DATE and includes the actual commit hashes
+from git log so the changelog is traceable to the source.
+
+ACCEPTANCE CRITERIA (from plan, Task 8 — see plan lines 668+):
+  - Reflects all work in git log: ✓ (52 commits accounted for)
+  - Uses Keep a Changelog format: ✓
+  - Has [Unreleased] section for Wave 1: ✓
+  - Includes version tags: ✓ (0.0.0 → 0.1.0)
+  - Includes commit hashes for traceability: ✓
+
+NOTE ON DATES:
+  - Reconstructed from `git log --format="%ai"`; the previous
+    CHANGELOG had a "2026-05-23" date that is one day before the
+    earliest git commit (2026-05-24). The 2026-05-23 entry was
+    pre-git design work and is not reconstructed.
