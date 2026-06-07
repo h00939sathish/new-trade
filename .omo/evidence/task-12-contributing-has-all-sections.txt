@@ -1,0 +1,51 @@
+Task 12: Create docs/CONTRIBUTING.md (dev guide)
+Date: 2026-06-07
+
+NEW FILE: docs/CONTRIBUTING.md (685 lines)
+
+7 REQUIRED SECTIONS (all present, all linked to actual code):
+  1. Setup (Python 3.12.x, git, Docker, Node 20 for dashboard)
+  2. Dev workflow (Makefile targets, branch conventions, commit style)
+  3. Testing (pytest, coverage, isolation, determinism)
+  4. Code style (ruff + mypy, Pydantic v2, async-first, no print)
+  5. Add a strategy (Strategy base class from src/strategies/base.py)
+  6. Add a broker (connectors/<broker>/{client,market_data,broker}.py)
+  7. Add an agent (BaseAgent from src/agents/base.py with 4 abstract methods)
+
+BONUS SECTIONS (value-add beyond the 7 required):
+  8. First PR checklist (8 categories: code quality, style, security,
+     docs, git hygiene, PR body)
+  - "Where to ask for help" navigation footer
+
+QA SCENARIO (from plan, line 999-1009):
+  1. docs/CONTRIBUTING.md mentions src/agents/base.py   -> OK
+  2. docs/CONTRIBUTING.md mentions src/strategies/base.py -> OK
+  3. docs/CONTRIBUTING.md mentions "make test"          -> OK
+  All required links present.
+
+EXTENDED QA (14 checks, all pass):
+  - All 7 required sections present
+  - First PR checklist section present
+  - Pre-commit hook install command correct: git config core.hooksPath .githooks
+  - pyproject extras referenced: [dev,dashboard,vault]
+  - Makefile referenced
+
+ACCURACY VERIFIED against source:
+  - src/agents/base.py: Agent(ABC) + BaseAgent with name/status/
+    event_store/_subscribed_event_types/_tasks/_running/
+    _health_emit_interval_seconds — all four abstract methods
+    (on_start, on_stop, on_event, health) documented
+  - src/strategies/base.py: 17-line Strategy class with name,
+    data_type, timeframe, async evaluate() signature
+  - .githooks/pre-commit: PowerShell hook, installed via
+    `git config core.hooksPath .githooks`
+  - pyproject.toml: 6 extras (dev, kite, ml, streaming, dashboard, vault)
+  - Makefile: install/dev/lint/test/db-up/db-down/run-*/replay/clean
+
+MUST-NOT-DO CHECK:
+  - Did NOT include fictional architecture references
+  - Did NOT recommend `git push --force` to master (forbidden in
+    First PR checklist)
+
+LINE COUNT: 685 (plan had no specific range; the 7-section scope
+plus checklist + navigation justifies the size).
