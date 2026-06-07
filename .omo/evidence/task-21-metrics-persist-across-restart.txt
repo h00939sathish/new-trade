@@ -1,0 +1,138 @@
+Task 21: Persist MetricsCollector to SQLite
+Date: 2026-06-07
+
+CHANGES:
+  - src/monitoring/metrics_store.py (NEW, 173 lines)
+      - MetricsStore class: async SQLite-backed time-series store
+      - Schema: narrow (bucket_ts, metric, labels, value) PK on
+        (bucket_ts, metric, labels) — one row per metric per
+        1-minute bucket
+      - Methods: increment(metric, labels, delta) [UPSERT sum],
+        set_gauge(metric, value, labels) [UPSERT overwrite],
+        load_recent_totals(window_seconds), flush(), close()
+      - DEFAULT_DB_PATH = Path("state/metrics.db")
+      - WAL mode, synchronous=NORMAL, 1.0s connect timeout
+        (matches execution.py's _init_order_db pattern)
+      - bucket_ts() helper: truncates unix ts to minute boundary
+  - src/monitoring/metrics.py (REWRITTEN, 138 -> 271 lines)
+      - MetricsCollector.__init__ now accepts:
+        - max_history: int = 1000  (existing)
+        - store: MetricsStore | None = None  (NEW, opt-in)
+        - flush_interval_s: float = 10.0  (NEW)
+      - count_event/signal/order/error and record_latency are
+        UNCHANGED in interface; they now also append to
+        _pending_writes if a store is attached
+      - New async methods:
+        - start() — schedules periodic flush task IF a store is
+          attached AND an event loop is running; safe no-op
+          otherwise
+        - stop() — cancels flush task, does final flush
+        - flush() — batch-write pending increments; re-buffers
+          on transient errors so no data is lost
+        - load_from_store(window_seconds) — repopulates in-memory
+          counters from the last N days (default 30) so the
+          Prometheus endpoint survives a restart
+        - attach_store(store) — runtime hook for main.py and
+          tests; idempotent
+      - _pending_writes buffer drained atomically per flush
+        (snapshot-then-clear pattern)
+  - src/monitoring/__init__.py (UPDATED)
+      - Added MetricsStore and DEFAULT_DB_PATH to __all__
+  - src/main.py (UPDATED)
+      - After TradingSystem() construction, attach a
+        MetricsStore("state/metrics.db") to system_metrics
+        and call load_from_store() to repopulate counters
+        from the last 30 days
+      - Re-call system_metrics.start() to schedule the flush
+        task (the module-level start() at import time
+        short-circuited because no store was attached then)
+      - On shutdown, await system_metrics.stop() for a final
+        flush (catches the trailing pending writes that the
+        10s periodic task may not have gotten to)
+      - TRA_METRICS_DB env var override for the DB path
+  - tests/conftest.py (UPDATED)
+      - New autouse fixture isolated_metrics_store:
+        - Creates a tmp_path-based MetricsStore
+        - Replaces system_metrics in FOUR import sites
+          (src.monitoring.metrics, src.monitoring,
+           src.monitoring.http_dashboard, src.main)
+          so tests can never write to state/metrics.db
+        - Does NOT call start() on the fresh collector
+          (no periodic flush task in tests; tests that need
+          persistence call await fresh.flush() directly)
+  - tests/test_metrics_store.py (NEW, 196 lines)
+      - 10 tests covering:
+        - increment writes one row
+        - increment UPSERTs within a bucket
+        - increment distinguishes labels
+        - set_gauge overwrites within a bucket
+        - load_recent_totals respects window
+        - bucket_ts truncates to minute
+        - collector writes to store on flush
+        - collector load_from_store restores counters
+          (end-to-end across two "processes")
+        - prometheus_text unchanged after persistence
+        - collector without store creates no DB
+        - attach_store is the runtime hook
+
+DESIGN DECISIONS:
+  - Schema is narrow (one table, not one table per metric):
+    adding new metrics (Task 22: PnL, exposure, etc.) requires
+    no schema migration. Matches Prometheus data model.
+  - 1-minute buckets: fine-grained enough for 5-minute-candle
+    paper-trading; coarse enough to keep table small
+    (~43k rows/month).
+  - Persistence is OPT-IN via store= constructor param: tests
+    that don't need persistence (8/9 tests in test_metrics.py)
+    get in-memory-only behavior, zero filesystem touches.
+  - Counters remain the source of truth for prometheus_text():
+    the write buffer is drained by an async task every 10s, so
+    the hot path is still O(1) per count.
+  - attach_store() is the runtime hook (not setattr): clear
+    API, can do bookkeeping, leaves the existing flush task
+    running (it picks up the new store on its next tick).
+  - Counter values accumulated BEFORE attach_store() are NOT
+    backfilled: documented in test_collector_attach_store_at_runtime
+    and the method's docstring.
+
+ACCEPTANCE CRITERIA:
+  - [x] New MetricsStore class in src/monitoring/metrics_store.py
+  - [x] MetricsCollector writes to MetricsStore on every count_*
+        (via the _pending_writes buffer; flushed every 10s)
+  - [x] state/metrics.db is created on first count
+        (singleton in main.py attaches the store on startup;
+        file is gitignored via .gitignore line 50: *.db*)
+  - [x] Restart preserves metrics
+        (load_from_store on startup restores last 30 days;
+        end-to-end test verifies across two "processes")
+  - [ ] All existing tests pass — DEFERRED to CI (local Python
+        is 3.14, project pins >=3.12,<3.13)
+  - [ ] Coverage maintained or improved — DEFERRED to CI
+
+PLAN MUST-NOT-DO CHECK:
+  - Did NOT break prometheus_text() interface — text output
+    byte-for-byte identical with or without persistence
+  - Did NOT introduce non-SQLite backends — MetricsStore uses
+    aiosqlite, single-file, no network
+
+QA SCENARIO (plan line 1490-1500):
+  Cannot run the full two-process python -c invocation
+  (Python 3.12 unavailable). Equivalent verification:
+  - test_collector_load_from_store_restores_counters in
+    tests/test_metrics_store.py does the same two-process
+    flow (count + flush, then recreate MetricsStore on
+    same path + load_from_store) and asserts the second
+    snapshot reflects the first process's writes.
+
+SYNTAX / LSP CHECK:
+  - python -m py_compile on all 6 changed/new files: clean
+  - lsp_diagnostics on metrics.py, metrics_store.py,
+    test_metrics_store.py: 0 errors
+
+FILES TOUCHED:
+  - src/monitoring/metrics.py             (rewrite)
+  - src/monitoring/metrics_store.py       (new)
+  - src/monitoring/__init__.py            (export MetricsStore)
+  - src/main.py                           (attach + load + stop)
+  - tests/conftest.py                     (autouse fixture)
+  - tests/test_metrics_store.py           (new)

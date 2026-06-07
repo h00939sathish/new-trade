@@ -121,3 +121,33 @@ def isolated_order_db(monkeypatch, tmp_path):
     db_path = tmp_path / "order_state.db"
     monkeypatch.setattr("src.agents.execution._ORDER_DB_PATH", db_path)
     return db_path
+
+
+@pytest.fixture(autouse=True)
+def isolated_metrics_store(monkeypatch, tmp_path):
+    """Auto-apply: redirect the metrics store to a per-test tmp_path.
+
+    Replaces the module-level ``system_metrics`` singleton in all
+    known import sites (``src.monitoring.metrics``,
+    ``src.monitoring``, ``src.monitoring.http_dashboard``,
+    ``src.main``) with a fresh ``MetricsCollector`` backed by a
+    tmp_path-based ``MetricsStore``. This means tests cannot
+    accidentally create ``state/metrics.db`` in the worktree.
+
+    ``start()`` is NOT called on the fresh collector, so no
+    periodic flush task is scheduled. Tests that need persistence
+    to be written can call ``await fresh.flush()`` directly.
+
+    Tests that need the per-test collector can request this
+    fixture (it returns the fresh ``MetricsCollector``).
+    """
+    from src.monitoring.metrics import MetricsCollector
+    from src.monitoring.metrics_store import MetricsStore
+
+    store = MetricsStore(tmp_path / "metrics.db")
+    fresh = MetricsCollector(store=store)
+    monkeypatch.setattr("src.monitoring.metrics.system_metrics", fresh)
+    monkeypatch.setattr("src.monitoring.system_metrics", fresh)
+    monkeypatch.setattr("src.monitoring.http_dashboard.system_metrics", fresh)
+    monkeypatch.setattr("src.main.system_metrics", fresh)
+    return fresh

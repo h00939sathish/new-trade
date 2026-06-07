@@ -131,6 +131,26 @@ async def main():
     watchlist = os.getenv("TRA_WATCHLIST", "RELIANCE,TCS,INFY,HDFCBANK").split(",")
     system.set_watchlist(watchlist)
     logger.info("Watchlist: %s", watchlist)
+
+    # Persist metrics counters to SQLite so they survive restarts.
+    # The store is opt-in (see MetricsCollector.attach_store); we wire
+    # it up here, then re-call start() to schedule the flush task
+    # (the module-level start() at line 26 short-circuited because
+    # no store was attached at import time).
+    from src.monitoring.metrics_store import MetricsStore
+
+    _metrics_db_path = Path(
+        os.getenv("TRA_METRICS_DB", "state/metrics.db")
+    )
+    system_metrics.attach_store(MetricsStore(_metrics_db_path))
+    _loaded = await system_metrics.load_from_store()
+    if _loaded:
+        logger.info(
+            "Restored %d metric series from %s",
+            sum(_loaded.values()),
+            _metrics_db_path,
+        )
+    system_metrics.start()
     if settings.live_trading_enabled:
         if not settings.kite_api_key or not settings.kite_access_token:
             raise RuntimeError(
@@ -228,6 +248,11 @@ async def main():
         if all_tasks:
             await asyncio.gather(*all_tasks, return_exceptions=True)
         await system.stop()
+        # Final flush of any pending metric writes to the store.
+        try:
+            await system_metrics.stop()
+        except Exception as exc:  # pragma: no cover - logged not raised
+            logger.warning("Metrics flush on shutdown failed: %s", exc)
         logger.info("System shutdown complete")
 
 
