@@ -29,6 +29,7 @@ class StrategyGenAgent(BaseAgent):
         super().__init__("strategy_gen", event_store=event_store)
         self._strategies: dict[str, Strategy] = {}
         self._strategy_weights: dict[str, float] = {}
+        self._base_strategy_weights: dict[str, float] = {}
         self._candidate_strategies: dict[str, Strategy] = {}
         self._tick_prices: dict[str, deque[float]] = {}
         self._candle_prices: dict[str, dict[str, deque[float]]] = {}
@@ -74,6 +75,7 @@ class StrategyGenAgent(BaseAgent):
     def register_strategy(self, strategy: "Strategy", weight: float = 1.0) -> None:
         self._strategies[strategy.name] = strategy
         self._strategy_weights[strategy.name] = weight
+        self._base_strategy_weights[strategy.name] = weight
         self.logger.info("Registered strategy: %s (weight=%.1f)", strategy.name, weight)
 
     def register_candidate_strategy(self, strategy: "Strategy") -> None:
@@ -177,9 +179,9 @@ class StrategyGenAgent(BaseAgent):
                 m = mults.get(grp, 1.0)
                 # Bounded multiplier so nothing collapses to 0
                 m = max(0.3, min(2.0, m))
-                # Multiply the existing weight (which was normalized at load time)
+                # Multiply the base weight (not the current weight)
                 # by m, then renormalize the whole vector below.
-                self._strategy_weights[name] = self._strategy_weights.get(name, 1.0) * m
+                self._strategy_weights[name] = self._base_strategy_weights.get(name, 1.0) * m
         self._normalize_weights()
 
     async def _process_fill(self, event: Event) -> None:

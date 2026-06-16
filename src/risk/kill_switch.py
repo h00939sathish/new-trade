@@ -16,11 +16,16 @@ class KillSwitch:
             cls._instance._reason = ""
             cls._instance._max_daily_loss = 5000.0  # Default fallback
             cls._instance._max_drawdown_pct = 0.05  # 5% max drawdown
-            cls._instance._lock = asyncio.Lock()
+            cls._instance._async_lock = None
             cls._instance._initial_capital = None
             cls._instance._triggered_date = None
             cls._instance._auto_reset = True
         return cls._instance
+
+    def _get_async_lock(self) -> asyncio.Lock:
+        if self._async_lock is None:
+            self._async_lock = asyncio.Lock()
+        return self._async_lock
 
     @property
     def active(self) -> bool:
@@ -75,7 +80,7 @@ class KillSwitch:
         self, current_capital: float, current_pnl: float, peak_capital: float, system=None
     ) -> bool:
         """Check daily PnL and drawdown limits. Trigger kill switch if breached."""
-        async with self._lock:
+        async with self._get_async_lock():
             if self._active:
                 return True
 

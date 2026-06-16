@@ -144,8 +144,9 @@ class WebSocketAppSession:
         )
         self._thread = threading.Thread(
             target=lambda: self._app.run_forever(
-                sslopt={"cert_reqs": ssl.CERT_NONE},
+                sslopt={"cert_reqs": ssl.CERT_REQUIRED},
                 ping_interval=10,
+                reconnect=5,
             ),
             name="angel-smartapi-websocket",
             daemon=True,

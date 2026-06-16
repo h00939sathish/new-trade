@@ -184,6 +184,7 @@ class RiskManagementAgent(BaseAgent):
             await self._check_max_open_positions_risk(instrument, direction),
             await self._check_earnings_risk(instrument),
             await self._check_correlation_risk(instrument),
+            await self._check_trend_alignment_risk(instrument, direction),
         ]
         # Only check exposure for orders that INCREASE position
         if not is_reducing:
@@ -543,6 +544,56 @@ class RiskManagementAgent(BaseAgent):
                 },
             )
         return self._check("earnings_calendar", True)
+
+    async def _check_trend_alignment_risk(
+        self, instrument: str, direction: str
+    ) -> dict[str, Any]:
+        """Require minute-level signal to align with 15-minute EMA trend.
+
+        If price > 15-period EMA → uptrend — only allow long/neutral signals.
+        If price < 15-period EMA → downtrend — only allow short/neutral signals.
+        No data or flat trend → allow all directions.
+        """
+        if direction == "neutral":
+            return self._check("trend_alignment", True)
+
+        if not hasattr(self, "_price_history") or instrument not in self._price_history:
+            return self._check("trend_alignment", True)
+
+        prices = list(self._price_history[instrument])
+        if len(prices) < 15:
+            return self._check("trend_alignment", True)
+
+        period = 15
+        k = 2.0 / (period + 1)
+        ema = sum(prices[:period]) / period
+        for p in prices[period:]:
+            ema = (p - ema) * k + ema
+
+        current_price = prices[-1]
+        tolerance = 0.005  # 0.5% — flat trend within tolerance
+
+        if current_price > ema * (1 + tolerance):
+            trend = "long"
+        elif current_price < ema * (1 - tolerance):
+            trend = "short"
+        else:
+            return self._check("trend_alignment", True)
+
+        if direction == trend:
+            return self._check("trend_alignment", True)
+
+        return self._check(
+            "trend_alignment",
+            False,
+            {
+                "reason": f"Minute signal ({direction}) conflicts with 15-period trend ({trend})",
+                "direction": direction,
+                "trend": trend,
+                "15_period_ema": round(ema, 2),
+                "current_price": current_price,
+            },
+        )
 
     async def _check_correlation_risk(self, instrument: str) -> dict[str, Any]:
         from src.risk.position_registry import position_registry

@@ -52,6 +52,12 @@ class AngelClient:
         )
         self._lock = asyncio.Lock()
 
+    def __repr__(self) -> str:
+        return f"<AngelClient client_id={self._client_id} [CREDENTIALS REDACTED]>"
+
+    def __str__(self) -> str:
+        return self.__repr__()
+
     async def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
         from src.utils.retry import with_retry
 
@@ -134,20 +140,24 @@ class AngelClient:
         await self._ensure_token()
 
     async def _refresh_login(self) -> None:
-        body = {
-            "clientcode": self._client_id,
-            "refreshtoken": self._refresh_token,
-        }
-        resp = await self._request(
-            "POST",
-            f"{BASE_URL}/rest/auth/angelbroking/user/v1/refreshToken",
-            json=body,
-            headers=self._default_headers(auth=False),
-        )
-        data = self._handle_response(resp)
-        self._jwt_token = data["jwtToken"]
-        self._token_expiry = datetime.now(UTC) + timedelta(hours=1)
-        logger.info("Angel token refreshed")
+        try:
+            body = {
+                "clientcode": self._client_id,
+                "refreshtoken": self._refresh_token,
+            }
+            resp = await self._request(
+                "POST",
+                f"{BASE_URL}/rest/auth/angelbroking/user/v1/refreshToken",
+                json=body,
+                headers=self._default_headers(auth=False),
+            )
+            data = self._handle_response(resp)
+            self._jwt_token = data["jwtToken"]
+            self._token_expiry = datetime.now(UTC) + timedelta(hours=1)
+            logger.info("Angel token refreshed")
+        except Exception as e:
+            logger.warning("Angel token refresh failed, falling back to full login: %s", e)
+            await self._login()
 
     async def search_instruments(self, query: str) -> list[dict[str, Any]]:
         return await self._symbol_index.search(query)

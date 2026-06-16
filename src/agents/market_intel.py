@@ -23,6 +23,7 @@ class MarketIntelAgent(BaseAgent):
         self._market_data_provider: Any = market_data_provider
         self._candle_buffer: dict[str, list[dict[str, Any]]] = defaultdict(list)
         self._max_buffer_size = 500
+        self._rejection_count: dict[str, int] = defaultdict(int)
 
     async def on_start(self) -> None:
         provider_name = (
@@ -332,6 +333,17 @@ class MarketIntelAgent(BaseAgent):
                 # Check for >10% single-tick gap
                 pct_change = abs(price - last_price) / last_price
                 if pct_change > 0.10:
+                    self._rejection_count[instrument] += 1
+                    if self._rejection_count[instrument] >= 3:
+                        self.logger.warning(
+                            "Corporate action self-healing: Accepted persistent anomalous gap for %s (%.2f -> %.2f). Resetting baseline.",
+                            instrument,
+                            last_price,
+                            price,
+                        )
+                        self._rejection_count[instrument] = 0
+                        return True
+
                     self.logger.warning(
                         "Anomalous tick rejected for %s: price gap of %.1f%% (%.2f -> %.2f)",
                         instrument,
@@ -340,6 +352,9 @@ class MarketIntelAgent(BaseAgent):
                         price,
                     )
                     return False
+        
+        # Reset counter on normal tick
+        self._rejection_count[instrument] = 0
         return True
 
     def _emit_market_data(self) -> None:

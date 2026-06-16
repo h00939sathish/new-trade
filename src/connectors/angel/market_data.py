@@ -274,23 +274,9 @@ class AngelMarketDataProvider:
         if not self._running:
             return
         logger.warning(
-            "Angel WebSocket disconnected; falling back to polling: %s",
+            "Angel WebSocket disconnected; attempting auto-reconnect: %s",
             reason,
         )
-        websocket = self._websocket
-        self._websocket = None
-        if websocket is not None:
-            try:
-                await websocket.close()
-            except Exception:
-                logger.debug("WebSocket close during fallback failed", exc_info=True)
-        if self._task is None or self._task.done():
-            self._task = asyncio.create_task(self._poll_loop())
-            logger.info(
-                "Angel market data polling started after WebSocket disconnect (interval=%.1fs)",
-                self._poll_interval,
-            )
-
 
 async def _invoke_callback(callback: Callable, payload: dict[str, Any]) -> None:
     result = callback(payload)

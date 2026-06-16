@@ -96,8 +96,8 @@ DEFAULT_CONFIG = {
             "params": {"conversion": 9, "base": 26, "lagging": 52, "displacement": 26},
         },
         "stat_arb": {
-            "enabled": False,
-            "weight": 0.0,
+            "enabled": True,
+            "weight": 0.15,
             "params": {
                 "primary_symbol": "TCS",
                 "secondary_symbol": "INFY",

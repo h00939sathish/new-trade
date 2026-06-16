@@ -91,19 +91,32 @@ async def _init_order_db(db_path: Path) -> aiosqlite.Connection:
     return conn
 
 
+from collections import OrderedDict
+
+class BoundedDict(OrderedDict):
+    def __init__(self, maxsize=1000, *args, **kwargs):
+        self.maxsize = maxsize
+        super().__init__(*args, **kwargs)
+
+    def __setitem__(self, key, value):
+        if key not in self:
+            if len(self) >= self.maxsize:
+                self.popitem(last=False)
+        super().__setitem__(key, value)
+
 class ExecutionAgent(BaseAgent):
     def __init__(self, event_store=None, broker: Any = None, order_db_path: Path | None = None):
         super().__init__("execution", event_store=event_store)
         self._open_orders: dict[str, OrderEvent] = {}
         self._pending_orders: dict[str, OrderEvent] = {}
-        self._filled_orders: dict[str, list[FillEvent]] = {}
-        self._rejected_orders: dict[str, OrderEvent] = {}
+        self._filled_orders = BoundedDict(1000)
+        self._rejected_orders = BoundedDict(1000)
         self._paper_trading = broker is None
         self._broker: Any = broker
         # Signals waiting for risk approval, keyed by signal event_id
         self._pending_signals: dict[str, dict[str, Any]] = {}
         self._available_capital = 1_000_000.0
-        self._order_strategies: dict[str, str] = {}
+        self._order_strategies = BoundedDict(1000)
         # Order persistence
         self._order_db_path = order_db_path or _ORDER_DB_PATH
         self._order_db: aiosqlite.Connection | None = None
@@ -357,80 +370,6 @@ class ExecutionAgent(BaseAgent):
             self.logger.warning("Signal blocked: Kill Switch is active (%s)", KillSwitch().reason)
             return
 
-        # Handle position closing immediately (neutral signals bypass pre-trade risk checks)
-        if direction == "neutral":
-            qty = self._get_position_qty(instrument)
-            if qty == 0:
-                self.logger.info(
-                    "Neutral signal received for %s, but no open position found.", instrument
-                )
-                return
-            side = OrderSide.SELL if qty > 0 else OrderSide.BUY
-            close_qty = abs(qty)
-
-            order_event = OrderEvent.create(
-                instrument=instrument,
-                exchange=Exchange(signal.get("exchange", "NSE")),
-                side=side,
-                order_type=OrderType.MARKET,
-                quantity=close_qty,
-                product=ProductType(str(signal.get("product", "mis")).lower()),
-                price=signal.get("price"),
-                producer=self.name,
-                status=OrderStatus.PENDING,
-                signal_id=signal.get("event_id") or signal.get("_signal_event_id"),
-                strategy=signal.get("strategy", "exit"),
-                correlation_id=event.metadata.correlation_id,
-            )
-            self._order_strategies[order_event.event_id] = signal.get("strategy", "unknown")
-            try:
-                from src.monitoring.metrics import system_metrics
-
-                system_metrics.count_order(order_event.status.value)
-            except Exception:
-                pass
-
-            tag = order_event.event_id
-            if self._broker is not None:
-                existing_id = await self._is_order_placed(tag)
-                if existing_id:
-                    self.logger.warning(
-                        "Duplicate exit order detected! Tag %s has order_id %s", tag, existing_id
-                    )
-                    order_event.data["broker_order_id"] = existing_id
-                    order_event.data["status"] = "accepted"
-                    await self.emit(order_event)
-                    self._open_orders[order_event.event_id] = order_event
-                    if self._paper_trading:
-                        await self._simulate_fill(order_event)
-                    return
-
-                exchange = Exchange(signal.get("exchange", "NSE"))
-                broker_start = time.monotonic()
-                broker_id = await self._broker.place_order(
-                    tradingsymbol=instrument,
-                    exchange=exchange,
-                    side=side,
-                    order_type=OrderType.MARKET,
-                    quantity=close_qty,
-                    product=ProductType(str(signal.get("product", "mis")).lower()),
-                    price=signal.get("price"),
-                    tag=tag,
-                )
-                broker_rtt = (time.monotonic() - broker_start) * 1000
-                tracer.record_trace(event.metadata.correlation_id, "broker_rtt", broker_rtt)
-                order_event.data["broker_order_id"] = broker_id
-
-            await self.emit(order_event)
-            self._open_orders[order_event.event_id] = order_event
-            await self._persist_order(order_event, strategy=signal.get("strategy", "exit"))
-            if self._paper_trading:
-                await self._simulate_fill(order_event)
-
-            tracer.record_trace(
-                event.metadata.correlation_id, "execution", (time.monotonic() - start_time) * 1000
-            )
-            return
 
         if confidence < 0.3:
             return
@@ -531,7 +470,15 @@ class ExecutionAgent(BaseAgent):
         confidence = signal.get("confidence", 0.0)
         price = signal.get("price")
         strategy_name = signal.get("strategy", "unknown")
-        side = OrderSide.BUY if direction == "long" else OrderSide.SELL
+        
+        if direction == "neutral":
+            qty = self._get_position_qty(instrument)
+            if qty == 0:
+                self.logger.info("Neutral signal received for %s, but no open position found.", instrument)
+                return
+            side = OrderSide.SELL if qty > 0 else OrderSide.BUY
+        else:
+            side = OrderSide.BUY if direction == "long" else OrderSide.SELL
 
         # FIX P1.1: compute trigger_price from signal's stop_loss_pct so that
         # MIS orders become Cover Orders with native broker SL protection.
@@ -923,7 +870,7 @@ class ExecutionAgent(BaseAgent):
                             order_event, strategy=twap["signal"].get("strategy", "unknown")
                         )
 
-                        twap["executed"] += chunk_qty
+                        # Wait for async fill events to increment twap["executed"]
                         twap["last_executed_at"] = now
                         twap["retries"] = 0
                         await self._persist_twap(twap_id)
@@ -1233,6 +1180,10 @@ class ExecutionAgent(BaseAgent):
             fill_price,
             price,
         )
+        twap_id = order.data.get("twap_id")
+        if twap_id and twap_id in self._twap_orders:
+            self._twap_orders[twap_id]["executed"] += order.quantity
+            await self._persist_twap(twap_id)
 
     def _calculate_quantity(
         self,
@@ -1395,62 +1346,60 @@ class ExecutionAgent(BaseAgent):
                     self.logger.error("Failed to cancel order %s on shutdown: %s", order_id, e)
 
         # 2. Close open positions (ProductType.MIS)
-        system_ref = getattr(self, "system", None)
-        if system_ref:
-            portfolio_agent = getattr(system_ref, "portfolio_opt", None)
-            if portfolio_agent:
-                open_positions = {
-                    inst: data
-                    for inst, data in portfolio_agent._positions.items()
-                    if data.get("quantity", 0) != 0
-                    and (
-                        str(data.get("product", "mis")).lower() == "mis"
-                        or (
-                            hasattr(data.get("product"), "value")
-                            and str(data.get("product").value).lower() == "mis"
-                        )
+        from src.risk.position_registry import position_registry
+        all_positions = position_registry.get_all_positions()
+        open_positions = {
+            inst: data
+            for inst, data in all_positions.items()
+            if data.get("quantity", 0) != 0
+            and (
+                str(data.get("product", "mis")).lower() == "mis"
+                or (
+                    hasattr(data.get("product"), "value")
+                    and str(data.get("product").value).lower() == "mis"
+                )
+            )
+        }
+        if open_positions:
+            self.logger.warning(
+                "Graceful Shutdown: Closing %d open MIS positions...", len(open_positions)
+            )
+            for inst, data in open_positions.items():
+                qty = data.get("quantity", 0)
+                side = OrderSide.SELL if qty > 0 else OrderSide.BUY
+                self.logger.warning(
+                    "Graceful Shutdown: Market closing position for %s (qty=%d, side=%s)",
+                    inst,
+                    qty,
+                    side.value,
+                )
+                try:
+                    await self.place_order(
+                        instrument=inst,
+                        side=side,
+                        order_type=OrderType.MARKET,
+                        quantity=abs(qty),
+                        product=ProductType.MIS,
                     )
-                }
-                if open_positions:
-                    self.logger.warning(
-                        "Graceful Shutdown: Closing %d open MIS positions...", len(open_positions)
+                except Exception as e:
+                    self.logger.error(
+                        "Graceful Shutdown: Failed to place close order for %s: %s", inst, e
                     )
-                    for inst, data in open_positions.items():
-                        qty = data.get("quantity", 0)
-                        side = OrderSide.SELL if qty > 0 else OrderSide.BUY
-                        self.logger.warning(
-                            "Graceful Shutdown: Market closing position for %s (qty=%d, side=%s)",
-                            inst,
-                            qty,
-                            side.value,
-                        )
-                        try:
-                            await self.place_order(
-                                instrument=inst,
-                                side=side,
-                                order_type=OrderType.MARKET,
-                                quantity=abs(qty),
-                                product=ProductType.MIS,
-                            )
-                        except Exception as e:
-                            self.logger.error(
-                                "Graceful Shutdown: Failed to place close order for %s: %s", inst, e
-                            )
 
-                    # Wait for fill confirmations (with a 5-second timeout)
-                    for _ in range(50):
-                        if all(
-                            p.get("quantity", 0) == 0 for p in portfolio_agent._positions.values()
-                        ):
-                            self.logger.info(
-                                "Graceful Shutdown: All positions closed successfully."
-                            )
-                            break
-                        await asyncio.sleep(0.1)
-                    else:
-                        self.logger.warning(
-                            "Graceful Shutdown: Timeout waiting for position close confirmations."
-                        )
+            # Wait for fill confirmations (with a 5-second timeout)
+            for _ in range(50):
+                if all(
+                    p.get("quantity", 0) == 0 for p in position_registry.get_all_positions().values()
+                ):
+                    self.logger.info(
+                        "Graceful Shutdown: All positions closed successfully."
+                    )
+                    break
+                await asyncio.sleep(0.1)
+            else:
+                self.logger.warning(
+                    "Graceful Shutdown: Timeout waiting for position close confirmations."
+                )
         if self._order_db is not None:
             await self._order_db.close()
             self._order_db = None
@@ -1472,6 +1421,9 @@ class ExecutionAgent(BaseAgent):
                         matching_order = None
                         for o_id, o_event in list(self._open_orders.items()):
                             if o_event.data.get("broker_order_id") == broker_order_id:
+                                matching_order = o_event
+                                break
+                            elif order.get("tag") and o_event.event_id == order.get("tag"):
                                 matching_order = o_event
                                 break
 
@@ -1515,6 +1467,10 @@ class ExecutionAgent(BaseAgent):
                                 await self._persist_order(
                                     matching_order, strategy=matching_order.strategy or "unknown"
                                 )
+                                twap_id = matching_order.data.get("twap_id")
+                                if twap_id and twap_id in self._twap_orders:
+                                    self._twap_orders[twap_id]["executed"] += fill_qty
+                                    await self._persist_twap(twap_id)
 
                                 if matching_order.event_id in self._open_orders:
                                     del self._open_orders[matching_order.event_id]
