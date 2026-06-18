@@ -352,7 +352,7 @@ class MarketIntelAgent(BaseAgent):
                         price,
                     )
                     return False
-        
+
         # Reset counter on normal tick
         self._rejection_count[instrument] = 0
         return True

@@ -13,7 +13,6 @@ from src.schemas.events import (
     PortfolioEvent,
 )
 
-
 # Whitelist of known strategy names for attribution PnL metrics.
 # Order matches docs/active_strategy_set.md:
 #   3 active strategies: momentum, sideways_reversion, vwap_reversion
@@ -181,11 +180,7 @@ class PortfolioOptimizationAgent(BaseAgent):
             # Prometheus label cardinality.
             from src.monitoring.metrics import system_metrics
 
-            attribution_label = (
-                strategy_name
-                if strategy_name in _KNOWN_STRATEGIES
-                else "other"
-            )
+            attribution_label = strategy_name if strategy_name in _KNOWN_STRATEGIES else "other"
             system_metrics.record_attribution_pnl(attribution_label, realized_pnl)
 
         self.logger.info(
@@ -400,9 +395,7 @@ class PortfolioOptimizationAgent(BaseAgent):
         from src.risk.position_registry import position_registry
 
         return sum(
-            1
-            for p in position_registry.get_all_positions().values()
-            if p.get("quantity", 0) != 0
+            1 for p in position_registry.get_all_positions().values() if p.get("quantity", 0) != 0
         )
 
     def _build_position_payloads(self) -> list[dict[str, Any]]:
@@ -434,7 +427,6 @@ class PortfolioOptimizationAgent(BaseAgent):
 
     async def health(self) -> dict[str, Any]:
         base = await super().health()
-        from src.risk.position_registry import position_registry
 
         base.update(
             {

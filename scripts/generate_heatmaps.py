@@ -1,14 +1,14 @@
 import asyncio
 import itertools
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
 from pathlib import Path
-from src.backtest.walk_forward import WalkForwardValidator
-from src.strategies import STRATEGY_REGISTRY
+
+import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sns
+
 from src.backtest.engine import BacktestEngine
 from src.connectors.backtest_provider import generate_synthetic_ticks
+from src.strategies import STRATEGY_REGISTRY
 
 ARTIFACTS_DIR = Path(
     r"C:\Users\h0093\.gemini\antigravity\brain\75be7a45-b180-4d14-a8cd-6190d9fbce7a"

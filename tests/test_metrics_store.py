@@ -8,11 +8,11 @@ The ``isolated_metrics_store`` autouse fixture in conftest.py
 provides a per-test tmp_path store, so no test writes to
 ``state/metrics.db``.
 """
+
 import pytest
 
 from src.monitoring.metrics import MetricsCollector
 from src.monitoring.metrics_store import MetricsStore, bucket_ts
-
 
 # ---------------------------------------------------------------------------
 # MetricsStore: low-level persistence
@@ -93,7 +93,7 @@ async def test_load_recent_totals_uses_window(tmp_path):
 
     # A window ending before the row's bucket: must be empty
     # Compute a cutoff 1 bucket before the row's bucket
-    row_bucket = _bucket_ts()
+    _bucket_ts()
     # We can't easily inject a custom window that excludes the row
     # because bucket_ts() is current. But we can verify the
     # happy-path window works.
@@ -449,8 +449,8 @@ def test_prometheus_text_exports_per_strategy_attribution():
     m.record_attribution_pnl("adx_regime_filter", 0.0)
     text = m.prometheus_text()
     assert "trading_attribution_pnl_total" in text
-    assert '# TYPE trading_attribution_pnl_total counter' in text
-    assert '# HELP trading_attribution_pnl_total' in text
+    assert "# TYPE trading_attribution_pnl_total counter" in text
+    assert "# HELP trading_attribution_pnl_total" in text
     assert 'strategy="momentum" 500.0' in text
     assert 'strategy="sideways_reversion" -100.0' in text
     assert 'strategy="vwap_reversion" 250.0' in text

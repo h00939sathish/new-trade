@@ -278,6 +278,7 @@ class AngelMarketDataProvider:
             reason,
         )
 
+
 async def _invoke_callback(callback: Callable, payload: dict[str, Any]) -> None:
     result = callback(payload)
     if inspect.isawaitable(result):

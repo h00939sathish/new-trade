@@ -1,0 +1,35 @@
+{
+  "schema_version": 2,
+  "active_work_id": "complete-audit-remediation-3ff7621c",
+  "works": {
+    "complete-audit-remediation-3ff7621c": {
+      "work_id": "complete-audit-remediation-3ff7621c",
+      "active_plan": "D:\\projects\\new trade\\.omo\\plans\\complete-audit-remediation.md",
+      "plan_name": "complete-audit-remediation",
+      "status": "active",
+      "started_at": "2026-06-07T10:42:43.434Z",
+      "updated_at": "2026-06-07T10:42:43.434Z",
+      "session_ids": [
+        "opencode:ses_15e900aa8ffed0dZBaWPUzIjHn"
+      ],
+      "session_origins": {
+        "opencode:ses_15e900aa8ffed0dZBaWPUzIjHn": "direct"
+      },
+      "agent": "atlas",
+      "task_sessions": {}
+    }
+  },
+  "active_plan": "D:\\projects\\new trade\\.omo\\plans\\complete-audit-remediation.md",
+  "started_at": "2026-06-07T10:42:43.434Z",
+  "status": "active",
+  "updated_at": "2026-06-07T10:42:43.434Z",
+  "session_ids": [
+    "opencode:ses_15e900aa8ffed0dZBaWPUzIjHn"
+  ],
+  "session_origins": {
+    "opencode:ses_15e900aa8ffed0dZBaWPUzIjHn": "direct"
+  },
+  "plan_name": "complete-audit-remediation",
+  "task_sessions": {},
+  "agent": "atlas"
+}

@@ -1,9 +1,8 @@
 import asyncio
-import logging
-import sys
-import os
 import json
+import logging
 import subprocess
+import sys
 from pathlib import Path
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -64,9 +63,9 @@ async def run():
     logger.info("==========================================\n")
 
     try:
-        with open(out_1yr, "r") as f:
+        with open(out_1yr) as f:
             res_1yr = json.load(f)
-        with open(out_5yr, "r") as f:
+        with open(out_5yr) as f:
             res_5yr = json.load(f)
 
         strategies = set(res_1yr.keys()).union(set(res_5yr.keys()))

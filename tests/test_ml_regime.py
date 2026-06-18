@@ -1,6 +1,5 @@
 import numpy as np
 import pytest
-
 from src.strategies.ml_regime import SKLEARN_AVAILABLE, MLRegimeStrategy
 
 

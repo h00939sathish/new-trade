@@ -101,9 +101,7 @@ class MetricsCollector:
             self._flush_task = None
         await self.flush()
 
-    async def load_from_store(
-        self, window_seconds: int = 30 * 24 * 3600
-    ) -> dict[str, int]:
+    async def load_from_store(self, window_seconds: int = 30 * 24 * 3600) -> dict[str, int]:
         """Repopulate in-memory counters from the durable store.
 
         Returns the number of distinct (metric, labels) tuples
@@ -196,9 +194,7 @@ class MetricsCollector:
     def count_event(self, event_type: str) -> None:
         self._event_counter[event_type] += 1
         if self._store is not None:
-            self._pending_writes.append(
-                ("trading_events_total", {"type": event_type}, 1.0)
-            )
+            self._pending_writes.append(("trading_events_total", {"type": event_type}, 1.0))
 
     def count_signal(self, strategy: str, direction: str) -> None:
         self._signal_counter[f"{strategy}:{direction}"] += 1
@@ -214,16 +210,12 @@ class MetricsCollector:
     def count_order(self, status: str) -> None:
         self._order_counter[status] += 1
         if self._store is not None:
-            self._pending_writes.append(
-                ("trading_orders_total", {"status": status}, 1.0)
-            )
+            self._pending_writes.append(("trading_orders_total", {"status": status}, 1.0))
 
     def count_error(self, component: str) -> None:
         self._error_counter[component] += 1
         if self._store is not None:
-            self._pending_writes.append(
-                ("trading_errors_total", {"component": component}, 1.0)
-            )
+            self._pending_writes.append(("trading_errors_total", {"component": component}, 1.0))
 
     def record_attribution_pnl(self, strategy: str, pnl: float) -> None:
         """Accumulate realized PnL for a strategy's attribution counter.

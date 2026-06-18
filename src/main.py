@@ -146,9 +146,7 @@ async def main():
     # no store was attached at import time).
     from src.monitoring.metrics_store import MetricsStore
 
-    _metrics_db_path = Path(
-        os.getenv("TRA_METRICS_DB", "state/metrics.db")
-    )
+    _metrics_db_path = Path(os.getenv("TRA_METRICS_DB", "state/metrics.db"))
     system_metrics.attach_store(MetricsStore(_metrics_db_path))
     _loaded = await system_metrics.load_from_store()
     if _loaded:

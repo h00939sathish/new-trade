@@ -8,15 +8,16 @@ import asyncio
 import logging
 import sys
 import time
-from pathlib import Path
 from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 
 # Ensure src is importable
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.backtest.walk_forward import WalkForwardValidator
-from src.connectors.backtest_provider import BacktestDataProvider
 from src.config.strategy_config import STRATEGY_REGISTRY
+from src.connectors.backtest_provider import BacktestDataProvider
 
 logging.basicConfig(level=logging.INFO, force=True)
 for h in logging.root.handlers:

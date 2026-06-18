@@ -545,9 +545,7 @@ class RiskManagementAgent(BaseAgent):
             )
         return self._check("earnings_calendar", True)
 
-    async def _check_trend_alignment_risk(
-        self, instrument: str, direction: str
-    ) -> dict[str, Any]:
+    async def _check_trend_alignment_risk(self, instrument: str, direction: str) -> dict[str, Any]:
         """Require minute-level signal to align with 15-minute EMA trend.
 
         If price > 15-period EMA → uptrend — only allow long/neutral signals.

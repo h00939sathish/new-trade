@@ -1,4 +1,8 @@
-import subprocess, json, os, sys, re
+import json
+import os
+import re
+import subprocess
+import sys
 from datetime import datetime
 
 WORKDIR = "D:\\projects\\new trade"
@@ -121,7 +125,7 @@ def send_telegram(token, chat_id, text, dry_run=False):
 
 def format_risk_breach(entry):
     ts = entry.get("timestamp", "?")
-    msg = entry.get("message", "")
+    entry.get("message", "")
     details = entry.get("details", {})
 
     instrument = details.get("instrument", "?")
@@ -224,14 +228,12 @@ def main():
     trade_count = 0
     portfolio_value = "N/A"
     pnl = "N/A"
-    agents_online = "?"
-    market_data_active = False
     if isinstance(report, dict):
         trade_count = report.get("trades", 0) or 0
         portfolio_value = report.get("portfolio_value", "N/A")
         pnl = report.get("pnl", "N/A")
-        agents_online = report.get("agents_online", "?")
-        market_data_active = report.get("market_data_activity_detected", False)
+        report.get("agents_online", "?")
+        report.get("market_data_activity_detected", False)
 
     token = get_telegram_token()
 

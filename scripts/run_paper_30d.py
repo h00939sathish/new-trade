@@ -31,11 +31,12 @@ Environment variables (all optional):
   TRA_BURNIN_RECONCILE_SECONDS  Default 300
 """
 
-import os
-import sys
 import asyncio
 import logging
-from datetime import UTC, datetime, time as dtime, timedelta
+import os
+import sys
+from datetime import UTC, datetime, timedelta
+from datetime import time as dtime
 from pathlib import Path
 
 # Ensure project root is on path
@@ -160,7 +161,7 @@ async def daily_attribution_loop() -> None:
 
 async def main() -> None:
     max_runtime_min = int(os.getenv("TRA_MAX_RUNTIME_MINUTES", "390"))
-    started_at = datetime.now(UTC)
+    datetime.now(UTC)
     logger.info("=" * 60)
     logger.info("PAPER 30-DAY HARNESS STARTED (max_runtime=%d min)", max_runtime_min)
     logger.info("=" * 60)

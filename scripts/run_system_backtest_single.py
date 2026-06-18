@@ -1,19 +1,16 @@
+import argparse
 import asyncio
 import logging
-import argparse
 import sys
-import json
 from pathlib import Path
-from datetime import datetime
 
 # Insert src into path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.system import TradingSystem
-from src.backtest.sync_bus import SyncEventBus
 import src.event_store.async_bus as async_bus_module
+from src.backtest.sync_bus import SyncEventBus
 from src.connectors.backtest_provider import BacktestDataProvider
-from src.schemas.events import Exchange
+from src.system import TradingSystem
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("system_backtest")

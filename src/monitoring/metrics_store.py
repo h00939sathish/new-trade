@@ -19,13 +19,13 @@ runs on 5-minute candles; minute-level metrics are 5x finer than
 the data they describe). Coarse-grained enough to keep the table
 small over weeks of operation: ~1440 buckets/day, ~43200/month.
 """
+
 from __future__ import annotations
 
 import json
 import logging
 import time
 from pathlib import Path
-from typing import Any
 
 import aiosqlite
 

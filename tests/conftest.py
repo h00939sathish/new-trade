@@ -33,7 +33,6 @@ from pathlib import Path
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Session-start cleanup (defense in depth against historical leaks)
 # ---------------------------------------------------------------------------

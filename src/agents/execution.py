@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
@@ -90,9 +91,6 @@ async def _init_order_db(db_path: Path) -> aiosqlite.Connection:
     await conn.commit()
     return conn
 
-
-from collections import OrderedDict
-
 class BoundedDict(OrderedDict):
     def __init__(self, maxsize=1000, *args, **kwargs):
         self.maxsize = maxsize
@@ -103,6 +101,7 @@ class BoundedDict(OrderedDict):
             if len(self) >= self.maxsize:
                 self.popitem(last=False)
         super().__setitem__(key, value)
+
 
 class ExecutionAgent(BaseAgent):
     def __init__(self, event_store=None, broker: Any = None, order_db_path: Path | None = None):
@@ -358,7 +357,7 @@ class ExecutionAgent(BaseAgent):
         The order is NOT placed with the broker here (unless it is a neutral/exit signal).
         It is placed only when a matching RISK_CHECK event with passed=True is received.
         """
-        start_time = time.monotonic()
+        time.monotonic()
         signal = event.data
         instrument = signal.get("instrument", "")
         direction = signal.get("direction")
@@ -369,7 +368,6 @@ class ExecutionAgent(BaseAgent):
         if KillSwitch().active and direction != "neutral":
             self.logger.warning("Signal blocked: Kill Switch is active (%s)", KillSwitch().reason)
             return
-
 
         if confidence < 0.3:
             return
@@ -470,11 +468,13 @@ class ExecutionAgent(BaseAgent):
         confidence = signal.get("confidence", 0.0)
         price = signal.get("price")
         strategy_name = signal.get("strategy", "unknown")
-        
+
         if direction == "neutral":
             qty = self._get_position_qty(instrument)
             if qty == 0:
-                self.logger.info("Neutral signal received for %s, but no open position found.", instrument)
+                self.logger.info(
+                    "Neutral signal received for %s, but no open position found.", instrument
+                )
                 return
             side = OrderSide.SELL if qty > 0 else OrderSide.BUY
         else:
@@ -1347,6 +1347,7 @@ class ExecutionAgent(BaseAgent):
 
         # 2. Close open positions (ProductType.MIS)
         from src.risk.position_registry import position_registry
+
         all_positions = position_registry.get_all_positions()
         open_positions = {
             inst: data
@@ -1389,11 +1390,10 @@ class ExecutionAgent(BaseAgent):
             # Wait for fill confirmations (with a 5-second timeout)
             for _ in range(50):
                 if all(
-                    p.get("quantity", 0) == 0 for p in position_registry.get_all_positions().values()
+                    p.get("quantity", 0) == 0
+                    for p in position_registry.get_all_positions().values()
                 ):
-                    self.logger.info(
-                        "Graceful Shutdown: All positions closed successfully."
-                    )
+                    self.logger.info("Graceful Shutdown: All positions closed successfully.")
                     break
                 await asyncio.sleep(0.1)
             else:

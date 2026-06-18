@@ -1,4 +1,6 @@
+import argparse
 import asyncio
+import json
 import logging
 import sys
 from pathlib import Path
@@ -7,8 +9,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.backtest.walk_forward import WalkForwardValidator
-from src.connectors.backtest_provider import BacktestDataProvider
 from src.config.strategy_config import STRATEGY_REGISTRY
+from src.connectors.backtest_provider import BacktestDataProvider
 
 logging.basicConfig(level=logging.INFO, force=True)
 for h in logging.root.handlers:
@@ -19,11 +21,6 @@ for h in logging.root.handlers:
         pass
 
 logger = logging.getLogger("validation")
-
-
-import argparse
-
-import json
 
 
 async def run(days: int, train_days: int, test_days: int, output_path: str = ""):

@@ -35,9 +35,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src.system import TradingSystem
-from src.schemas.events import EventType, FillEvent
-from src.risk.position_registry import position_registry
+from src.risk.position_registry import position_registry  # noqa: E402
+from src.schemas.events import EventType, FillEvent  # noqa: E402
+from src.system import TradingSystem  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -86,7 +86,6 @@ def _summarize_position_after_fill(fill: FillEvent) -> None:
 
 async def _watch_fills(system: TradingSystem) -> None:
     """Subscribe to FILL events, record them, signal stop on full round-trip."""
-    bus = system.market_intel.event_store  # the event store is shared via bus
     # Use the bus to subscribe directly
     from src.event_store.async_bus import event_bus
 
@@ -99,7 +98,7 @@ async def _watch_fills(system: TradingSystem) -> None:
     while not stop_event.is_set():
         try:
             event = await asyncio.wait_for(queue.get(), timeout=1.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             continue
 
         if event.event_type == EventType.FILL:
@@ -203,7 +202,7 @@ async def _timeout_watcher() -> None:
     """Set stop_event after MAX_RUNTIME_MINUTES."""
     try:
         await asyncio.wait_for(stop_event.wait(), timeout=MAX_RUNTIME_MINUTES * 60)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning("Reached MAX_RUNTIME_MINUTES=%d, stopping.", MAX_RUNTIME_MINUTES)
         stop_event.set()
 
@@ -229,7 +228,7 @@ def _print_summary() -> None:
             total_commission = (buy["commission"] or 0) + (sell["commission"] or 0)
             net_pnl = gross_pnl - total_commission
             print()
-            print(f"Round-trip details:")
+            print("Round-trip details:")
             print(
                 f"  BUY  {qty:>4} @ ₹{buy['fill_price']:.2f}  commission=₹{buy['commission']:.2f}"
             )
