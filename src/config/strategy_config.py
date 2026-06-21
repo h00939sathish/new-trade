@@ -17,7 +17,7 @@ DEFAULT_CONFIG = {
         "ema200_regime_gate": {
             "enabled": True,
             "weight": 0.0,
-            "params": {"lookback": 200},
+            "params": {"lookback": 100},
         },
         "adx_regime_filter": {
             "enabled": True,

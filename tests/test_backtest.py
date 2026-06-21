@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from src.agents.strategy_gen import MomentumStrategy
+from src.strategies.technical import MomentumStrategy
 from src.backtest.engine import BacktestEngine
 
 _BASE_TIME = datetime(2026, 5, 25, 9, 15, 0, tzinfo=UTC)

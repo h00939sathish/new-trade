@@ -9,7 +9,7 @@ class RegimeState(StrEnum):
 
 
 class EMA200Filter:
-    def __init__(self, period: int = 200, slope_lookback: int = 5):
+    def __init__(self, period: int = 100, slope_lookback: int = 5):
         self.period = period
         self.slope_lookback = slope_lookback
 

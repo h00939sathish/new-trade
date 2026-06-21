@@ -17,19 +17,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("main")
 
-_auth_token = os.environ.get("TRA_HTTP_AUTH_TOKEN", "").strip()
-if not _auth_token:
-    if settings.live_trading_enabled:
-        raise RuntimeError(
-            "CRITICAL: TRA_HTTP_AUTH_TOKEN is empty but live trading is enabled. "
-            "Set the env var to a random 32+ byte string (e.g. `openssl rand -hex 32`)."
-            "Refusing to start with exposed kill-switch and control endpoints."
-        )
-    logger.warning(
-        "TRA_HTTP_AUTH_TOKEN is empty; HTTP control endpoints are UNAUTHENTICATED. "
-        "Set the env var to a random 32+ byte string (e.g. `openssl rand -hex 32`)."
-    )
-
 system_metrics.start()
 
 
@@ -134,6 +121,15 @@ async def _handle_metrics_request(
 
 
 async def main():
+    _auth_token = os.environ.get("TRA_HTTP_AUTH_TOKEN", "").strip()
+    if not _auth_token:
+        mode = "LIVE" if settings.live_trading_enabled else "PAPER"
+        raise RuntimeError(
+            f"CRITICAL: TRA_HTTP_AUTH_TOKEN is empty ({mode} mode). "
+            "HTTP control endpoints (kill-switch, stop, flatten) would be exposed. "
+            "Set the env var to a random 32+ byte string (e.g. `openssl rand -hex 32`)."
+            "Refusing to start with exposed kill-switch and control endpoints."
+        )
     system = TradingSystem()
     watchlist = os.getenv("TRA_WATCHLIST", "RELIANCE,TCS,INFY,HDFCBANK").split(",")
     system.set_watchlist(watchlist)

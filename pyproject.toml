@@ -2,7 +2,7 @@
 name = "trading-system"
 version = "0.1.0"
 description = "Multi-agent institutional-grade trading system"
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
@@ -20,6 +20,9 @@ dependencies = [
     "rich>=13.0",
     "feedparser>=6.0.0",
     "aiosqlite>=0.22.1",
+    "duckdb>=1.0",
+    "pyarrow>=15.0",
+    "openbb>=4.0",
 ]
 
 

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import time
 from collections import OrderedDict
 from pathlib import Path
@@ -122,10 +123,13 @@ class ExecutionAgent(BaseAgent):
         self._twap_orders: dict[str, dict[str, Any]] = {}
         self._db_lock = None
         self._latest_depth: dict[str, dict] = {}
-        self._broker_seen_fills: dict[str, int] = {}
+        self._broker_seen_fills: dict[str, int] = BoundedDict(10000)
         self._live_order_poll_interval = max(
             1.0, float(settings.broker_order_poll_interval_seconds)
         )
+        self._recent_order_ids: set[str] = set()
+        self._ack_timeout_seconds = float(os.environ.get("TRA_ORDER_ACK_TIMEOUT_SECONDS", "30"))
+        self._ack_pending: dict[str, float] = {}
 
     def _get_db_lock(self):
         if self._db_lock is None:
@@ -155,6 +159,8 @@ class ExecutionAgent(BaseAgent):
 
         task = asyncio.create_task(self._twap_loop(), name="execution.twap_loop")
         self._tasks.append(task)
+        ack_task = asyncio.create_task(self._ack_timeout_loop(), name="execution.ack_timeout")
+        self._tasks.append(ack_task)
         if not self._paper_trading and self._broker is not None:
             poll_task = asyncio.create_task(
                 self._live_order_status_loop(),
@@ -626,10 +632,17 @@ class ExecutionAgent(BaseAgent):
             trigger_price = order_event.trigger_price
 
             # Upgrade MIS order to Cover Order if a trigger_price is provided (Native SL)
+            # Only applies when the broker supports CO orders. Check the env flag.
+            _broker_supports_co = os.environ.get("TRA_BROKER_SUPPORTS_CO", "").lower() in (
+                "1",
+                "true",
+                "yes",
+            )
             if (
                 order_event.product.value == "mis"
                 and trigger_price is not None
                 and trigger_price > 0
+                and _broker_supports_co
             ):
                 variety = "co"
                 order_event.variety = "co"
@@ -891,13 +904,45 @@ class ExecutionAgent(BaseAgent):
                             completed.append(twap_id)
 
                 for twap_id in completed:
-                    del self._twap_orders[twap_id]
                     await self._persist_twap(twap_id)
+                    del self._twap_orders[twap_id]
                     self.logger.info("TWAP %s completed fully", twap_id)
 
             except Exception as e:
                 self.logger.error("TWAP loop error: %s", e, exc_info=True)
 
+            await asyncio.sleep(5.0)
+
+    async def _ack_timeout_loop(self) -> None:
+        """Background loop checking for unacknowledged orders."""
+        while self._running:
+            try:
+                now = time.monotonic()
+                timed_out = [
+                    oid
+                    for oid, ts in list(self._ack_pending.items())
+                    if now - ts > self._ack_timeout_seconds
+                ]
+                for oid in timed_out:
+                    self._ack_pending.pop(oid, None)
+                    self.logger.warning("Order %s not acknowledged within timeout", oid)
+                    from src.schemas.events import SystemEvent
+
+                    await self.emit(
+                        SystemEvent.error(
+                            component=self.name,
+                            error=f"order_ack_timeout: {oid}",
+                            fatal=False,
+                        )
+                    )
+                    from src.monitoring.metrics import system_metrics
+
+                    try:
+                        system_metrics.count_event("order_ack_timeout")
+                    except Exception:
+                        pass
+            except Exception as e:
+                self.logger.error("Ack timeout loop error: %s", e, exc_info=True)
             await asyncio.sleep(5.0)
 
     async def place_order(
@@ -911,7 +956,28 @@ class ExecutionAgent(BaseAgent):
         trigger_price: float | None = None,
         exchange: Exchange = Exchange.NSE,
         strategy: str = "unknown",
+        idempotency_key: str | None = None,
     ) -> OrderEvent:
+        # Duplicate order protection: check idempotency key in paper mode
+        if idempotency_key and idempotency_key in self._recent_order_ids:
+            self.logger.warning(
+                "Duplicate order blocked (idempotency_key=%s): %s %s %d@%s",
+                idempotency_key,
+                side.value,
+                instrument,
+                quantity,
+                price,
+            )
+            from src.schemas.events import SystemEvent
+
+            await self.emit(
+                SystemEvent.error(
+                    component=self.name,
+                    error=f"duplicate_order_blocked: {idempotency_key}",
+                    fatal=False,
+                )
+            )
+            raise ValueError(f"Duplicate order: idempotency_key={idempotency_key} already used")
         order_event = OrderEvent.create(
             instrument=instrument,
             exchange=exchange,

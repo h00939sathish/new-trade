@@ -3,7 +3,8 @@ from datetime import UTC, datetime
 import pytest
 
 from src.agents.execution import ExecutionAgent
-from src.agents.strategy_gen import MeanReversionStrategy, MomentumStrategy, StrategyGenAgent
+from src.agents.strategy_gen import StrategyGenAgent
+from src.strategies.technical import MeanReversionStrategy, MomentumStrategy
 from src.event_store.async_bus import AsyncEventBus
 from src.event_store.memory import InMemoryEventStore
 from src.risk.costs import TransactionCostModel

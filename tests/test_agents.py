@@ -5,7 +5,8 @@ import pytest
 from src.agents.execution import ExecutionAgent
 from src.agents.market_intel import MarketIntelAgent
 from src.agents.risk_mgmt import RiskManagementAgent
-from src.agents.strategy_gen import MeanReversionStrategy, MomentumStrategy, StrategyGenAgent
+from src.agents.strategy_gen import StrategyGenAgent
+from src.strategies.technical import MeanReversionStrategy, MomentumStrategy
 from src.event_store.memory import InMemoryEventStore
 from src.schemas.events import Exchange
 

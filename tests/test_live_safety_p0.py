@@ -5,7 +5,7 @@ import pytest
 from src.agents.execution import ExecutionAgent
 from src.connectors.angel.client import AngelClient
 from src.risk.position_registry import position_registry
-from src.schemas.events import Exchange, OrderEvent, OrderSide, OrderType, ProductType
+from src.schemas.events import Exchange, OrderEvent, OrderSide, OrderStatus, OrderType, ProductType
 
 
 @pytest.mark.asyncio
@@ -18,16 +18,13 @@ async def test_angel_token_refresh_resilience():
     client._jwt_token = "old_jwt"
     client._refresh_token = "old_refresh"
 
-    # Mock smart_api methods
-    client.smart_api.generateToken = AsyncMock(
-        return_value={"status": False, "message": "Invalid Token"}
-    )
-
-    # We expect _refresh_login to catch the error and call _login
-    with patch.object(client, "_login", new_callable=AsyncMock) as mock_login:
-        await client._refresh_login()
-        # _login should be called because generateToken returned False status
-        mock_login.assert_called_once()
+    # Mock _request to simulate token refresh failure
+    with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+        mock_req.side_effect = ConnectionError("Token refresh failed")
+        with patch.object(client, "_login", new_callable=AsyncMock) as mock_login:
+            await client._refresh_login()
+            # _login should be called because _request raised ConnectionError
+            mock_login.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -63,7 +60,7 @@ async def test_execution_ghost_position_tag_fallback(tmp_path):
         quantity=10,
         price=100.0,
         product=ProductType.MIS,
-        data={"status": "rejected"},  # marked rejected locally
+        status=OrderStatus.REJECTED,  # marked rejected locally
     )
     # The event_id acts as the tag sent to the broker
     order.event_id = "local_event_uuid_123"
@@ -103,8 +100,8 @@ async def test_execution_shutdown_reads_ssot(tmp_path):
     await agent.start()
 
     # Set up SSOT with an open position
-    position_registry.clear()
-    position_registry.update_position("RELIANCE", 10, 2500.0, ProductType.MIS)
+    position_registry.reset()
+    await position_registry.update_from_fill("RELIANCE", "buy", 10, 2500.0)
 
     # Note: portfolio_agent._positions might NOT have the current quantity if it only tracks totals.
     # The shutdown logic should query PositionRegistry.get_all_positions().

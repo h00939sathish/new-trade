@@ -616,7 +616,7 @@ class GeminiClient:
     async def _call_gemini(self, prompt: str) -> dict[str, Any] | None:
         import httpx
 
-        url = f"{self.BASE_URL}/gemini-2.0-flash:generateContent?key={self._api_key}"
+        url = f"{self.BASE_URL}/gemini-2.0-flash:generateContent"
         body = {
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
@@ -624,8 +624,9 @@ class GeminiClient:
                 "maxOutputTokens": 512,
             },
         }
+        headers = {"x-goog-api-key": self._api_key}
         async with httpx.AsyncClient(timeout=30.0) as http:
-            resp = await http.post(url, json=body)
+            resp = await http.post(url, json=body, headers=headers)
             resp.raise_for_status()
             data = resp.json()
 

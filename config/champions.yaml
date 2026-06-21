@@ -1,0 +1,46 @@
+champions:
+  mean_reversion:
+    category: mean_reversion
+    metrics:
+      expectancy: 0.0
+      max_drawdown: 0.0
+      profit_factor: 0.0
+      sharpe: 0.0
+      sortino: 0.0
+    params:
+      atr_window: 14
+      bb_std: 2.0
+      bb_window: 20
+      rsi_window: 14
+    promoted_date: '2026-06-21T15:24:33.466695+00:00'
+    strategy_name: sideways_reversion
+  momentum:
+    category: momentum
+    metrics:
+      expectancy: 0.0
+      max_drawdown: 0.0
+      profit_factor: 0.0
+      sharpe: 0.0
+      sortino: 0.0
+    params:
+      long_window: 20
+      short_window: 5
+      threshold: 0.002
+    promoted_date: '2026-06-21T15:24:14.864737+00:00'
+    strategy_name: momentum
+  stat_arb:
+    category: stat_arb
+    metrics:
+      expectancy: 0.0
+      max_drawdown: 0.0
+      profit_factor: 0.0
+      sharpe: 0.0
+      sortino: 0.0
+    params:
+      entry_z: 2.0
+      exit_z: 0.5
+      primary_symbol: TCS
+      secondary_symbol: INFY
+      window: 60
+    promoted_date: '2026-06-21T15:27:17.610107+00:00'
+    strategy_name: stat_arb

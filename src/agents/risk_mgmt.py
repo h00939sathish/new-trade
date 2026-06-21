@@ -1,3 +1,4 @@
+import os
 import time
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
@@ -257,6 +258,7 @@ class RiskManagementAgent(BaseAgent):
                     "limit": self._max_position_size * 3,
                 },
             ),
+            await self._check_margin(instrument, order_value, side),
         ]
         # Only check exposure for orders that INCREASE position
         if not is_reducing:
@@ -439,6 +441,34 @@ class RiskManagementAgent(BaseAgent):
             },
         )
 
+    async def _check_margin(self, instrument: str, order_value: float, side: str) -> dict[str, Any]:
+        from src.risk.kill_switch import KillSwitch
+        from src.risk.margin import MarginCalculator
+
+        ks = KillSwitch()
+        capital = ks._initial_capital if ks._initial_capital else 1_000_000.0
+        cal = MarginCalculator()
+
+        is_reducing = side in ("sell", "SELL") and self._positions.get(instrument, 0) > 0
+        if is_reducing:
+            return self._check("margin", True, {"reason": "reducing_position"})
+
+        open_pos_margin = self._get_total_exposure() * 0.20
+        passed, required, avail, needed = cal.check_order(
+            capital, open_pos_margin, 0.0, order_value, "mis", buffer_pct=0.1
+        )
+        return self._check(
+            "margin",
+            passed,
+            {
+                "order_value": order_value,
+                "required_margin": required,
+                "available_margin": avail,
+                "needed_with_buffer": needed,
+                "total_capital": capital,
+            },
+        )
+
     async def _check_var_risk(self, instrument: str) -> dict[str, Any]:
         from collections import deque
 
@@ -461,7 +491,9 @@ class RiskManagementAgent(BaseAgent):
         last_price = float(history[-1]) if history else 1000.0
         position_value = abs(self._positions.get(instrument, 0)) * last_price
         var_loss = position_value * var_95
-        max_var_loss = self._max_position_size * 0.02
+        # Per-symbol VaR limit: configurable via TRA_RISK_MAX_VAR_PER_SYMBOL (default 5% of capital)
+        max_var_pct = float(os.environ.get("TRA_RISK_MAX_VAR_PER_SYMBOL", "0.05"))
+        max_var_loss = self._capital * max_var_pct
         return self._check(
             "var_95",
             var_loss <= max_var_loss,
@@ -470,6 +502,7 @@ class RiskManagementAgent(BaseAgent):
                 "position_value": position_value,
                 "var_loss": var_loss,
                 "max_var_loss": max_var_loss,
+                "max_var_pct": max_var_pct,
                 "returns_sample": len(returns),
             },
         )

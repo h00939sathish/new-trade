@@ -9,17 +9,27 @@ from src.strategies.base import Strategy
 class TSMOMStrategy(Strategy):
     """
     Volatility-Scaled Time Series Momentum (TSMOM).
-    - Signal Horizons: 60-day, 120-day, 250-day.
+    - Signal Horizons: configurable (defaults to minute-bar equivalents).
     - Position Size = Trend Signal * (Target Volatility / Current Volatility)
     - Target Portfolio Volatility: 10% annualized.
+    - bars_per_day: number of bars per trading day for timeframe scaling.
+      Default 375 for 1-min bars on NSE (6.25h * 60min).
     """
 
-    def __init__(self, target_volatility: float = 0.10, horizons: tuple = (60, 120, 250)):
+    def __init__(
+        self,
+        target_volatility: float = 0.10,
+        horizons: tuple = (60, 120, 250),
+        bars_per_day: int = 375,
+    ):
         self.name = "tsmom"
         self.data_type = "candle"
-        self.timeframe = "1d"  # Operates on daily data
+        self.timeframe = "1m"  # Default now matches the bars the system sends
         self.target_volatility = target_volatility
         self.horizons = horizons
+        self.bars_per_day = bars_per_day
+        # Vol lookback: ~60 trading days worth of bars
+        self._vol_lookback = 60 * bars_per_day if bars_per_day else 60
 
     async def evaluate(
         self,
@@ -36,19 +46,21 @@ class TSMOMStrategy(Strategy):
 
         current_price = prices[-1]
 
-        # Calculate annualized volatility of daily returns over the last 60 days
+        # Calculate annualized volatility using a configurable lookback window
+        vol_window = min(self._vol_lookback, len(prices) - 1)
         ret = []
-        for i in range(len(prices) - 60, len(prices)):
-            if prices[i - 1] > 0:
-                ret.append((prices[i] - prices[i - 1]) / prices[i - 1])
+        for i in range(1, vol_window):
+            if prices[-(i + 1)] > 0:
+                ret.append((prices[-i] - prices[-(i + 1)]) / prices[-(i + 1)])
             else:
                 ret.append(0.0)
 
         if not ret:
             return None
 
-        daily_vol = np.std(ret)
-        ann_vol = daily_vol * math.sqrt(252)
+        bar_vol = np.std(ret)
+        # Annualize based on bars_per_day
+        ann_vol = bar_vol * math.sqrt(self.bars_per_day * 252) if self.bars_per_day else 0.0
 
         if ann_vol <= 0:
             return None

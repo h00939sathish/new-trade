@@ -16,11 +16,14 @@ class EventType(StrEnum):
     ORDER_ACCEPTED = "order.accepted"
     ORDER_REJECTED = "order.rejected"
     ORDER_CANCELLED = "order.cancelled"
+    ORDER_UNACKED = "order.unacked"
     FILL = "order.fill"
     RISK_CHECK = "risk.check"
     RISK_BREACH = "risk.breach"
     PORTFOLIO_UPDATE = "portfolio.update"
     PORTFOLIO_REBALANCE = "portfolio.rebalance"
+    POSITION_UPDATE = "position.update"
+    PNL_UPDATE = "pnl.update"
     SYSTEM_HEALTH = "system.health"
     SYSTEM_ERROR = "system.error"
     SYSTEM_STATE = "system.state"
@@ -502,6 +505,102 @@ class PortfolioEvent(Event):
                 "positions": positions or [],
             },
             metadata=EventMetadata(producer=producer),
+        )
+
+
+class PositionEvent(Event):
+    instrument: str
+    strategy: str
+    side: OrderSide | None = None
+    quantity: int = 0
+    avg_price: float = 0.0
+    current_price: float = 0.0
+    pnl_unrealized: float = 0.0
+    pnl_realized: float = 0.0
+
+    @classmethod
+    def create(
+        cls,
+        instrument: str,
+        strategy: str,
+        quantity: int,
+        avg_price: float,
+        current_price: float,
+        pnl_unrealized: float = 0.0,
+        pnl_realized: float = 0.0,
+        side: OrderSide | None = None,
+        producer: str = "portfolio_opt",
+        correlation_id: str | None = None,
+    ) -> "PositionEvent":
+        meta = EventMetadata(producer=producer)
+        if correlation_id:
+            meta.correlation_id = correlation_id
+        return cls(
+            event_type=EventType.POSITION_UPDATE,
+            stream=f"position.{instrument}.{strategy}",
+            instrument=instrument,
+            strategy=strategy,
+            side=side,
+            quantity=quantity,
+            avg_price=avg_price,
+            current_price=current_price,
+            pnl_unrealized=pnl_unrealized,
+            pnl_realized=pnl_realized,
+            data={
+                "instrument": instrument,
+                "strategy": strategy,
+                "side": side.value if side else None,
+                "quantity": quantity,
+                "avg_price": avg_price,
+                "current_price": current_price,
+                "pnl_unrealized": pnl_unrealized,
+                "pnl_realized": pnl_realized,
+            },
+            metadata=meta,
+        )
+
+
+class PnLEvent(Event):
+    strategy: str
+    instrument: str
+    pnl: float
+    trade_count: int = 0
+    win_rate: float = 0.0
+    sharpe: float = 0.0
+
+    @classmethod
+    def create(
+        cls,
+        strategy: str,
+        instrument: str,
+        pnl: float,
+        trade_count: int = 0,
+        win_rate: float = 0.0,
+        sharpe: float = 0.0,
+        producer: str = "attribution",
+        correlation_id: str | None = None,
+    ) -> "PnLEvent":
+        meta = EventMetadata(producer=producer)
+        if correlation_id:
+            meta.correlation_id = correlation_id
+        return cls(
+            event_type=EventType.PNL_UPDATE,
+            stream=f"pnl.{instrument}.{strategy}",
+            strategy=strategy,
+            instrument=instrument,
+            pnl=pnl,
+            trade_count=trade_count,
+            win_rate=win_rate,
+            sharpe=sharpe,
+            data={
+                "strategy": strategy,
+                "instrument": instrument,
+                "pnl": pnl,
+                "trade_count": trade_count,
+                "win_rate": win_rate,
+                "sharpe": sharpe,
+            },
+            metadata=meta,
         )
 
 

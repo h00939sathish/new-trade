@@ -62,7 +62,7 @@ class Settings(BaseSettings):
 
     kill_switch_daily_loss_pct: float = 0.01
     kill_switch_max_drawdown_pct: float = 0.05
-    kill_switch_auto_reset: bool = True
+    kill_switch_auto_reset: bool = False
 
     consensus_threshold: float = 0.65
     consensus_short_threshold: float = 0.70

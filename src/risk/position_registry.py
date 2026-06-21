@@ -194,6 +194,13 @@ class PositionRegistry:
                             "take_profit_pct": 0.0,
                         }
 
+    def get_overnight_snapshot(self) -> dict[str, dict[str, Any]]:
+        """Return a deep copy of all positions for EOD snapshots (gap-risk monitoring)."""
+        with self._data_lock:
+            import copy
+
+            return {k: copy.deepcopy(v) for k, v in self._positions.items() if v.get("quantity", 0) != 0}
+
     def reset(self) -> None:
         """Clear all positions (used in testing)."""
         with self._data_lock:

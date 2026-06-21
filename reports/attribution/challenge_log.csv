@@ -1,0 +1,2 @@
+timestamp,category,champion_name,challenger_name,challenger_won,champion_metrics,challenger_metrics
+2026-06-21T15:27:07.544574+00:00,mean_reversion,sideways_reversion,vwap_reversion,False,"{'expectancy': 0.0, 'max_drawdown': 0.0, 'profit_factor': 0.0, 'sharpe': 0.0, 'sortino': 0.0}","{'sharpe': 0.0, 'profit_factor': 0.0, 'total_pnl': 0.0, 'max_drawdown': 0.0, 'win_rate': 0.0, 'total_trades': 0}"
