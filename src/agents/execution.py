@@ -1046,8 +1046,13 @@ class ExecutionAgent(BaseAgent):
                 raise e
         await self.emit(order_event)
         self._open_orders[order_event.event_id] = order_event
+        self._ack_pending[order_event.event_id] = time.monotonic()
+        # Track idempotency key for duplicate protection
+        if idempotency_key:
+            self._recent_order_ids.add(idempotency_key)
         await self._persist_order(order_event, strategy=strategy)
         if self._paper_trading:
+            self._ack_pending.pop(order_event.event_id, None)
             await self._simulate_fill(order_event)
         return order_event
 
@@ -1128,6 +1133,7 @@ class ExecutionAgent(BaseAgent):
         return False
 
     async def cancel_order(self, order_id: str) -> None:
+        self._ack_pending.pop(order_id, None)
         if order_id in self._open_orders:
             order = self._open_orders.pop(order_id)
             order.data["status"] = OrderStatus.CANCELLED.value
@@ -1234,6 +1240,7 @@ class ExecutionAgent(BaseAgent):
             pass
         await self.emit(fill_event)
         await self._persist_fill(fill_event)
+        self._ack_pending.pop(order.event_id, None)
         if order.event_id in self._open_orders:
             del self._open_orders[order.event_id]
         if order.event_id not in self._filled_orders:

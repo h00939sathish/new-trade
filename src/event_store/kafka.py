@@ -1,4 +1,5 @@
 import json
+import logging
 from collections.abc import AsyncIterator
 from datetime import datetime
 from typing import Any
@@ -7,6 +8,13 @@ from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 
 from src.event_store.base import EventStore
 from src.schemas.events import Event
+
+logger = logging.getLogger("event_store.kafka")
+
+logger.warning(
+    "DEPRECATED: KafkaEventStore is unused and has no active code path. "
+    "It will be removed in a future release. Use SqliteEventStore or PostgresEventStore instead."
+)
 
 
 class KafkaEventStore(EventStore):

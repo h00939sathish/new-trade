@@ -74,6 +74,7 @@ class Settings(BaseSettings):
 
     timescaledb_enabled: bool = True
     risk_sizing_method: str = "fixed"  # "fixed" or "kelly"
+    risk_tax_lot_method: str = "average_cost"  # "average_cost", "fifo", or "specific_id"
     vault_provider: str = ""  # "", "vault", or "aws"
     pagerduty_routing_key: str = ""
 

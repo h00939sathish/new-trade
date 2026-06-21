@@ -259,6 +259,7 @@ class RiskManagementAgent(BaseAgent):
                 },
             ),
             await self._check_margin(instrument, order_value, side),
+            self._check_nse_lot_size(instrument, quantity),
         ]
         # Only check exposure for orders that INCREASE position
         if not is_reducing:
@@ -273,6 +274,12 @@ class RiskManagementAgent(BaseAgent):
                     },
                 )
             )
+
+        # Advisory: market impact warning (does not block order)
+        impact_passed, impact_bps = self._check_market_impact(instrument, quantity)
+        checks.append(
+            self._check("market_impact", impact_passed, {"impact_bps": impact_bps})
+        )
 
         all_passed = all(c["passed"] for c in checks)
         risk_event = RiskCheckEvent.create(
@@ -534,6 +541,44 @@ class RiskManagementAgent(BaseAgent):
             passed,
             {"avg_volume": avg_vol, "threshold": min_volume, "samples": len(vols)},
         )
+
+    def _check_nse_lot_size(self, instrument: str, quantity: int) -> dict[str, Any]:
+        from src.risk.nse_lot_sizes import validate_lot_size
+
+        passed, msg = validate_lot_size(instrument, quantity)
+        return self._check("nse_lot_size", passed, {"message": msg})
+
+    def _check_market_impact(self, instrument: str, quantity: int) -> tuple[bool, float]:
+        from src.risk.market_impact import MarketImpactModel
+
+        if not hasattr(self, "_volume_history") or instrument not in self._volume_history:
+            return True, 0.0
+        vols = [v for v in self._volume_history[instrument] if v is not None and v > 0]
+        if not vols:
+            return True, 0.0
+        adv = sum(vols) / len(vols)
+        daily_vol = 0.02
+        if hasattr(self, "_price_history") and instrument in self._price_history:
+            ph = list(self._price_history[instrument])
+            if len(ph) > 5:
+                returns = []
+                for i in range(1, len(ph)):
+                    if ph[i - 1] > 0:
+                        returns.append(abs((ph[i] - ph[i - 1]) / ph[i - 1]))
+                if returns:
+                    daily_vol = max(0.005, sum(returns) / len(returns))
+        model = MarketImpactModel()
+        significant, impact = model.is_significant(quantity, adv, daily_vol)
+        if significant:
+            self.logger.warning(
+                "Market impact advisory: %.1f bps for %s qty=%d (ADV=%.0f, vol=%.4f)",
+                impact,
+                instrument,
+                quantity,
+                adv,
+                daily_vol,
+            )
+        return not significant, impact
 
     def _check(
         self, name: str, passed: bool, details: dict[str, Any] | None = None

@@ -12,7 +12,11 @@ written to directly — it is rebuilt from position_registry on demand.
 import asyncio
 import logging
 import threading
+from collections import defaultdict
+from datetime import UTC, datetime
 from typing import Any
+
+from src.config.settings import settings
 
 logger = logging.getLogger("risk.position_registry")
 
@@ -47,6 +51,9 @@ class PositionRegistry:
         if self._initialized:
             return
         self._positions: dict[str, dict[str, Any]] = {}
+        self._lots: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        self._realized_pnl: dict[str, float] = defaultdict(float)
+        self._tax_lot_method: str = settings.risk_tax_lot_method
         self._async_lock: asyncio.Lock | None = None
         # Protects _positions from concurrent sync reads and async writes.
         # Safe because no async write method awaits while holding this lock.
@@ -61,7 +68,7 @@ class PositionRegistry:
     def get_position(self, instrument: str) -> dict[str, Any]:
         """Get current position for an instrument."""
         with self._data_lock:
-            return self._positions.get(
+            pos = self._positions.get(
                 instrument,
                 {
                     "quantity": 0,
@@ -73,6 +80,11 @@ class PositionRegistry:
                     "take_profit_pct": 0.0,
                 },
             )
+            return {
+                **pos,
+                "realized_pnl": self._realized_pnl.get(instrument, 0.0),
+                "lots": list(self._lots.get(instrument, [])),
+            }
 
     def get_quantity(self, instrument: str) -> int:
         """Get net quantity for an instrument."""
@@ -90,8 +102,15 @@ class PositionRegistry:
         side: str,
         fill_qty: int,
         fill_price: float,
+        lot_id: str | None = None,
     ) -> dict[str, Any]:
-        """Update position from a fill event. Returns the updated position."""
+        """Update position from a fill event. Returns the updated position.
+
+        Tax lot accounting respects ``settings.risk_tax_lot_method``:
+        - ``average_cost`` (default) — blended avg_price (legacy behaviour).
+        - ``fifo`` — cost basis from oldest lots on partial closes.
+        - ``specific_id`` — requires ``lot_id`` on sell fills.
+        """
         async with self._get_async_lock():
             with self._data_lock:
                 if instrument not in self._positions:
@@ -110,6 +129,44 @@ class PositionRegistry:
                 old_qty = pos["quantity"]
                 new_qty = old_qty + qty_change
 
+                if side == "buy":
+                    self._lots[instrument].append({
+                        "qty": fill_qty,
+                        "price": fill_price,
+                        "timestamp": datetime.now(UTC),
+                        "lot_id": lot_id or f"{instrument}-{datetime.now(UTC).isoformat()}",
+                    })
+                else:
+                    if self._tax_lot_method == "specific_id" and lot_id is None:
+                        raise ValueError(
+                            "specific_id tax lot method requires lot_id on sell fills"
+                        )
+                    remaining = fill_qty
+                    consumed_realized = 0.0
+                    while remaining > 0 and self._lots[instrument]:
+                        if self._tax_lot_method == "specific_id":
+                            lot = next(
+                                (l for l in self._lots[instrument] if l["lot_id"] == lot_id),
+                                None,
+                            )
+                            if lot is None:
+                                raise ValueError(f"Lot {lot_id} not found for {instrument}")
+                            debit = min(remaining, lot["qty"])
+                            lot["qty"] -= debit
+                            consumed_realized += debit * (fill_price - lot["price"])
+                            if lot["qty"] == 0:
+                                self._lots[instrument].remove(lot)
+                            remaining -= debit
+                        else:
+                            lot = self._lots[instrument][0]
+                            debit = min(remaining, lot["qty"])
+                            lot["qty"] -= debit
+                            consumed_realized += debit * (fill_price - lot["price"])
+                            if lot["qty"] == 0:
+                                self._lots[instrument].pop(0)
+                            remaining -= debit
+                    self._realized_pnl[instrument] += consumed_realized
+
                 if new_qty == 0:
                     self._positions[instrument] = {
                         "quantity": 0,
@@ -120,16 +177,24 @@ class PositionRegistry:
                         "stop_loss_pct": 0.0,
                         "take_profit_pct": 0.0,
                     }
+                    self._lots.pop(instrument, None)
                     logger.info("Position closed: %s", instrument)
                 else:
                     current_side = "long" if new_qty > 0 else "short"
-                    if (
-                        old_qty == 0
-                        or (old_qty > 0 and qty_change > 0)
-                        or (old_qty < 0 and qty_change < 0)
-                    ):
-                        total_cost = (pos["avg_price"] * abs(old_qty)) + (fill_price * fill_qty)
-                        pos["avg_price"] = total_cost / abs(new_qty) if new_qty != 0 else 0.0
+                    if self._tax_lot_method == "average_cost":
+                        if (
+                            old_qty == 0
+                            or (old_qty > 0 and qty_change > 0)
+                            or (old_qty < 0 and qty_change < 0)
+                        ):
+                            total_cost = (pos["avg_price"] * abs(old_qty)) + (fill_price * fill_qty)
+                            pos["avg_price"] = total_cost / abs(new_qty) if new_qty != 0 else 0.0
+                    else:
+                        lots = self._lots[instrument]
+                        if lots:
+                            total_cost = sum(l["qty"] * l["price"] for l in lots)
+                            total_qty = sum(l["qty"] for l in lots)
+                            pos["avg_price"] = total_cost / total_qty if total_qty else 0.0
 
                     pos["quantity"] = new_qty
                     pos["side"] = current_side
@@ -205,6 +270,8 @@ class PositionRegistry:
         """Clear all positions (used in testing)."""
         with self._data_lock:
             self._positions.clear()
+            self._lots.clear()
+            self._realized_pnl.clear()
 
     @classmethod
     def reset_singleton(cls) -> None:

@@ -200,19 +200,17 @@ class InstitutionalPortfolioOptimizer:
         # Mean returns
         mu = returns_matrix.mean(axis=0)
 
-        # Dispatch to the chosen regime
-        if self.regime == "equal_weight":
-            weights = self._equal_weight(n)
-            converged = True
-        elif self.regime == "min_variance":
-            weights, converged = self._min_variance(cov, n)
-        elif self.regime == "max_sharpe":
-            weights, converged = self._max_sharpe(mu, cov, n)
-        elif self.regime == "risk_parity":
-            weights, converged = self._risk_parity(cov, n)
+        # Fast path: closed-form for small portfolios (avoids scipy)
+        if n <= 3:
+            fast_weights, fast_ok = self._fast_weights(cov, n)
+            if fast_ok:
+                weights = fast_weights
+                converged = True
+                logger.info("Fast path used for %d-strategy portfolio [%s]", n, self.regime)
+            else:
+                weights, converged = self._solve_scipy(mu, cov, n)
         else:
-            weights = self._equal_weight(n)
-            converged = True
+            weights, converged = self._solve_scipy(mu, cov, n)
 
         # Compute portfolio metrics
         port_ret = float(mu @ weights)
@@ -243,53 +241,78 @@ class InstitutionalPortfolioOptimizer:
         return result
 
     # ------------------------------------------------------------------
-    # Regime implementations
+    # Fast path (closed-form, no scipy)
     # ------------------------------------------------------------------
 
-    def _equal_weight(self, n: int) -> np.ndarray:
-        return np.full(n, 1.0 / n)
+    def _fast_weights(self, cov: np.ndarray, n: int) -> tuple[np.ndarray, bool]:
+        """Closed-form weights for ≤3 strategies — avoids scipy entirely."""
+        if self.regime == "equal_weight":
+            return np.full(n, 1.0 / n), True
 
-    def _min_variance(self, cov: np.ndarray, n: int) -> tuple[np.ndarray, bool]:
-        """Minimise w' Σ w subject to Σw = 1 and bounds."""
+        diag = np.diag(cov)
+        if np.any(diag <= 0):
+            return np.full(n, 1.0 / n), False
 
-        def objective(w):
-            return w @ cov @ w
+        if self.regime == "min_variance":
+            inv_var = 1.0 / diag
+            w = inv_var / inv_var.sum()
+            w = np.clip(w, self.min_weight, self.max_weight)
+            w /= w.sum()
+            return w, True
 
-        return self._solve(objective, n)
+        if self.regime == "risk_parity":
+            vol = np.sqrt(diag)
+            inv_vol = 1.0 / vol
+            w = inv_vol / inv_vol.sum()
+            w = np.clip(w, self.min_weight, self.max_weight)
+            w /= w.sum()
+            return w, True
 
-    def _max_sharpe(self, mu: np.ndarray, cov: np.ndarray, n: int) -> tuple[np.ndarray, bool]:
-        """Maximise (w'μ - rf) / sqrt(w'Σw)."""
-        rf_daily = self.risk_free_rate / 252
-
-        def objective(w):
-            port_ret = mu @ w
-            port_vol = np.sqrt(w @ cov @ w)
-            if port_vol < 1e-12:
-                return 1e6
-            # Minimise negative Sharpe
-            return -(port_ret - rf_daily) / port_vol
-
-        return self._solve(objective, n)
-
-    def _risk_parity(self, cov: np.ndarray, n: int) -> tuple[np.ndarray, bool]:
-        """Equalise marginal risk contribution across strategies."""
-        target_risk = np.full(n, 1.0 / n)
-
-        def objective(w):
-            port_var = w @ cov @ w
-            if port_var < 1e-16:
-                return 1e6
-            marginal = cov @ w
-            risk_contrib = w * marginal / port_var
-            return float(np.sum((risk_contrib - target_risk) ** 2))
-
-        return self._solve(objective, n)
+        return np.full(n, 1.0 / n), False
 
     # ------------------------------------------------------------------
-    # Common solver wrapper
+    # scipy-based solvers for larger portfolios
     # ------------------------------------------------------------------
 
-    def _solve(self, objective, n: int) -> tuple[np.ndarray, bool]:
+    def _solve_scipy(self, mu: np.ndarray, cov: np.ndarray, n: int) -> tuple[np.ndarray, bool]:
+        """Dispatch to regime-specific scipy solver."""
+
+        if self.regime == "min_variance":
+
+            def obj(w):
+                return w @ cov @ w
+
+            return self._run_slsqp(obj, n)
+
+        if self.regime == "max_sharpe":
+            rf_daily = self.risk_free_rate / 252
+
+            def obj(w):
+                port_ret = mu @ w
+                port_vol = np.sqrt(w @ cov @ w)
+                if port_vol < 1e-12:
+                    return 1e6
+                return -(port_ret - rf_daily) / port_vol
+
+            return self._run_slsqp(obj, n)
+
+        if self.regime == "risk_parity":
+            target_risk = np.full(n, 1.0 / n)
+
+            def obj(w):
+                port_var = w @ cov @ w
+                if port_var < 1e-16:
+                    return 1e6
+                marginal = cov @ w
+                risk_contrib = w * marginal / port_var
+                return float(np.sum((risk_contrib - target_risk) ** 2))
+
+            return self._run_slsqp(obj, n)
+
+        # Fallback
+        return np.full(n, 1.0 / n), True
+
+    def _run_slsqp(self, objective, n: int) -> tuple[np.ndarray, bool]:
         """Run SLSQP with weight constraints."""
         x0 = np.full(n, 1.0 / n)
         bounds = [(self.min_weight, self.max_weight)] * n

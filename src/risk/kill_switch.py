@@ -94,6 +94,10 @@ class KillSwitch:
         if self._initial_capital:
             self._max_daily_loss = self._initial_capital * daily_loss_pct
 
+    @classmethod
+    def reset_singleton(cls) -> None:
+        cls._instance = None
+
     def reset(self, system=None) -> None:
         self._active = False
         self._reason = ""
