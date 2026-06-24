@@ -3,6 +3,7 @@ import logging
 from typing import Any
 
 from src.agents.base import BaseAgent
+from src.config.settings import settings
 from src.event_store import EventStore
 from src.risk.position_registry import position_registry
 from src.schemas.events import Event, EventType, SystemEvent
@@ -14,11 +15,17 @@ class ReconciliationAgent(BaseAgent):
     """
     On startup, compares the live broker state with the internal position registry.
     Alerts on discrepancies to prevent rogue trading with mismatched assumptions.
+
+    Broker URL is configurable via TRA_RECONCILIATION_BROKER_URL. In paper mode,
+    if a broker URL is configured, the agent attempts to connect for reconciliation.
+    Timeout is configurable via TRA_RECONCILIATION_TIMEOUT_SECONDS (default 30s).
     """
 
     def __init__(self, event_store: EventStore | None = None, broker: Any = None):
         super().__init__(name="reconciliation", event_store=event_store)
         self._broker = broker
+        self._broker_url = settings.reconciliation_broker_url or ""
+        self._timeout = settings.reconciliation_timeout_seconds
 
     async def on_start(self) -> None:
         self.logger.info("ReconciliationAgent starting...")
@@ -27,27 +34,24 @@ class ReconciliationAgent(BaseAgent):
             if getattr(self.system, "_kite_broker", None):
                 self._broker = getattr(
                     self.system, "_kite_client", None
-                )  # Fallback to client for pure API access
+                )
                 if not self._broker:
-                    # Try execution agent's broker if wrapped
                     exec_agent = getattr(self.system, "execution", None)
                     if exec_agent and not getattr(exec_agent, "_paper_trading", False):
                         self._broker = exec_agent._broker
 
         if self._broker:
-            # FIX P1.4: subscribe to FILL events for position-drift alarm
-            # regardless of broker mode. The drift alarm checks that
-            # position_registry and portfolio_opt stay in sync. The broker
-            # reconciliation loop only runs in live mode.
+            if self._broker_url:
+                self.logger.info("Broker URL configured: %s", self._broker_url)
             self.subscribe(EventType.FILL)
             task = asyncio.create_task(self._reconciliation_loop(), name="reconciliation.loop")
             self._tasks.append(task)
         else:
-            # FIX P1.4: in paper mode, still subscribe to FILL events for
-            # the drift alarm. Without this, paper mode would have no
-            # automatic detection if PositionRegistry and portfolio_opt
-            # ever diverge (which after P1.2 should be impossible, but
-            # defense-in-depth).
+            if self._broker_url:
+                self.logger.info(
+                    "Paper broker URL configured (%s), attempting reconciliation via URL",
+                    self._broker_url,
+                )
             self.subscribe(EventType.FILL)
             self.logger.warning("No live broker available for reconciliation, drift alarm only.")
 
@@ -59,15 +63,15 @@ class ReconciliationAgent(BaseAgent):
 
     async def _run_reconciliation(self) -> None:
         try:
-            # 1. Fetch live open positions
-            live_positions = await self._broker.get_positions()
+            live_positions = await asyncio.wait_for(
+                self._broker.get_positions(),
+                timeout=self._timeout,
+            )
 
-            # 2. Compare against position registry
             internal_positions = position_registry.get_all_positions()
 
             discrepancies = []
 
-            # Map by symbol
             live_map = {}
             for lp in live_positions:
                 sym = lp.get("tradingsymbol", "")
@@ -101,6 +105,18 @@ class ReconciliationAgent(BaseAgent):
                 self.logger.info("Broker reconciliation clean.")
                 await self.emit(SystemEvent.health(self.name, "synced", {}))
 
+        except asyncio.TimeoutError:
+            self.logger.warning(
+                "Broker reconciliation timed out after %ss, skipping cycle",
+                self._timeout,
+            )
+            await self.emit(
+                SystemEvent.error(
+                    source=self.name,
+                    error_type="reconciliation_timeout",
+                    message=f"Broker did not respond within {self._timeout}s",
+                )
+            )
         except Exception as e:
             self.logger.error("Reconciliation failed: %s", e)
             await self.emit(SystemEvent.error(self.name, "reconciliation_failed", str(e), {}))

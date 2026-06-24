@@ -37,7 +37,7 @@ async def test_native_stop_loss_attached_at_placement(broker_mock, tmp_path):
 
     # Simulate risk-approved signal that triggers place_order
     await agent.place_order(
-        instrument="RELIANCE",
+        instrument="TATACHEM",
         side=OrderSide.BUY,
         order_type=OrderType.MARKET,
         quantity=10,
@@ -51,7 +51,7 @@ async def test_native_stop_loss_attached_at_placement(broker_mock, tmp_path):
     broker_mock.place_order.assert_called_once()
     call_args = broker_mock.place_order.call_args[1]
 
-    assert call_args["tradingsymbol"] == "RELIANCE"
+    assert call_args["tradingsymbol"] == "TATACHEM"
     assert call_args["trigger_price"] == 2450.0
     assert call_args.get("variety") == "co"
 
@@ -136,7 +136,7 @@ async def test_broker_reject_fails_closed(broker_mock, tmp_path):
 
     with pytest.raises(Exception):
         await agent.place_order(
-            instrument="RELIANCE",
+            instrument="TATACHEM",
             side=OrderSide.BUY,
             order_type=OrderType.MARKET,
             quantity=10,
@@ -159,7 +159,7 @@ async def test_restart_restores_state(broker_mock, tmp_path):
 
     # We use a LIMIT order with a far away price so it doesn't get filled instantly
     order = await agent1.place_order(
-        instrument="RELIANCE",
+        instrument="TATACHEM",
         side=OrderSide.BUY,
         order_type=OrderType.LIMIT,
         quantity=10,

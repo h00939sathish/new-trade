@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Literal
 
 from pydantic import model_validator
@@ -12,14 +13,10 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    event_store_type: Literal["postgres", "sqlite", "kafka", "memory"] = "sqlite"
+    event_store_type: Literal["postgres", "sqlite", "memory"] = "sqlite"
     log_level: str = "INFO"
 
     postgres_dsn: str = "postgresql+asyncpg://trading:trading@localhost:5432/trading"
-
-    kafka_bootstrap_servers: str = "localhost:9092"
-    kafka_schema_registry_url: str = "http://localhost:8081"
-    kafka_group_id: str = "trading-system"
 
     redis_url: str = "redis://localhost:6379/0"
 
@@ -69,14 +66,23 @@ class Settings(BaseSettings):
     signal_cooldown_seconds: int = 120
 
     reflection_mutation_enabled: bool = False
+    reflection_require_human_approval: bool = True
+    reflection_approval_timeout_hours: int = 72
     reflection_backtest_gate_threshold: float = 0.0
     earnings_calendar_path: str = "config/earnings_calendar.yaml"
 
     timescaledb_enabled: bool = True
     risk_sizing_method: str = "fixed"  # "fixed" or "kelly"
-    risk_tax_lot_method: str = "average_cost"  # "average_cost", "fifo", or "specific_id"
+    risk_tax_lot_method: str = "average_cost"  # "average_cost", "fifo", "lifo", "hifo", or "specific_id"
     vault_provider: str = ""  # "", "vault", or "aws"
     pagerduty_routing_key: str = ""
+    pagerduty_enabled: bool = False
+    http_auth_token: str = ""
+    reconciliation_broker_url: str = ""
+    reconciliation_timeout_seconds: float = 30.0
+    rate_limit_global_per_second: int = 50
+    rate_limit_per_symbol_per_second: int = 10
+    rate_limit_queue_depth: int = 100
 
     portfolio_optimizer_regime: str = "risk_parity"
     portfolio_optimizer_max_weight: float = 0.40
@@ -93,6 +99,29 @@ class Settings(BaseSettings):
 
     yahoo_poll_interval: int = 60
     market_hours_only: bool = True
+
+    gold_etf_symbol: str = "GOLDBEES"
+    gold_futures_mcx_symbol: str = "GOLD"
+    mcx_lot_size_gold: int = 1
+
+    @model_validator(mode="after")
+    def check_credential_age(self) -> "Settings":
+        env_path = self.model_config.get("env_file", ".env")
+        if isinstance(env_path, str):
+            env_file = Path(env_path)
+            if env_file.exists():
+                from datetime import UTC, datetime
+
+                age_days = (datetime.now(UTC) - datetime.fromtimestamp(env_file.stat().st_mtime, tz=UTC)).days
+                if age_days > 90:
+                    import logging
+
+                    logging.getLogger("config.settings").warning(
+                        ".env file is %d days old (>90). Credentials may need rotation. "
+                        "See docs/security.md for rotation policy.",
+                        age_days,
+                    )
+        return self
 
     @model_validator(mode="after")
     def load_vault_secrets(self) -> "Settings":

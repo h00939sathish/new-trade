@@ -110,9 +110,19 @@ async def test_postgres_connect_is_idempotent(monkeypatch):
     class FakeConnection:
         def __init__(self):
             self.statements: list[str] = []
+            self._schema_version: int | None = None
 
-        async def execute(self, statement: str):
+        async def execute(self, statement: str, *args):
             self.statements.append(statement)
+            if statement.strip().upper().startswith("INSERT INTO _schema_version"):
+                self._schema_version = args[0] if args else 1
+
+        async def fetchrow(self, query: str, *args):
+            if "SELECT version FROM _schema_version" in query:
+                if self._schema_version is not None:
+                    return {"version": self._schema_version}
+                return None
+            return None
 
     class FakeAcquire:
         def __init__(self, connection: FakeConnection):

@@ -46,7 +46,6 @@ ml = [
     "torch>=2.3",
 ]
 streaming = [
-    "apache-flink>=1.19",
 ]
 dashboard = [
     "fastapi>=0.115",
@@ -56,6 +55,9 @@ vault = [
     "boto3>=1.34",
     "hvac>=2.0",
 ]
+
+[project.scripts]
+trade-journal = "src.export.trade_journal:main"
 
 [tool.ruff]
 line-length = 100

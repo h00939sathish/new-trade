@@ -56,7 +56,7 @@ async def test_twap_iceberg_execution():
 
     # Simulate a signal approval that should trigger TWAP with iceberg
     signal = {
-        "instrument": "RELIANCE",
+        "instrument": "TATACHEM",
         "direction": "long",
         "confidence": 0.9,
         "price": 2500.0,
@@ -84,7 +84,7 @@ async def test_twap_iceberg_execution():
     assert len(broker.orders) > 0
     first_order = broker.orders[0]
 
-    assert first_order["tradingsymbol"] == "RELIANCE"
+    assert first_order["tradingsymbol"] == "TATACHEM"
     assert first_order["quantity"] == 20
     assert first_order["disclosed_quantity"] == 2
 

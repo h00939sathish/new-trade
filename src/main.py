@@ -5,6 +5,7 @@ import signal
 from pathlib import Path
 
 from src.config.settings import settings
+from src.middleware.auth import require_auth
 from src.monitoring.dashboard import CliDashboard
 from src.monitoring.http_dashboard import HTML as DASHBOARD_HTML
 from src.monitoring.metrics import system_metrics
@@ -47,27 +48,9 @@ async def _handle_metrics_request(
     request_line = request_text.split("\r\n")[0]
     path = request_line.split(" ")[1] if len(request_line.split(" ")) > 1 else "/"
 
-    # Basic bearer token authentication
-    auth_token = os.environ.get("TRA_HTTP_AUTH_TOKEN", "")
-    if auth_token:
-        auth_header = ""
-        for line in request_text.split("\r\n"):
-            if line.lower().startswith("authorization:"):
-                auth_header = line.split(":", 1)[1].strip()
-                break
-        expected = f"Bearer {auth_token}"
-        if auth_header != expected:
-            body = b"Unauthorized"
-            response = (
-                "HTTP/1.1 401 Unauthorized\r\n"
-                "Content-Type: text/plain\r\n"
-                f"Content-Length: {len(body)}\r\n"
-                "\r\n"
-            ).encode() + body
-            writer.write(response)
-            await writer.drain()
-            writer.close()
-            return
+    auth_token = settings.http_auth_token
+    if not await require_auth(reader, writer, request_text, auth_token):
+        return
 
     import json
 
@@ -120,9 +103,57 @@ async def _handle_metrics_request(
     writer.close()
 
 
+async def _eod_snapshot_loop(system) -> None:
+    from datetime import UTC, datetime, time, timedelta
+
+    from src.risk.position_registry import position_registry
+
+    target_utc = time(10, 0)
+    gap_warn_pct = float(os.getenv("TRA_EOD_GAP_WARN_PCT", "0.05"))
+
+    while True:
+        now = datetime.now(UTC)
+        target_dt = datetime.combine(now.date(), target_utc, tzinfo=UTC)
+        if now > target_dt:
+            target_dt += timedelta(days=1)
+        sleep_secs = (target_dt - now).total_seconds()
+        await asyncio.sleep(sleep_secs)
+
+        snapshot = position_registry.get_overnight_snapshot()
+        if not snapshot:
+            logger.info("EOD snapshot: no open positions")
+            continue
+
+        from src.schemas.events import Event, EventMetadata, EventType
+
+        await system.event_store.publish(
+            Event(
+                event_type=EventType.EOD_POSITION_SNAPSHOT,
+                stream="risk.eod",
+                data={
+                    "positions": snapshot,
+                    "generated_at": datetime.now(UTC).isoformat(),
+                },
+                metadata=EventMetadata(producer="main.eod_snapshot"),
+            )
+        )
+
+        gap_risks = []
+        for instrument, pos in snapshot.items():
+            qty = abs(pos.get("quantity", 0))
+            if qty > 0:
+                gap_risks.append({"instrument": instrument, "quantity": qty})
+
+        if gap_risks:
+            logger.info(
+                "EOD snapshot: %d open positions, gap risk check warned at %.1f%%",
+                len(gap_risks),
+                gap_warn_pct * 100,
+            )
+
+
 async def main():
-    _auth_token = os.environ.get("TRA_HTTP_AUTH_TOKEN", "").strip()
-    if not _auth_token:
+    if not settings.http_auth_token.strip():
         mode = "LIVE" if settings.live_trading_enabled else "PAPER"
         raise RuntimeError(
             f"CRITICAL: TRA_HTTP_AUTH_TOKEN is empty ({mode} mode). "
@@ -131,7 +162,7 @@ async def main():
             "Refusing to start with exposed kill-switch and control endpoints."
         )
     system = TradingSystem()
-    watchlist = os.getenv("TRA_WATCHLIST", "RELIANCE,TCS,INFY,HDFCBANK").split(",")
+    watchlist = os.getenv("TRA_WATCHLIST", "RELIANCE,TCS,INFY,HDFCBANK,GOLDBEES").split(",")
     system.set_watchlist(watchlist)
     logger.info("Watchlist: %s", watchlist)
 
@@ -219,6 +250,10 @@ async def main():
             paper_mode,
         )
 
+    # Overnight position tracking: EOD snapshot at 15:30 IST (10:00 UTC)
+    eod_task = asyncio.create_task(_eod_snapshot_loop(system))
+    logger.info("EOD position snapshot loop started (target: 10:00 UTC / 15:30 IST)")
+
     loop = asyncio.get_event_loop()
     stop_event = asyncio.Event()
 
@@ -246,6 +281,8 @@ async def main():
         if burnin_task:
             burnin_task.cancel()
             all_tasks.append(burnin_task)
+        eod_task.cancel()
+        all_tasks.append(eod_task)
         if all_tasks:
             await asyncio.gather(*all_tasks, return_exceptions=True)
         await system.stop()

@@ -219,6 +219,20 @@ class KillSwitch:
                     qty,
                     side,
                 )
+                from src.risk.market_impact import MarketImpactModel
+
+                impact_model = MarketImpactModel()
+                impact_bps = impact_model.estimate_impact_bps(
+                    order_qty=abs(qty),
+                    avg_daily_volume=100_000,
+                    daily_volatility=0.02,
+                )
+                logger.warning(
+                    "Kill Switch: Estimated market impact for %s (qty=%d): %.2f bps",
+                    instrument,
+                    abs(qty),
+                    impact_bps,
+                )
                 try:
                     await exec_agent.place_order(
                         instrument=instrument,

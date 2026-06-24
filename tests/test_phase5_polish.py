@@ -7,28 +7,28 @@ from src.risk.position_registry import PositionRegistry
 
 class TestNseLotSizes:
     def test_known_symbol_rejects_invalid_qty(self):
-        passed, msg = validate_lot_size("RELIANCE", 100)
-        assert not passed
-        assert "lot size" in msg
+        result = validate_lot_size("RELIANCE", 100)
+        assert not result["valid"]
+        assert "lot size" in result["message"]
 
     def test_known_symbol_accepts_multiple(self):
-        passed, msg = validate_lot_size("RELIANCE", 250)
-        assert passed
-        assert "1 lot(s) of 250" in msg
+        result = validate_lot_size("RELIANCE", 250)
+        assert result["valid"]
+        assert "1 lot(s) of 250" in result["message"]
 
     def test_known_symbol_accepts_multiple_lots(self):
-        passed, msg = validate_lot_size("RELIANCE", 500)
-        assert passed
-        assert "2 lot(s) of 250" in msg
+        result = validate_lot_size("RELIANCE", 500)
+        assert result["valid"]
+        assert "2 lot(s) of 250" in result["message"]
 
     def test_unknown_symbol_passes(self):
-        passed, msg = validate_lot_size("UNKNOWN", 100)
-        assert passed
-        assert msg == ""
+        result = validate_lot_size("UNKNOWN", 100)
+        assert result["valid"]
+        assert result["message"] == ""
 
     def test_case_insensitive(self):
-        passed, msg = validate_lot_size("reliance", 250)
-        assert passed
+        result = validate_lot_size("reliance", 250)
+        assert result["valid"]
 
     def test_lot_sizes_are_positive(self):
         for symbol, size in NSE_LOT_SIZES.items():

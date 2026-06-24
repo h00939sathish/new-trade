@@ -127,7 +127,7 @@ class MultiNotifier(Notifier):
 
 def create_notifier() -> Notifier:
     notifiers: list[Notifier] = []
-    if settings.pagerduty_routing_key:
+    if settings.pagerduty_enabled and settings.pagerduty_routing_key:
         notifiers.append(PagerDutyNotifier(settings.pagerduty_routing_key))
     if settings.telegram_bot_token and settings.telegram_chat_id:
         notifiers.append(TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id))

@@ -1,8 +1,11 @@
-"""NSE F&O lot sizes for common derivatives instruments.
+"""Lot sizes for derivatives instruments across exchanges (NSE F&O, MCX).
 
-Lot sizes change periodically based on SEBI circulars. The primary source
+NSE lot sizes change periodically based on SEBI circulars. The primary source
 is the NSE contract specifications page:
 https://www.nseindia.com/regulations/market-readiness-fix-file-download
+
+MCX lot sizes are based on MCX contract specifications:
+https://www.mcxindia.com/products/gold-futures
 
 This table was last reviewed on 2026-06-21.
 """
@@ -68,19 +71,53 @@ NSE_LOT_SIZES: dict[str, int] = {
 }
 """NSE F&O lot sizes keyed by symbol (ticker without exchange suffix)."""
 
+# MCX commodity lot sizes
+# {symbol: lot_size}
+MCX_LOT_SIZES: dict[str, int] = {
+    "GOLD": 1,        # Gold (1kg) futures — 1 unit per lot
+    "GOLDM": 1,       # Gold Mini (100g) — 1 unit per lot
+    "GOLDGUINEA": 8,  # Gold Guinea (8g) — 8 units per lot
+    "PETROL": 1,
+    "CRUDEOIL": 100,
+    "NATURALGAS": 1200,
+    "SILVER": 30,
+    "SILVERM": 5,
+    "COPPER": 250,
+    "ZINC": 5000,
+    "LEAD": 5000,
+    "ALUMINIUM": 5000,
+}
 
-def validate_lot_size(symbol: str, quantity: int) -> tuple[bool, str]:
-    """Check whether ``quantity`` is a valid multiple of the NSE lot size.
 
-    Returns ``(is_valid, message)``. Instruments not in the table (cash
-    market) always pass.
+def get_lot_sizes_for_exchange(exchange: str) -> dict[str, int]:
+    """Return the lot size table for a given exchange."""
+    if exchange.upper() == "MCX":
+        return MCX_LOT_SIZES
+    return NSE_LOT_SIZES
+
+
+def validate_lot_size(
+    symbol: str,
+    quantity: int,
+    exchange: str = "NSE",
+) -> dict:
+    """Check whether ``quantity`` is a valid multiple of the exchange's lot size.
+
+    Returns a dict with ``valid``, ``lot_size``, and ``message`` keys.
+    Instruments not in the lot size table (cash market or unknown) always pass.
     """
-    lot_size = NSE_LOT_SIZES.get(symbol.upper())
+    lot_sizes = get_lot_sizes_for_exchange(exchange)
+    lot_size = lot_sizes.get(symbol.upper())
     if lot_size is None:
-        return True, ""
+        return {"valid": True, "lot_size": None, "message": ""}
     if quantity % lot_size != 0:
-        return (
-            False,
-            f"Quantity {quantity} is not a multiple of lot size {lot_size} for {symbol}",
-        )
-    return True, f"Quantity {quantity} is {quantity // lot_size} lot(s) of {lot_size}"
+        return {
+            "valid": False,
+            "lot_size": lot_size,
+            "message": f"Quantity {quantity} is not a multiple of lot size {lot_size} for {symbol} on {exchange}",
+        }
+    return {
+        "valid": True,
+        "lot_size": lot_size,
+        "message": f"Quantity {quantity} is {quantity // lot_size} lot(s) of {lot_size}",
+    }

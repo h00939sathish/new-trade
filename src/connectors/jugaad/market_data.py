@@ -6,11 +6,23 @@ from datetime import UTC, date, datetime, timedelta, timezone
 from typing import Any
 
 from src.connectors.jugaad.client import JugaadClient
+from src.schemas.events import Exchange
 
 logger = logging.getLogger("connector.jugaad.market_data")
 
 # IST timezone offset
 IST = timezone(timedelta(hours=5, minutes=30))
+
+# Exchange-specific market hours (open_hour, open_min, close_hour, close_min) IST
+_EXCHANGE_MARKET_HOURS: dict[str, tuple[int, int, int, int]] = {
+    Exchange.NSE: (9, 15, 15, 30),
+    Exchange.BSE: (9, 15, 15, 30),
+    Exchange.NFO: (9, 15, 15, 30),
+    Exchange.MCX: (10, 0, 17, 0),
+    Exchange.CDS: (9, 0, 17, 0),
+    Exchange.INDICES: (9, 15, 15, 30),
+}
+_DEFAULT_MARKET_HOURS = (9, 15, 15, 30)
 
 
 class JugaadMarketDataProvider:
@@ -258,9 +270,11 @@ class JugaadMarketDataProvider:
                 logger.error("OHLCV callback error for %s: %s", instrument, e)
 
     @staticmethod
-    def _is_market_hours() -> bool:
-        """Check if current time is within NSE market hours (IST 9:15 - 15:30)."""
+    def _is_market_hours(instrument: str = "") -> bool:
+        """Check if current time is within trading hours for the given instrument's exchange."""
         now_ist = datetime.now(IST)
-        market_open = now_ist.replace(hour=9, minute=15, second=0, microsecond=0)
-        market_close = now_ist.replace(hour=15, minute=30, second=0, microsecond=0)
+        exchange = instrument.split(":")[0].upper() if ":" in instrument else "NSE"
+        open_h, open_m, close_h, close_m = _EXCHANGE_MARKET_HOURS.get(exchange, _DEFAULT_MARKET_HOURS)
+        market_open = now_ist.replace(hour=open_h, minute=open_m, second=0, microsecond=0)
+        market_close = now_ist.replace(hour=close_h, minute=close_m, second=0, microsecond=0)
         return market_open <= now_ist <= market_close

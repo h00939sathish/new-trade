@@ -109,6 +109,8 @@ class PositionRegistry:
         Tax lot accounting respects ``settings.risk_tax_lot_method``:
         - ``average_cost`` (default) — blended avg_price (legacy behaviour).
         - ``fifo`` — cost basis from oldest lots on partial closes.
+        - ``lifo`` — cost basis from newest lots on partial closes.
+        - ``hifo`` — cost basis from highest-price lots on partial closes.
         - ``specific_id`` — requires ``lot_id`` on sell fills.
         """
         async with self._get_async_lock():
@@ -156,6 +158,28 @@ class PositionRegistry:
                             consumed_realized += debit * (fill_price - lot["price"])
                             if lot["qty"] == 0:
                                 self._lots[instrument].remove(lot)
+                            remaining -= debit
+                        elif self._tax_lot_method == "lifo":
+                            lot = self._lots[instrument][-1]
+                            debit = min(remaining, lot["qty"])
+                            lot["qty"] -= debit
+                            consumed_realized += debit * (fill_price - lot["price"])
+                            if lot["qty"] == 0:
+                                self._lots[instrument].pop(-1)
+                            remaining -= debit
+                        elif self._tax_lot_method == "hifo":
+                            lots_sorted = sorted(
+                                self._lots[instrument],
+                                key=lambda l: l["price"],
+                                reverse=True,
+                            )
+                            lot = lots_sorted[0]
+                            idx = self._lots[instrument].index(lot)
+                            debit = min(remaining, lot["qty"])
+                            lot["qty"] -= debit
+                            consumed_realized += debit * (fill_price - lot["price"])
+                            if lot["qty"] == 0:
+                                self._lots[instrument].pop(idx)
                             remaining -= debit
                         else:
                             lot = self._lots[instrument][0]

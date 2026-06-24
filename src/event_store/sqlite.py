@@ -11,6 +11,8 @@ from src.schemas.events import Event
 
 
 class SqliteEventStore(EventStore):
+    _SCHEMA_VERSION = 1
+
     def __init__(self, db_path: str | Path = "state/trading_events.db"):
         self.db_path = Path(db_path)
         self._conn: sqlite3.Connection | None = None
@@ -55,6 +57,20 @@ class SqliteEventStore(EventStore):
                     CREATE INDEX IF NOT EXISTS idx_events_type
                     ON events(event_type)
                 """)
+                self._conn.execute("""
+                    CREATE TABLE IF NOT EXISTS _schema_version (
+                        version INTEGER NOT NULL
+                    )
+                """)
+                row = self._conn.execute("SELECT version FROM _schema_version").fetchone()
+                if row is None:
+                    self._conn.execute("INSERT INTO _schema_version (version) VALUES (?)", (self._SCHEMA_VERSION,))
+                elif row["version"] != self._SCHEMA_VERSION:
+                    raise RuntimeError(
+                        f"SQLite event store schema version mismatch: "
+                        f"stored={row['version']}, expected={self._SCHEMA_VERSION}. "
+                        "Run migrations or recreate the database."
+                    )
                 self._conn.commit()
 
             await asyncio.to_thread(_conn_setup)

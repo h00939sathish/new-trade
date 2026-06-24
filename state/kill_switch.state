@@ -1,0 +1,9 @@
+{
+  "active": true,
+  "reason": "Daily loss limit breached: -6000.0 < -1000.0",
+  "triggered_date": "2026-06-21T18:22:00.392670+00:00",
+  "max_daily_loss": 1000.0,
+  "max_drawdown_pct": 0.05,
+  "initial_capital": 100000.0,
+  "auto_reset": false
+}

@@ -30,6 +30,7 @@ class EventType(StrEnum):
     AGENT_STATUS = "agent.status"
     MACRO_SENTIMENT = "macro.sentiment"
     STRATEGY_DECAY = "strategy.decay"
+    EOD_POSITION_SNAPSHOT = "risk.eod_snapshot"
 
 
 class OrderSide(StrEnum):
@@ -54,10 +55,20 @@ class OrderStatus(StrEnum):
     FILLED = "filled"
 
 
+INSUFFICIENT_MARGIN = "INSUFFICIENT_MARGIN"
+
+
 class ProductType(StrEnum):
     CNC = "cnc"
     NRML = "nrml"
     MIS = "mis"
+
+
+class AssetClass(StrEnum):
+    EQUITY = "EQUITY"
+    COMMODITY = "COMMODITY"
+    CURRENCY = "CURRENCY"
+    INDEX = "INDEX"
 
 
 class Exchange(StrEnum):
@@ -66,6 +77,7 @@ class Exchange(StrEnum):
     NFO = "NFO"
     MCX = "MCX"
     CDS = "CDS"
+    INDICES = "INDICES"
 
 
 class EventMetadata(BaseModel):

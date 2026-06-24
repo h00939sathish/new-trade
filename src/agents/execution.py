@@ -130,6 +130,14 @@ class ExecutionAgent(BaseAgent):
         self._recent_order_ids: set[str] = set()
         self._ack_timeout_seconds = float(os.environ.get("TRA_ORDER_ACK_TIMEOUT_SECONDS", "30"))
         self._ack_pending: dict[str, float] = {}
+        from src.execution.throttle import MultiKeyTokenBucket
+
+        self._throttle = MultiKeyTokenBucket(
+            global_rate=settings.rate_limit_global_per_second,
+            per_key_rate=settings.rate_limit_per_symbol_per_second,
+        )
+        self._throttle_queue_depth = settings.rate_limit_queue_depth
+        self._throttle_queue: dict[str, asyncio.Event] = {}
 
     def _get_db_lock(self):
         if self._db_lock is None:
@@ -926,13 +934,19 @@ class ExecutionAgent(BaseAgent):
                 for oid in timed_out:
                     self._ack_pending.pop(oid, None)
                     self.logger.warning("Order %s not acknowledged within timeout", oid)
-                    from src.schemas.events import SystemEvent
+                    from src.schemas.events import Event, EventMetadata, SystemEvent
 
                     await self.emit(
-                        SystemEvent.error(
-                            component=self.name,
-                            error=f"order_ack_timeout: {oid}",
-                            fatal=False,
+                        Event(
+                            event_type=EventType.ORDER_UNACKED,
+                            stream=f"execution.order.{oid}",
+                            data={
+                                "order_id": oid,
+                                "ack_timeout_seconds": self._ack_timeout_seconds,
+                                "instrument": None,
+                                "side": None,
+                            },
+                            metadata=EventMetadata(producer=self.name),
                         )
                     )
                     from src.monitoring.metrics import system_metrics
@@ -958,6 +972,28 @@ class ExecutionAgent(BaseAgent):
         strategy: str = "unknown",
         idempotency_key: str | None = None,
     ) -> OrderEvent:
+        # Rate limit check (per-symbol + global token bucket)
+        if not await self._throttle.acquire(instrument):
+            if len(self._throttle_queue) < self._throttle_queue_depth:
+                self._throttle_queue.setdefault(instrument, asyncio.Event())
+                queued = await self._throttle.wait_and_acquire(
+                    instrument, timeout=5.0
+                )
+                if not queued:
+                    self.logger.warning(
+                        "Rate limit exceeded for %s, order queued then timed out",
+                        instrument,
+                    )
+                    self._throttle_queue.pop(instrument, None)
+                    raise ValueError(f"Rate limit exceeded for {instrument}")
+                self._throttle_queue.pop(instrument, None)
+            else:
+                self.logger.warning(
+                    "Rate limit queue full for %s, order rejected",
+                    instrument,
+                )
+                raise ValueError(f"Rate limit queue full for {instrument}")
+
         # Duplicate order protection: check idempotency key in paper mode
         if idempotency_key and idempotency_key in self._recent_order_ids:
             self.logger.warning(
@@ -1080,6 +1116,22 @@ class ExecutionAgent(BaseAgent):
                     "price": price,
                     "is_reducing": is_reducing,
                     "paper_trading": self._paper_trading,
+                },
+            }
+        )
+
+        from src.risk.nse_lot_sizes import validate_lot_size
+
+        lot_exchange = order.instrument.split(":")[0].upper() if ":" in order.instrument else "NSE"
+        lot_check = validate_lot_size(order.instrument, order.quantity, exchange=lot_exchange)
+        checks.append(
+            {
+                "name": "lot_size",
+                "passed": lot_check["valid"],
+                "details": {
+                    "quantity": order.quantity,
+                    "lot_size": lot_check.get("lot_size"),
+                    "message": lot_check.get("message", ""),
                 },
             }
         )

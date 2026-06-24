@@ -7,6 +7,10 @@ logger = logging.getLogger("connector.yahoo")
 EXCHANGE_MAP = {
     "NSE": ".NS",
     "BSE": ".BO",
+    "MCX": ".MCX",
+    "NYSE": "",
+    "NASDAQ": "",
+    "CME": "",
 }
 
 

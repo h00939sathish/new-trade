@@ -1,8 +1,12 @@
+import asyncio
+import os
 from collections import defaultdict
 from datetime import UTC, datetime
 from typing import Any
 
 from src.agents.base import BaseAgent
+from src.config.settings import settings
+from src.execution.circuit_breaker import CircuitBreaker
 from src.schemas.events import (
     Event,
     EventType,
@@ -24,6 +28,17 @@ class MarketIntelAgent(BaseAgent):
         self._candle_buffer: dict[str, list[dict[str, Any]]] = defaultdict(list)
         self._max_buffer_size = 500
         self._rejection_count: dict[str, int] = defaultdict(int)
+        self._data_stale: bool = False
+        self._data_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(
+            maxsize=int(os.getenv("TRA_MARKET_DATA_QUEUE_SIZE", "10000")),
+        )
+        self._dropped_ticks: int = 0
+        self._queue_processor_task: asyncio.Task | None = None
+        self._circuit_breaker = CircuitBreaker(
+            name="market_data",
+            failure_threshold=int(os.getenv("TRA_CIRCUIT_BREAKER_THRESHOLD", "3")),
+            cooldown_seconds=float(os.getenv("TRA_CIRCUIT_BREAKER_COOLDOWN", "60")),
+        )
 
     async def on_start(self) -> None:
         provider_name = (
@@ -45,6 +60,9 @@ class MarketIntelAgent(BaseAgent):
             await self._load_historical_data()
         else:
             self.logger.warning("No market data provider configured — agent will be passive")
+        self._queue_processor_task = asyncio.create_task(
+            self._queue_processor(), name="market_intel.queue_processor"
+        )
         self._emit_market_data()
 
     def add_instrument(self, instrument: str) -> None:
@@ -215,6 +233,10 @@ class MarketIntelAgent(BaseAgent):
                 "latest_ticks": len(self._latest_ticks),
                 "latest_ohlcv": len(self._latest_ohlcv),
                 "live_data": self._market_data_provider is not None,
+                "circuit_breaker_state": self._circuit_breaker.state.value,
+                "data_stale": self._data_stale,
+                "queue_fill_pct": round(self._data_queue.qsize() / max(self._data_queue.maxsize, 1) * 100, 1),
+                "dropped_ticks": self._dropped_ticks,
             }
         )
         return base
@@ -246,23 +268,30 @@ class MarketIntelAgent(BaseAgent):
         if not self._validate_tick(instrument, last_price):
             return
 
+        self._circuit_breaker.record_success()
+        self._data_stale = False
+
         self.logger.debug(
             "Tick received: %s @ %.2f (vol=%s)",
             instrument,
             last_price,
             data.get("volume"),
         )
-        await self.ingest_tick(
-            instrument=data["instrument"],
-            exchange=Exchange(data["exchange"]),
-            last_price=data["last_price"],
-            volume=data.get("volume"),
-            bid=data.get("bid"),
-            ask=data.get("ask"),
-            depth=data.get("depth"),
-        )
+        data["_type"] = "tick"
+        try:
+            self._data_queue.put_nowait(data)
+        except asyncio.QueueFull:
+            self._dropped_ticks += 1
+            self.logger.warning(
+                "Market data queue full, dropping tick for %s (total dropped: %d)",
+                instrument,
+                self._dropped_ticks,
+            )
 
     async def _on_provider_ohlcv(self, data: dict[str, Any]) -> None:
+        self._circuit_breaker.record_success()
+        self._data_stale = False
+
         self.logger.debug(
             "OHLCV received: %s [%s] O=%.2f H=%.2f L=%.2f C=%.2f V=%s",
             data.get("instrument"),
@@ -273,16 +302,45 @@ class MarketIntelAgent(BaseAgent):
             data.get("close", 0),
             data.get("volume", 0),
         )
-        await self.ingest_ohlcv(
-            instrument=data["instrument"],
-            exchange=Exchange(data["exchange"]),
-            interval=data.get("interval", "minute"),
-            open=data.get("open", 0.0),
-            high=data.get("high", 0.0),
-            low=data.get("low", 0.0),
-            close=data.get("close", 0.0),
-            volume=data.get("volume", 0),
-        )
+        data["_type"] = "ohlcv"
+        try:
+            self._data_queue.put_nowait(data)
+        except asyncio.QueueFull:
+            self._dropped_ticks += 1
+            self.logger.warning(
+                "Market data queue full, dropping OHLCV for %s (total dropped: %d)",
+                data.get("instrument"),
+                self._dropped_ticks,
+            )
+
+    async def _queue_processor(self) -> None:
+        while self._running:
+            data = await self._data_queue.get()
+            try:
+                dtype = data.pop("_type", None)
+                if dtype == "tick":
+                    await self.ingest_tick(
+                        instrument=data["instrument"],
+                        exchange=Exchange(data["exchange"]),
+                        last_price=data["last_price"],
+                        volume=data.get("volume"),
+                        bid=data.get("bid"),
+                        ask=data.get("ask"),
+                        depth=data.get("depth"),
+                    )
+                elif dtype == "ohlcv":
+                    await self.ingest_ohlcv(
+                        instrument=data["instrument"],
+                        exchange=Exchange(data["exchange"]),
+                        interval=data.get("interval", "minute"),
+                        open=data.get("open", 0.0),
+                        high=data.get("high", 0.0),
+                        low=data.get("low", 0.0),
+                        close=data.get("close", 0.0),
+                        volume=data.get("volume", 0),
+                    )
+            except Exception as e:
+                self.logger.error("Queue processor error: %s", e, exc_info=True)
 
     async def _load_historical_data(self) -> None:
         if not hasattr(self._market_data_provider, "get_historical"):

@@ -3,6 +3,7 @@ import logging
 import os
 import re
 import time
+import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -48,6 +49,7 @@ class ReflectionEngineAgent(BaseAgent):
         self._candidates: dict[str, Any] = {}
         self._candidates_path = Path("config/candidates.yaml")
         self._load_candidates()
+        self._review_queue: dict[str, dict[str, Any]] = {}
 
     def _load_candidates(self) -> None:
         if self._candidates_path.exists():
@@ -169,6 +171,7 @@ class ReflectionEngineAgent(BaseAgent):
         return FillEvent(**event.model_dump())
 
     async def _run_reflection_cycle(self) -> None:
+        self._prune_expired_mutations()
         self.logger.info(
             "Reflection cycle triggered (%d fills accumulated)",
             len(self._fill_buffer),
@@ -430,6 +433,38 @@ class ReflectionEngineAgent(BaseAgent):
         if not strategy_name or not param_changes:
             return
 
+        if settings.reflection_require_human_approval:
+            mutation_id = f"mut_{uuid.uuid4().hex[:12]}"
+            self._review_queue[mutation_id] = {
+                "strategy": strategy_name,
+                "params": param_changes,
+                "hypothesis": hypothesis,
+                "result_sharpe": round(result.sharpe_ratio, 3) if hasattr(result, "sharpe_ratio") else 0.0,
+                "result_pnl": round(result.total_pnl, 2) if hasattr(result, "total_pnl") else 0.0,
+                "submitted_at": datetime.now(UTC).isoformat(),
+                "status": "pending",
+            }
+            self.logger.info(
+                "Mutation enqueued for human approval (id=%s): %s params=%s",
+                mutation_id,
+                strategy_name,
+                param_changes,
+            )
+            await self.emit(
+                SystemEvent.health(
+                    component=self.name,
+                    status="mutation_pending_approval",
+                    details={
+                        "mutation_id": mutation_id,
+                        "strategy": strategy_name,
+                        "params": param_changes,
+                        "sharpe": round(result.sharpe_ratio, 3),
+                        "pnl": round(result.total_pnl, 2),
+                    },
+                )
+            )
+            return
+
         self.logger.info(
             "Applying mutation: %s params=%s",
             strategy_name,
@@ -464,6 +499,48 @@ class ReflectionEngineAgent(BaseAgent):
                 )
             )
             self.logger.info("Mutation applied and committed: %s", strategy_name)
+
+    async def approve_mutation(self, mutation_id: str) -> bool:
+        entry = self._review_queue.get(mutation_id)
+        if not entry or entry.get("status") != "pending":
+            return False
+
+        cfg = load_yaml_config(self._strategy_config_path)
+        strategy_name = entry["strategy"]
+        if strategy_name in cfg.get("strategies", {}):
+            cfg["strategies"][strategy_name]["params"].update(entry["params"])
+            save_yaml_config(self._strategy_config_path, cfg)
+
+        entry["status"] = "approved"
+        self._review_queue.pop(mutation_id, None)
+        self.logger.info("Mutation %s approved and applied: %s", mutation_id, strategy_name)
+        return True
+
+    async def reject_mutation(self, mutation_id: str) -> bool:
+        entry = self._review_queue.get(mutation_id)
+        if not entry or entry.get("status") != "pending":
+            return False
+        entry["status"] = "rejected"
+        self._review_queue.pop(mutation_id, None)
+        self.logger.info("Mutation %s rejected: %s", mutation_id, entry["strategy"])
+        return True
+
+    def _prune_expired_mutations(self) -> None:
+        timeout_hours = settings.reflection_approval_timeout_hours
+        now = datetime.now(UTC)
+        expired = []
+        for mid, entry in self._review_queue.items():
+            if entry.get("status") != "pending":
+                continue
+            submitted = entry.get("submitted_at")
+            if submitted:
+                age = (now - datetime.fromisoformat(submitted)).total_seconds() / 3600
+                if age > timeout_hours:
+                    expired.append(mid)
+        for mid in expired:
+            entry = self._review_queue.pop(mid, None)
+            if entry:
+                self.logger.info("Mutation %s expired (age > %dh): %s", mid, timeout_hours, entry["strategy"])
 
     async def health(self) -> dict[str, Any]:
         base = await super().health()

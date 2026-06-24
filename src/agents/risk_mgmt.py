@@ -7,18 +7,46 @@ from src.agents.base import BaseAgent
 from src.config.settings import settings
 from src.monitoring.latency_tracer import tracer
 from src.schemas.events import (
+    AssetClass,
     Event,
     EventType,
+    Exchange,
     RiskCheckEvent,
 )
 
 # IST timezone offset
 _IST = timezone(timedelta(hours=5, minutes=30))
-# NSE market hours
-_MARKET_OPEN_HOUR, _MARKET_OPEN_MIN = 9, 15
-_MARKET_CLOSE_HOUR, _MARKET_CLOSE_MIN = 15, 30
+# NSE market hours (equities)
+_NSE_OPEN_HOUR, _NSE_OPEN_MIN = 9, 15
+_NSE_CLOSE_HOUR, _NSE_CLOSE_MIN = 15, 30
+# MCX market hours (commodities 10:00-17:00 IST)
+_MCX_OPEN_HOUR, _MCX_OPEN_MIN = 10, 0
+_MCX_CLOSE_HOUR, _MCX_CLOSE_MIN = 17, 0
 # Auto square-off warning before close
 _SQUARE_OFF_HOUR, _SQUARE_OFF_MIN = 15, 15
+
+_EXCHANGE_MARKET_HOURS: dict[str, tuple[int, int, int, int]] = {
+    Exchange.NSE: (_NSE_OPEN_HOUR, _NSE_OPEN_MIN, _NSE_CLOSE_HOUR, _NSE_CLOSE_MIN),
+    Exchange.BSE: (_NSE_OPEN_HOUR, _NSE_OPEN_MIN, _NSE_CLOSE_HOUR, _NSE_CLOSE_MIN),
+    Exchange.NFO: (_NSE_OPEN_HOUR, _NSE_OPEN_MIN, _NSE_CLOSE_HOUR, _NSE_CLOSE_MIN),
+    Exchange.MCX: (_MCX_OPEN_HOUR, _MCX_OPEN_MIN, _MCX_CLOSE_HOUR, _MCX_CLOSE_MIN),
+    Exchange.CDS: (_NSE_OPEN_HOUR, _NSE_OPEN_MIN, _NSE_CLOSE_HOUR, _NSE_CLOSE_MIN),
+    Exchange.INDICES: (_NSE_OPEN_HOUR, _NSE_OPEN_MIN, _NSE_CLOSE_HOUR, _NSE_CLOSE_MIN),
+}
+
+_DEFAULT_MARKET_HOURS = (_NSE_OPEN_HOUR, _NSE_OPEN_MIN, _NSE_CLOSE_HOUR, _NSE_CLOSE_MIN)
+
+
+def _exchange_from_instrument(instrument: str) -> str:
+    """Extract exchange prefix from an instrument string (e.g. 'MCX:GOLD' -> 'MCX')."""
+    if ":" in instrument:
+        return instrument.split(":")[0].upper()
+    return Exchange.NSE
+
+
+def _market_hours_for_instrument(instrument: str) -> tuple[int, int, int, int]:
+    exchange = _exchange_from_instrument(instrument)
+    return _EXCHANGE_MARKET_HOURS.get(exchange, _DEFAULT_MARKET_HOURS)
 
 
 class RiskManagementAgent(BaseAgent):
@@ -76,25 +104,30 @@ class RiskManagementAgent(BaseAgent):
             case EventType.RISK_BREACH:
                 self.logger.warning("Risk breach: %s", event.data)
 
-    def _is_market_hours(self, current_time: datetime | None = None) -> bool:
-        """Check if current time is within NSE trading hours (9:15-15:30 IST)."""
+    def _is_market_hours(
+        self,
+        current_time: datetime | None = None,
+        instrument: str | None = None,
+    ) -> bool:
+        """Check if current time is within trading hours for the given instrument's exchange."""
         now_ist = current_time.astimezone(_IST) if current_time else datetime.now(_IST)
+        open_h, open_m, close_h, close_m = _market_hours_for_instrument(instrument or "")
         market_open = now_ist.replace(
-            hour=_MARKET_OPEN_HOUR,
-            minute=_MARKET_OPEN_MIN,
+            hour=open_h,
+            minute=open_m,
             second=0,
             microsecond=0,
         )
         market_close = now_ist.replace(
-            hour=_MARKET_CLOSE_HOUR,
-            minute=_MARKET_CLOSE_MIN,
+            hour=close_h,
+            minute=close_m,
             second=0,
             microsecond=0,
         )
         return market_open <= now_ist <= market_close
 
     def _is_square_off_window(self, current_time: datetime | None = None) -> bool:
-        """Check if we're in the auto-square-off window (15:15-15:30 IST)."""
+        """Check if we're in the auto-square-off window (NSE: 15:15-15:30 IST)."""
         now_ist = current_time.astimezone(_IST) if current_time else datetime.now(_IST)
         square_off = now_ist.replace(
             hour=_SQUARE_OFF_HOUR,
@@ -103,8 +136,8 @@ class RiskManagementAgent(BaseAgent):
             microsecond=0,
         )
         market_close = now_ist.replace(
-            hour=_MARKET_CLOSE_HOUR,
-            minute=_MARKET_CLOSE_MIN,
+            hour=_NSE_CLOSE_HOUR,
+            minute=_NSE_CLOSE_MIN,
             second=0,
             microsecond=0,
         )
@@ -482,37 +515,12 @@ class RiskManagementAgent(BaseAgent):
         if not hasattr(self, "_price_history"):
             self._price_history: dict[str, deque[float]] = {}
         history = self._price_history.get(instrument, [])
-        if len(history) < 20:
-            return self._check("var_95", True, {"reason": "insufficient data"})
-        returns = []
-        h = list(history)
-        for i in range(1, len(h)):
-            if h[i - 1] > 0:
-                returns.append((h[i] - h[i - 1]) / h[i - 1])
-        if len(returns) < 20:
-            return self._check("var_95", True, {"reason": "insufficient returns"})
-        sorted_ret = sorted(returns)
-        var_idx = max(0, int(len(sorted_ret) * 0.05) - 1)
-        var_95 = abs(sorted_ret[var_idx])
-        # Use actual last tracked price instead of hardcoded multiplier
         last_price = float(history[-1]) if history else 1000.0
         position_value = abs(self._positions.get(instrument, 0)) * last_price
-        var_loss = position_value * var_95
-        # Per-symbol VaR limit: configurable via TRA_RISK_MAX_VAR_PER_SYMBOL (default 5% of capital)
-        max_var_pct = float(os.environ.get("TRA_RISK_MAX_VAR_PER_SYMBOL", "0.05"))
-        max_var_loss = self._capital * max_var_pct
-        return self._check(
-            "var_95",
-            var_loss <= max_var_loss,
-            {
-                "var_95_pct": var_95,
-                "position_value": position_value,
-                "var_loss": var_loss,
-                "max_var_loss": max_var_loss,
-                "max_var_pct": max_var_pct,
-                "returns_sample": len(returns),
-            },
-        )
+        from src.risk.var import check_var_limit, compute_var_95
+
+        var_result = compute_var_95(history, position_value)
+        return check_var_limit(var_result, self._capital)
 
     async def _check_liquidity_risk(self, instrument: str) -> dict[str, Any]:
         """Check if instrument has sufficient recent volume/liquidity."""

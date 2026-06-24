@@ -15,6 +15,8 @@ logger = logging.getLogger("event_store.postgres")
 
 
 class PostgresEventStore(EventStore):
+    _SCHEMA_VERSION = 1
+
     def __init__(self, dsn: str):
         self.dsn = dsn.replace("postgresql+asyncpg://", "postgresql://")
         self._pool: asyncpg.Pool | None = None
@@ -54,6 +56,24 @@ class PostgresEventStore(EventStore):
                         CREATE INDEX IF NOT EXISTS idx_events_type
                         ON events(event_type)
                     """)
+                    await conn.execute("""
+                        CREATE TABLE IF NOT EXISTS _schema_version (
+                            version INTEGER NOT NULL
+                        )
+                    """)
+                    row = await conn.fetchrow("SELECT version FROM _schema_version")
+                    if row is None:
+                        await conn.execute(
+                            "INSERT INTO _schema_version (version) VALUES ($1)",
+                            self._SCHEMA_VERSION,
+                        )
+                    elif row["version"] != self._SCHEMA_VERSION:
+                        await pool.close()
+                        raise RuntimeError(
+                            f"Postgres event store schema version mismatch: "
+                            f"stored={row['version']}, expected={self._SCHEMA_VERSION}. "
+                            "Run migrations or recreate the database."
+                        )
                     if settings.timescaledb_enabled:
                         try:
                             await conn.execute("""

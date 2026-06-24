@@ -342,6 +342,26 @@ class MetricsCollector:
             "peak_capital": self._peak_capital,
         }
 
+    def _circuit_breaker_state(self, system=None) -> int:
+        if system and hasattr(system, "market_intel") and system.market_intel:
+            cb = getattr(system.market_intel, "_circuit_breaker", None)
+            if cb:
+                state = cb.state.value
+                return 0 if state == "closed" else (1 if state == "half_open" else 2)
+        return 0
+
+    def _queue_fill_pct(self, system=None) -> float:
+        if system and hasattr(system, "market_intel") and system.market_intel:
+            q = getattr(system.market_intel, "_data_queue", None)
+            if q and q.maxsize > 0:
+                return round(q.qsize() / q.maxsize * 100, 1)
+        return 0.0
+
+    def _dropped_ticks_count(self, system=None) -> int:
+        if system and hasattr(system, "market_intel") and system.market_intel:
+            return getattr(system.market_intel, "_dropped_ticks", 0)
+        return 0
+
     def prometheus_text(self, system=None) -> str:
         snapshot = self.snapshot()
         lines = [
@@ -436,6 +456,12 @@ class MetricsCollector:
                 f"trading_event_rate {snapshot['event_rate']}",
                 f"trading_kill_switch_active {kill_active}",
                 f"trading_broker_connected {broker_connected}",
+                "",
+                "# HELP trading_circuit_breaker_state Circuit breaker state (0=closed, 1=half_open, 2=open)",
+                "# TYPE trading_circuit_breaker_state gauge",
+                f"trading_circuit_breaker_state {self._circuit_breaker_state(system)}",
+                f"trading_market_data_queue_fill_pct {self._queue_fill_pct(system)}",
+                f"trading_market_data_dropped_ticks {self._dropped_ticks_count(system)}",
             ]
         )
         return "\n".join(lines) + "\n"

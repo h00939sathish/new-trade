@@ -55,7 +55,20 @@ async def run_paper_reconciliation_loop(
     system: Any,
     path: Path,
     interval_seconds: float = 30 * 60,
+    timeout_seconds: float = 30.0,
 ) -> None:
+    loop = asyncio.get_running_loop()
     while True:
-        write_paper_reconciliation_snapshot(system, path)
+        try:
+            await asyncio.wait_for(
+                loop.run_in_executor(None, write_paper_reconciliation_snapshot, system, path),
+                timeout=timeout_seconds,
+            )
+        except asyncio.TimeoutError:
+            import logging
+
+            logging.getLogger("burnin").warning(
+                "Paper reconciliation snapshot timed out after %ss, skipping cycle",
+                timeout_seconds,
+            )
         await asyncio.sleep(interval_seconds)

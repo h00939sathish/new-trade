@@ -163,7 +163,7 @@ async def test_execution_paper_trading(execution: ExecutionAgent):
         instrument="RELIANCE",
         side=OrderSide.BUY,
         order_type=OrderType.MARKET,
-        quantity=10,
+        quantity=250,
         product=ProductType.MIS,
     )
     health = await execution.health()
