@@ -135,12 +135,18 @@ class OandaClient:
         client_order_id: str | None = None,
         stop_loss: float | None = None,
         take_profit: float | None = None,
+        price: float | None = None,
+        trigger_price: float | None = None,
     ) -> dict[str, Any]:
         order_spec = {
             "type": order_type,
             "instrument": instrument,
             "units": abs(units) if side == "buy" else -abs(units),
         }
+        if price is not None:
+            order_spec["price"] = str(price)
+        if trigger_price is not None and order_type in ("STOP", "STOP_LOSS"):
+            order_spec["price"] = str(trigger_price)
         if client_order_id:
             order_spec["clientOrderID"] = client_order_id
         if stop_loss is not None:

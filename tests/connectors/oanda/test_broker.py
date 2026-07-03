@@ -2,6 +2,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from src.connectors.oanda.client import OandaClient
 from src.schemas.events import Exchange, OrderSide, OrderType, ProductType
 
 
@@ -27,6 +28,23 @@ class TestOandaBroker:
             price=None,
         )
         assert order_id == "12345"
+
+    @pytest.mark.asyncio
+    async def test_place_limit_order_passes_price(self):
+        from src.connectors.oanda.broker import OandaBroker
+
+        client = MagicMock(spec=OandaClient)
+        client.place_order.return_value = {"orderCreateTransaction": {"id": "LIMIT123"}}
+        broker = OandaBroker(client)
+        order_id = await broker.place_order(
+            tradingsymbol="XAU_USD", exchange=Exchange.FX, side=OrderSide.BUY,
+            order_type=OrderType.LIMIT, quantity=10, product=ProductType.NRML,
+            price=2350.0,
+        )
+        assert order_id == "LIMIT123"
+        client.place_order.assert_called_once()
+        _, kwargs = client.place_order.call_args
+        assert kwargs.get("price") == 2350.0
 
     @pytest.mark.asyncio
     async def test_cancel_order(self):

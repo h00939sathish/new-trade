@@ -1,14 +1,13 @@
 import asyncio
 import logging
-from typing import Any
-
+from src.connectors.oanda.client import OandaClient
 from src.schemas.events import Exchange, OrderSide, OrderType, ProductType
 
 logger = logging.getLogger(__name__)
 
 
 class OandaBroker:
-    def __init__(self, client: Any):
+    def __init__(self, client: OandaClient):
         self._client = client
 
     async def place_order(
@@ -23,7 +22,6 @@ class OandaBroker:
         trigger_price: float | None = None,
         variety: str = "market",
         tag: str | None = None,
-        disclosed_quantity: int | None = None,
     ) -> str:
         oanda_side = "buy" if side == OrderSide.BUY else "sell"
         oanda_type = "MARKET" if order_type == OrderType.MARKET else "LIMIT" if order_type == OrderType.LIMIT else "STOP"
@@ -34,6 +32,8 @@ class OandaBroker:
             side=oanda_side,
             order_type=oanda_type,
             client_order_id=tag,
+            price=price,
+            trigger_price=trigger_price,
         )
         txn = result.get("orderCreateTransaction", result)
         order_id = txn.get("id") or txn.get("orderID", "")
