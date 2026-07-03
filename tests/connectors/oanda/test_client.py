@@ -154,7 +154,6 @@ class TestOandaClient:
         heartbeat_line = '{"type":"HEARTBEAT","time":"2026-07-03T00:00:01Z"}'
 
         mock_stream = MagicMock()
-        mock_stream.aiter_lines.return_value = AsyncMock(side_effect=[[price_line, heartbeat_line]])
 
         # We need aiter_lines to be async iterable
         async def aiter_lines():

@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 OANDA_ENVIRONMENTS = {
     "practice": {"rest": "https://api-fxpractice.oanda.com/v3", "stream": "https://stream-fxpractice.oanda.com/v3"},
-    "live": {"rest": "https://api-fxoanda.com/v3", "stream": "https://stream-fxoanda.com/v3"},
+    "live": {"rest": "https://api-fxtrade.oanda.com/v3", "stream": "https://stream-fxtrade.oanda.com/v3"},
 }
 
 
@@ -155,9 +155,8 @@ class OandaClient:
         return data.get("orders", [])
 
     def get_pending_orders(self) -> list[dict[str, Any]]:
-        data = self._get(f"/accounts/{self.account_id}/orders")
-        all_orders = data.get("orders", [])
-        return [o for o in all_orders if o.get("state") == "PENDING"]
+        data = self._get(f"/accounts/{self.account_id}/orders", params={"state": "PENDING"})
+        return data.get("orders", [])
 
     def cancel_order(self, order_id: str) -> dict[str, Any]:
         return self._delete(f"/accounts/{self.account_id}/orders/{order_id}")
@@ -183,7 +182,7 @@ class OandaClient:
     # --- Transactions ---
 
     def get_transactions_since(self, since_id: str) -> list[dict[str, Any]]:
-        data = self._get(f"/accounts/{self.account_id}/transactions?id={since_id}")
+        data = self._get(f"/accounts/{self.account_id}/transactions/sinceid?id={since_id}")
         return data.get("transactions", [])
 
     def get_transaction(self, txn_id: str) -> dict[str, Any]:
