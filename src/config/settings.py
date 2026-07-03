@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Literal
 
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -109,6 +109,15 @@ class Settings(BaseSettings):
     oanda_environment: str = "practice"
     oanda_enabled_instruments: str = "XAU_USD,EUR_USD"
     oanda_execution_mode: str = "internal_simulation"
+
+    @field_validator("oanda_environment")
+    @classmethod
+    def validate_oanda_environment(cls, v: str) -> str:
+        if v == "live":
+            raise ValueError("Live OANDA environment is not supported. Use 'practice'.")
+        if v not in ("practice", "live"):
+            raise ValueError(f"Invalid OANDA environment: '{v}'. Must be 'practice' or 'live'.")
+        return v
 
     @model_validator(mode="after")
     def check_credential_age(self) -> "Settings":
