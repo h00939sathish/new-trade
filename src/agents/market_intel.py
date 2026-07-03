@@ -97,6 +97,7 @@ class MarketIntelAgent(BaseAgent):
         bid: float | None = None,
         ask: float | None = None,
         depth: dict[str, list[dict[str, Any]]] | None = None,
+        timestamp: Any = None,
     ) -> None:
         event = TickEvent.create(
             instrument=instrument,
@@ -108,6 +109,20 @@ class MarketIntelAgent(BaseAgent):
             depth=depth,
             producer=self.name,
         )
+        if timestamp is not None:
+            from datetime import UTC, datetime
+
+            if isinstance(timestamp, str):
+                try:
+                    event.timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                except ValueError:
+                    pass
+            elif isinstance(timestamp, datetime):
+                event.timestamp = timestamp
+
+            if event.timestamp.tzinfo is None:
+                event.timestamp = event.timestamp.replace(tzinfo=UTC)
+
         self._latest_ticks[instrument] = event
         await self.emit(event)
 

@@ -1,0 +1,170 @@
+### Task 9: Backtest FX Support via Yahoo Finance
+
+**Files:**
+- Modify: `src/connectors/backtest_provider.py` — extend `fetch_historical_1m_candles` for FX symbols
+
+Yahoo FX symbols: `XAUUSD=X`, `EURUSD=X`. The existing `fetch_historical_1m_candles` appends `.NS`/`.BO` suffix for NSE/BSE. For FX, no suffix is needed, but we need to detect FX exchange and skip the suffix.
+
+- [ ] **Step 1: Write failing test**
+
+```python
+# tests/connectors/test_backtest_provider_fx.py
+import pytest
+
+class TestBacktestProviderFX:
+    @pytest.mark.asyncio
+    async def test_fetch_fx_candles_no_suffix(self):
+        from src.connectors.backtest_provider import fetch_historical_1m_candles
+        candles = await fetch_historical_1m_candles("XAUUSD=X", exchange="FX", days=1)
+        assert len(candles) > 0
+        assert "open" in candles[0]
+        assert "high" in candles[0]
+        assert "low" in candles[0]
+        assert "close" in candles[0]
+```
+
+- [ ] **Step 2: Run test**
+
+```bash
+cd D:\projects\new\trade && python -m pytest tests/connectors/test_backtest_provider_fx.py -v 2>&1 | tail -10
+```
+
+- [ ] **Step 3: Modify fetch_historical_1m_candles to handle FX**
+
+In `src/connectors/backtest_provider.py`, lines 299-301:
+
+```python
+exchange_map = {"NSE": ".NS", "BSE": ".BO", "FX": ""}
+suffix = exchange_map.get(exchange, "")
+```
+
+Also add FX exchange handling to `BacktestDataProvider.get_backtest_ticks()` - when exchange is "FX", skip the NSE-specific data fetches and go directly to Yahoo:
+
+In `get_backtest_ticks`, around line 50-60, the existing logic tries `self._provider.get_historical()` first, then falls back to Yahoo. For FX, skip the provider call and go directly to Yahoo.
+
+- [ ] **Step 4: Run tests**
+
+```bash
+cd D:\projects\new\trade && python -m pytest tests/connectors/test_backtest_provider_fx.py -v 2>&1 | tail -10
+cd D:\projects\new\trade && python -m pytest tests/ -x -q --no-header 2>&1 | tail -5
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/connectors/backtest_provider.py tests/connectors/test_backtest_provider_fx.py
+git commit -m "feat(backtest): add FX symbol support for XAU/USD and EUR/USD via Yahoo"
+```
+
+---
+
+### Task 10: End-to-End Backtest Validation with FX Symbols
+
+**Files:**
+- Create: `scripts/run_system_backtest_oanda.py`
+
+This script adapts the existing `scripts/run_system_backtest_single.py` for FX. It:
+1. Uses `BacktestDataProvider` with exchange="FX"
+2. Fetches XAU/USD and EUR/USD historical data from Yahoo
+3. Runs the full pipeline (MarketIntel → StrategyGen → RiskMgmt → Execution)
+4. Reports fills, PnL, and signal counts
+
+- [ ] **Step 1: Write the script**
+
+Copy the existing backtest script pattern from `scripts/run_system_backtest_single.py` and adapt for FX:
+
+```python
+# scripts/run_system_backtest_oanda.py
+"""
+Backtest OANDA FX instruments (XAU/USD, EUR/USD) using Yahoo Finance data.
+"""
+import asyncio
+import logging
+import sys
+from datetime import UTC, datetime
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+logger = logging.getLogger("backtest_oanda")
+
+SYMBOLS = ["XAUUSD=X", "EURUSD=X"]
+DAYS = 30
+
+
+async def main():
+    from src.config.settings import settings
+    from src.schemas.events import Exchange
+
+    # Use FX-specific strategy config
+    from src.config.oanda_profiles import load_oanda_profile
+    xau_config = load_oanda_profile("XAU_USD")
+    eur_config = load_oanda_profile("EUR_USD")
+
+    logger.info("Starting FX backtest for %s (%d days)", SYMBOLS, DAYS)
+
+    # Build system
+    from src.system import TradingSystem
+    system = TradingSystem()
+
+    # Set exchange and instruments
+    system.market_intel.set_exchange(Exchange.FX)
+    for sym in SYMBOLS:
+        system.market_intel.add_instrument(sym)
+
+    # Set FX-specific strategy config on strategy_gen
+    from src.config.strategy_config import build_strategies_from_config
+    system.strategy_gen._load_default_strategies = lambda: None
+    for sym, config in [("XAUUSD=X", xau_config), ("EURUSD=X", eur_config)]:
+        strategies = build_strategies_from_config(config)
+        for s in strategies:
+            system.strategy_gen.register_strategy(s)
+
+    # Start
+    await system.start()
+
+    # Fetch and inject FX candles
+    from src.connectors.backtest_provider import fetch_historical_1m_candles
+    for sym in SYMBOLS:
+        candles = await fetch_historical_1m_candles(sym, exchange="FX", days=DAYS)
+        logger.info("Fetched %d candles for %s", len(candles), sym)
+        for c in candles:
+            await system.inject_ohlcv(
+                instrument=sym,
+                interval="minute",
+                open=c["open"],
+                high=c["high"],
+                low=c["low"],
+                close=c["close"],
+                volume=c.get("volume", 0),
+                exchange="FX",
+                timestamp=c.get("timestamp"),
+            )
+
+    # Print results
+    print("\n=== BACKTEST RESULTS ===")
+    for sym in SYMBOLS:
+        pos = position_registry.get_position(sym)
+        print(f"{sym}: qty={pos['quantity']}, pnl={pos.get('unrealized_pnl', 0):.2f}")
+
+    await system.stop()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+- [ ] **Step 2: Test the script runs**
+
+```bash
+cd D:\projects\new\trade && python scripts/run_system_backtest_oanda.py 2>&1 | tail -30
+```
+
+Expected: Script runs, fetches FX data, reports signal/fill counts and PnL.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add scripts/run_system_backtest_oanda.py
+git commit -m "feat(backtest): add FX backtest script for XAU/USD and EUR/USD"
+```
+
+---

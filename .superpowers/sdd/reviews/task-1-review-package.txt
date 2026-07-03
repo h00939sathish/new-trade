@@ -1,0 +1,38 @@
+Commits between bf658a6..HEAD:
+de8c480 feat(oanda): add Exchange.FX and OANDA settings
+
+Diff stat:
+ src/config/settings.py | 6 ++++++
+ src/schemas/events.py  | 1 +
+ 2 files changed, 7 insertions(+)
+
+Full diff:
+diff --git a/src/config/settings.py b/src/config/settings.py
+index e747771..f118602 100644
+--- a/src/config/settings.py
++++ b/src/config/settings.py
+@@ -104,6 +104,12 @@ class Settings(BaseSettings):
+     gold_futures_mcx_symbol: str = "GOLD"
+     mcx_lot_size_gold: int = 1
+ 
++    oanda_api_key: str = ""
++    oanda_account_id: str = ""
++    oanda_environment: str = "practice"
++    oanda_enabled_instruments: str = "XAU_USD,EUR_USD"
++    oanda_execution_mode: str = "internal_simulation"
++
+     @model_validator(mode="after")
+     def check_credential_age(self) -> "Settings":
+         env_path = self.model_config.get("env_file", ".env")
+diff --git a/src/schemas/events.py b/src/schemas/events.py
+index 8204db3..6691ff6 100644
+--- a/src/schemas/events.py
++++ b/src/schemas/events.py
+@@ -78,6 +78,7 @@ class Exchange(StrEnum):
+     MCX = "MCX"
+     CDS = "CDS"
+     INDICES = "INDICES"
++    FX = "FX"
+ 
+ 
+ class EventMetadata(BaseModel):

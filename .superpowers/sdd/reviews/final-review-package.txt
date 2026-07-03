@@ -1,0 +1,1470 @@
+Branch: master (started at bf658a6)
+
+=== ALL COMMITS ===
+31a4a57 test(oanda): add edge case and integration tests
+150ea48 fix(oanda): address M15 trend review findings (DX rename, chronology, lookahead, warm period)
+b4ac2f1 feat(oanda): add M15 trend confirmation with EMA+ADX
+5f1edd2 fix(oanda): pass price/trigger_price for LIMIT/STOP orders
+55fd7e1 feat(oanda): add OANDA broker adapter
+923109b fix(oanda): remove unused AsyncMock import in test
+7d5131f fix(oanda): address review findings for market data provider
+fd11db9 feat(oanda): add OANDA market data provider
+d83b0e9 fix(oanda): address review findings for OANDA client
+f99e988 feat(oanda): add OANDA v20 REST client
+0602cfb fix(oanda): validate oanda_environment rejects live at settings layer
+de8c480 feat(oanda): add Exchange.FX and OANDA settings
+
+
+=== FILES CHANGED ===
+ src/config/settings.py                     |  17 ++-
+ src/connectors/oanda/__init__.py           |   5 +
+ src/connectors/oanda/broker.py             |  57 ++++++++
+ src/connectors/oanda/client.py             | 195 ++++++++++++++++++++++++++
+ src/connectors/oanda/market_data.py        | 172 +++++++++++++++++++++++
+ src/schemas/events.py                      |   1 +
+ src/strategies/m15_trend.py                | 123 +++++++++++++++++
+ tests/connectors/oanda/test_broker.py      | 100 ++++++++++++++
+ tests/connectors/oanda/test_client.py      | 179 ++++++++++++++++++++++++
+ tests/connectors/oanda/test_integration.py |  55 ++++++++
+ tests/connectors/oanda/test_market_data.py |  39 ++++++
+ tests/fixtures/oanda/candles_xau_usd.json  |   1 +
+ tests/fixtures/oanda/instruments.json      |   1 +
+ tests/risk/test_oanda_sizing.py            | 162 ++++++++++++++++++++++
+ tests/strategies/__init__.py               |   0
+ tests/strategies/test_m15_trend.py         | 215 +++++++++++++++++++++++++++++
+ 16 files changed, 1321 insertions(+), 1 deletion(-)
+
+
+=== FULL DIFF ===
+diff --git a/src/config/settings.py b/src/config/settings.py
+index e747771..ceaba1f 100644
+--- a/src/config/settings.py
++++ b/src/config/settings.py
+@@ -1,7 +1,7 @@
+ from pathlib import Path
+ from typing import Literal
+ 
+-from pydantic import model_validator
++from pydantic import field_validator, model_validator
+ from pydantic_settings import BaseSettings, SettingsConfigDict
+ 
+ 
+@@ -104,6 +104,21 @@ class Settings(BaseSettings):
+     gold_futures_mcx_symbol: str = "GOLD"
+     mcx_lot_size_gold: int = 1
+ 
++    oanda_api_key: str = ""
++    oanda_account_id: str = ""
++    oanda_environment: str = "practice"
++    oanda_enabled_instruments: str = "XAU_USD,EUR_USD"
++    oanda_execution_mode: str = "internal_simulation"
++
++    @field_validator("oanda_environment")
++    @classmethod
++    def validate_oanda_environment(cls, v: str) -> str:
++        if v == "live":
++            raise ValueError("Live OANDA environment is not supported. Use 'practice'.")
++        if v not in ("practice", "live"):
++            raise ValueError(f"Invalid OANDA environment: '{v}'. Must be 'practice' or 'live'.")
++        return v
++
+     @model_validator(mode="after")
+     def check_credential_age(self) -> "Settings":
+         env_path = self.model_config.get("env_file", ".env")
+diff --git a/src/connectors/oanda/__init__.py b/src/connectors/oanda/__init__.py
+new file mode 100644
+index 0000000..cb6cb69
+--- /dev/null
++++ b/src/connectors/oanda/__init__.py
+@@ -0,0 +1,5 @@
++from src.connectors.oanda.broker import OandaBroker
++from src.connectors.oanda.client import OandaClient
++from src.connectors.oanda.market_data import OandaMarketDataProvider
++
++__all__ = ["OandaBroker", "OandaClient", "OandaMarketDataProvider"]
+diff --git a/src/connectors/oanda/broker.py b/src/connectors/oanda/broker.py
+new file mode 100644
+index 0000000..6ac09ae
+--- /dev/null
++++ b/src/connectors/oanda/broker.py
+@@ -0,0 +1,57 @@
++import asyncio
++import logging
++from src.connectors.oanda.client import OandaClient
++from src.schemas.events import Exchange, OrderSide, OrderType, ProductType
++
++logger = logging.getLogger(__name__)
++
++
++class OandaBroker:
++    def __init__(self, client: OandaClient):
++        self._client = client
++
++    async def place_order(
++        self,
++        tradingsymbol: str,
++        exchange: Exchange,
++        side: OrderSide,
++        order_type: OrderType,
++        quantity: int,
++        product: ProductType,
++        price: float | None = None,
++        trigger_price: float | None = None,
++        variety: str = "market",
++        tag: str | None = None,
++    ) -> str:
++        oanda_side = "buy" if side == OrderSide.BUY else "sell"
++        oanda_type = "MARKET" if order_type == OrderType.MARKET else "LIMIT" if order_type == OrderType.LIMIT else "STOP"
++        result = await asyncio.to_thread(
++            self._client.place_order,
++            instrument=tradingsymbol,
++            units=quantity,
++            side=oanda_side,
++            order_type=oanda_type,
++            client_order_id=tag,
++            price=price,
++            trigger_price=trigger_price,
++        )
++        txn = result.get("orderCreateTransaction", result)
++        order_id = txn.get("id") or txn.get("orderID", "")
++        logger.info("OANDA order placed: %s %s %d (orderID=%s)", oanda_side, tradingsymbol, quantity, order_id)
++        return order_id
++
++    async def cancel_order(self, order_id: str) -> dict[str, Any]:
++        logger.info("Cancelling OANDA order: %s", order_id)
++        return await asyncio.to_thread(self._client.cancel_order, order_id)
++
++    async def get_orders(self) -> list[dict[str, Any]]:
++        return await asyncio.to_thread(self._client.get_orders)
++
++    async def get_order(self, order_id: str) -> dict[str, Any]:
++        return await asyncio.to_thread(self._client.get_order, order_id)
++
++    async def get_positions(self) -> list[dict[str, Any]]:
++        return await asyncio.to_thread(self._client.get_positions)
++
++    async def get_open_trades(self) -> list[dict[str, Any]]:
++        return await asyncio.to_thread(self._client.get_open_trades)
+diff --git a/src/connectors/oanda/client.py b/src/connectors/oanda/client.py
+new file mode 100644
+index 0000000..fd112c2
+--- /dev/null
++++ b/src/connectors/oanda/client.py
+@@ -0,0 +1,195 @@
++import json
++import logging
++from typing import Any, AsyncGenerator
++
++import httpx
++
++logger = logging.getLogger(__name__)
++
++OANDA_ENVIRONMENTS = {
++    "practice": {"rest": "https://api-fxpractice.oanda.com/v3", "stream": "https://stream-fxpractice.oanda.com/v3"},
++    "live": {"rest": "https://api-fxtrade.oanda.com/v3", "stream": "https://stream-fxtrade.oanda.com/v3"},
++}
++
++
++class OandaClient:
++    def __init__(self, api_key: str, account_id: str, environment: str = "practice"):
++        if environment not in OANDA_ENVIRONMENTS:
++            raise ValueError(f"Invalid OANDA environment: {environment}. Must be 'practice' or 'live'.")
++        if environment == "live":
++            raise ValueError("Live OANDA environment is not supported in this implementation.")
++        self.api_key = api_key
++        self.account_id = account_id
++        self.environment = environment
++        urls = OANDA_ENVIRONMENTS[environment]
++        self._rest_url = urls["rest"]
++        self._stream_url = urls["stream"]
++        self._headers = {
++            "Authorization": f"Bearer {api_key}",
++            "Content-Type": "application/json",
++            "Accept": "application/json",
++        }
++
++    def _url(self, path: str) -> str:
++        return f"{self._rest_url}{path}"
++
++    def _get(self, path: str, params: dict | None = None) -> dict[str, Any]:
++        with httpx.Client(timeout=30) as http:
++            resp = http.get(self._url(path), headers=self._headers, params=params)
++            resp.raise_for_status()
++            return resp.json()
++
++    def _post(self, path: str, data: dict) -> dict[str, Any]:
++        with httpx.Client(timeout=30) as http:
++            resp = http.post(self._url(path), headers=self._headers, json=data)
++            resp.raise_for_status()
++            return resp.json()
++
++    def _patch(self, path: str, data: dict) -> dict[str, Any]:
++        with httpx.Client(timeout=30) as http:
++            resp = http.patch(self._url(path), headers=self._headers, json=data)
++            resp.raise_for_status()
++            return resp.json()
++
++    def _delete(self, path: str) -> dict[str, Any]:
++        with httpx.Client(timeout=30) as http:
++            resp = http.delete(self._url(path), headers=self._headers)
++            resp.raise_for_status()
++            return resp.json()
++
++    # --- Account ---
++
++    def get_account_summary(self) -> dict[str, Any]:
++        return self._get(f"/accounts/{self.account_id}")
++
++    # --- Instruments ---
++
++    def get_instruments(self) -> list[dict[str, Any]]:
++        data = self._get(f"/accounts/{self.account_id}/instruments")
++        return data.get("instruments", [])
++
++    # --- Candles ---
++
++    def get_candles(
++        self,
++        instrument: str,
++        granularity: str = "M1",
++        count: int = 500,
++        from_time: str | None = None,
++        to_time: str | None = None,
++        include_first: bool = False,
++    ) -> list[dict[str, Any]]:
++        params = {"granularity": granularity, "count": min(count, 5000), "includeFirst": str(include_first).lower()}
++        if from_time:
++            params["from"] = from_time
++        if to_time:
++            params["to"] = to_time
++        data = self._get(f"/accounts/{self.account_id}/instruments/{instrument}/candles", params=params)
++        return data.get("candles", [])
++
++    def get_candle_bid_ask(
++        self,
++        instrument: str,
++        granularity: str = "M1",
++        count: int = 500,
++        from_time: str | None = None,
++        to_time: str | None = None,
++    ) -> list[dict[str, Any]]:
++        params = {
++            "granularity": granularity,
++            "count": min(count, 5000),
++            "price": "BA",
++            "includeFirst": "false",
++        }
++        if from_time:
++            params["from"] = from_time
++        if to_time:
++            params["to"] = to_time
++        data = self._get(f"/accounts/{self.account_id}/instruments/{instrument}/candles", params=params)
++        return data.get("candles", [])
++
++    # --- Pricing ---
++
++    async def stream_pricing(self, instruments: list[str]) -> AsyncGenerator[dict[str, Any], None]:
++        params = {"instruments": ",".join(instruments)}
++        url = f"{self._stream_url}/accounts/{self.account_id}/pricing/stream"
++        async with httpx.AsyncClient(timeout=None) as http:
++            async with http.stream("GET", url, headers=self._headers, params=params) as resp:
++                resp.raise_for_status()
++                async for line in resp.aiter_lines():
++                    if not line.strip():
++                        continue
++                    try:
++                        yield json.loads(line)
++                    except json.JSONDecodeError:
++                        logger.warning("Failed to decode pricing stream line: %s", line[:100])
++
++    # --- Orders ---
++
++    def place_order(
++        self,
++        instrument: str,
++        units: int,
++        side: str = "buy",
++        order_type: str = "MARKET",
++        client_order_id: str | None = None,
++        stop_loss: float | None = None,
++        take_profit: float | None = None,
++        price: float | None = None,
++        trigger_price: float | None = None,
++    ) -> dict[str, Any]:
++        order_spec = {
++            "type": order_type,
++            "instrument": instrument,
++            "units": abs(units) if side == "buy" else -abs(units),
++        }
++        if price is not None:
++            order_spec["price"] = str(price)
++        if trigger_price is not None and order_type in ("STOP", "STOP_LOSS"):
++            order_spec["price"] = str(trigger_price)
++        if client_order_id:
++            order_spec["clientOrderID"] = client_order_id
++        if stop_loss is not None:
++            order_spec["stopLossOnFill"] = {"price": str(stop_loss)}
++        if take_profit is not None:
++            order_spec["takeProfitOnFill"] = {"price": str(take_profit)}
++        data = {"order": order_spec}
++        return self._post(f"/accounts/{self.account_id}/orders", data)
++
++    def get_orders(self) -> list[dict[str, Any]]:
++        data = self._get(f"/accounts/{self.account_id}/orders")
++        return data.get("orders", [])
++
++    def get_pending_orders(self) -> list[dict[str, Any]]:
++        data = self._get(f"/accounts/{self.account_id}/orders", params={"state": "PENDING"})
++        return data.get("orders", [])
++
++    def cancel_order(self, order_id: str) -> dict[str, Any]:
++        return self._delete(f"/accounts/{self.account_id}/orders/{order_id}")
++
++    def get_order(self, order_id: str) -> dict[str, Any]:
++        return self._get(f"/accounts/{self.account_id}/orders/{order_id}")
++
++    # --- Positions ---
++
++    def get_positions(self) -> list[dict[str, Any]]:
++        data = self._get(f"/accounts/{self.account_id}/positions")
++        return data.get("positions", [])
++
++    def get_position(self, instrument: str) -> dict[str, Any]:
++        return self._get(f"/accounts/{self.account_id}/positions/{instrument}")
++
++    # --- Trades (open positions) ---
++
++    def get_open_trades(self) -> list[dict[str, Any]]:
++        data = self._get(f"/accounts/{self.account_id}/trades")
++        return data.get("trades", [])
++
++    # --- Transactions ---
++
++    def get_transactions_since(self, since_id: str) -> list[dict[str, Any]]:
++        data = self._get(f"/accounts/{self.account_id}/transactions/sinceid?id={since_id}")
++        return data.get("transactions", [])
++
++    def get_transaction(self, txn_id: str) -> dict[str, Any]:
++        return self._get(f"/accounts/{self.account_id}/transactions/{txn_id}")
+diff --git a/src/connectors/oanda/market_data.py b/src/connectors/oanda/market_data.py
+new file mode 100644
+index 0000000..0fde8b2
+--- /dev/null
++++ b/src/connectors/oanda/market_data.py
+@@ -0,0 +1,172 @@
++import asyncio
++import logging
++from collections import defaultdict
++from datetime import UTC, datetime, timedelta
++from typing import Any, Callable
++
++logger = logging.getLogger(__name__)
++
++
++class OandaMarketDataProvider:
++    def __init__(
++        self,
++        client: Any | None = None,
++        on_tick: Callable | None = None,
++        on_ohlcv: Callable | None = None,
++    ):
++        self._client = client
++        self._on_tick = on_tick
++        self._on_ohlcv = on_ohlcv
++        self._instruments: list[str] = []
++        self._exchange_map: dict[str, str] = {}
++        self._running = False
++        self._tasks: list[asyncio.Task] = []
++        self._last_candle_time: dict[str, str] = {}
++        self._candle_buffer: dict[str, list[dict[str, Any]]] = defaultdict(list)
++
++    def set_tick_callback(self, callback: Callable) -> None:
++        self._on_tick = callback
++
++    def set_ohlcv_callback(self, callback: Callable) -> None:
++        self._on_ohlcv = callback
++
++    def add_instrument(self, tradingsymbol: str, exchange: str = "FX") -> None:
++        if tradingsymbol not in self._instruments:
++            self._instruments.append(tradingsymbol)
++            self._exchange_map[tradingsymbol] = exchange
++
++    def remove_instrument(self, tradingsymbol: str) -> None:
++        if tradingsymbol in self._instruments:
++            self._instruments.remove(tradingsymbol)
++            self._exchange_map.pop(tradingsymbol, None)
++
++    async def start(self, poll_interval: float = 1.0) -> None:
++        if self._running:
++            return
++        if not self._client:
++            logger.warning("OANDA market data provider: no client configured")
++            return
++        self._running = True
++        self._tasks = [
++            asyncio.create_task(self._backfill_and_stream()),
++        ]
++
++    async def stop(self) -> None:
++        self._running = False
++        for task in self._tasks:
++            task.cancel()
++        await asyncio.gather(*self._tasks, return_exceptions=True)
++        self._tasks.clear()
++
++    async def _backfill_and_stream(self) -> None:
++        try:
++            await self._backfill_historical()
++        except Exception as e:
++            logger.warning("OANDA historical backfill failed: %s", e)
++        await self._stream_pricing()
++
++    async def _backfill_historical(self) -> None:
++        for instrument in self._instruments:
++            try:
++                candles = self._client.get_candles(instrument, granularity="M1", count=500)
++                for c in candles:
++                    ohlcv = self._parse_candle(instrument, c)
++                    if ohlcv and self._on_ohlcv:
++                        if asyncio.iscoroutinefunction(self._on_ohlcv):
++                            await self._on_ohlcv(ohlcv)
++                        else:
++                            self._on_ohlcv(ohlcv)
++                    ts = c.get("time", "")
++                    if ts:
++                        self._last_candle_time[instrument] = ts
++                logger.info("Backfilled %d M1 candles for %s", len(candles), instrument)
++            except Exception as e:
++                logger.error("Failed to backfill %s: %s", instrument, e)
++
++    async def _stream_pricing(self) -> None:
++        if not self._instruments:
++            return
++        try:
++            async for tick in self._client.stream_pricing(self._instruments):
++                if not self._running:
++                    break
++                await self._process_pricing_tick(tick)
++        except Exception as e:
++            logger.error("Pricing stream error: %s", e)
++
++    async def _process_pricing_tick(self, tick: dict[str, Any]) -> None:
++        tick_type = tick.get("type")
++        if tick_type == "PRICE":
++            instrument = tick.get("instrument", "")
++            if instrument not in self._instruments:
++                return
++            bid = float(tick.get("bids", [{}])[0].get("price", 0)) if tick.get("bids") else None
++            ask = float(tick.get("asks", [{}])[0].get("price", 0)) if tick.get("asks") else None
++            midpoint = (bid + ask) / 2 if bid and ask else None
++            ts_str = tick.get("time", "")
++            if self._on_tick:
++                payload = {
++                    "instrument": instrument,
++                    "exchange": self._exchange_map.get(instrument, "FX"),
++                    "last_price": midpoint or 0,
++                    "bid": bid,
++                    "ask": ask,
++                    "spread": round(ask - bid, 5) if bid and ask else None,
++                    "timestamp": ts_str,
++                }
++                if asyncio.iscoroutinefunction(self._on_tick):
++                    await self._on_tick(payload)
++                else:
++                    self._on_tick(payload)
++        elif tick_type == "HEARTBEAT":
++            logger.debug("OANDA pricing heartbeat: %s", tick.get("time", ""))
++
++    def _parse_candle(self, instrument: str, candle: dict[str, Any]) -> dict[str, Any] | None:
++        mid = candle.get("mid", {})
++        o = mid.get("o")
++        h = mid.get("h")
++        lo = mid.get("l")
++        c = mid.get("c")
++        v = candle.get("volume", 0)
++        ts = candle.get("time", "")
++        if not all([o, h, lo, c]):
++            return None
++        return {
++            "instrument": instrument,
++            "exchange": self._exchange_map.get(instrument, "FX"),
++            "open": float(o),
++            "high": float(h),
++            "low": float(lo),
++            "close": float(c),
++            "volume": float(v),
++            "timestamp": ts,
++        }
++
++    async def get_historical(
++        self,
++        tradingsymbol: str,
++        interval_minutes: int = 1,
++        days: int = 7,
++        exchange: str = "FX",
++    ) -> list[dict[str, Any]]:
++        if not self._client:
++            return []
++        granularity = self._minutes_to_granularity(interval_minutes)
++        to_time = datetime.now(UTC)
++        from_time = to_time - timedelta(days=days)
++        candles = self._client.get_candles(
++            tradingsymbol, granularity=granularity, count=5000,
++            from_time=from_time.isoformat().replace("+00:00", "Z"),
++            to_time=to_time.isoformat().replace("+00:00", "Z"),
++        )
++        result = []
++        for c in candles:
++            parsed = self._parse_candle(tradingsymbol, c)
++            if parsed:
++                result.append(parsed)
++        return result
++
++    @staticmethod
++    def _minutes_to_granularity(minutes: int) -> str:
++        mapping = {1: "M1", 5: "M5", 15: "M15", 30: "M30", 60: "H1", 120: "H2", 240: "H4", 1440: "D"}
++        return mapping.get(minutes, "M1")
+diff --git a/src/schemas/events.py b/src/schemas/events.py
+index 8204db3..6691ff6 100644
+--- a/src/schemas/events.py
++++ b/src/schemas/events.py
+@@ -78,6 +78,7 @@ class Exchange(StrEnum):
+     MCX = "MCX"
+     CDS = "CDS"
+     INDICES = "INDICES"
++    FX = "FX"
+ 
+ 
+ class EventMetadata(BaseModel):
+diff --git a/src/strategies/m15_trend.py b/src/strategies/m15_trend.py
+new file mode 100644
+index 0000000..417386b
+--- /dev/null
++++ b/src/strategies/m15_trend.py
+@@ -0,0 +1,123 @@
++import math
++from datetime import UTC, datetime
++from typing import Any
++
++
++def _round_to_m15(dt: datetime) -> datetime:
++    minute = dt.minute // 15 * 15
++    return dt.replace(minute=minute, second=0, microsecond=0)
++
++
++def _ema(values: list[float], period: int) -> float | None:
++    if len(values) < period:
++        return None
++    k = 2.0 / (period + 1)
++    ema = sum(values[:period]) / period
++    for v in values[period:]:
++        ema = (v - ema) * k + ema
++    return ema
++
++
++def _dx(
++    highs: list[float], lows: list[float], closes: list[float], period: int = 14
++) -> float | None:
++    if len(closes) < period + 1:
++        return None
++    tr_sum = 0.0
++    dm_plus_sum = 0.0
++    dm_minus_sum = 0.0
++    for i in range(1, period + 1):
++        tr = max(
++            highs[i] - lows[i],
++            abs(highs[i] - closes[i - 1]),
++            abs(lows[i] - closes[i - 1]),
++        )
++        tr_sum += tr
++        up_move = highs[i] - highs[i - 1]
++        down_move = lows[i - 1] - lows[i]
++        dm_plus_sum += up_move if up_move > down_move and up_move > 0 else 0
++        dm_minus_sum += down_move if down_move > up_move and down_move > 0 else 0
++    if tr_sum == 0:
++        return None
++    di_plus = 100 * dm_plus_sum / tr_sum
++    di_minus = 100 * dm_minus_sum / tr_sum
++    dx = (
++        100 * abs(di_plus - di_minus) / (di_plus + di_minus)
++        if (di_plus + di_minus) > 0
++        else 0
++    )
++    return dx
++
++
++class M15TrendConfirmation:
++    def __init__(self, ema_period: int = 20, adx_period: int = 14):
++        self._ema_period = ema_period
++        self._adx_period = adx_period
++        self._m15_bars: list[dict[str, Any]] = []
++
++    def update(self, candle: dict[str, Any]) -> None:
++        ts = candle["timestamp"]
++        if isinstance(ts, str):
++            ts = datetime.fromisoformat(ts.replace("Z", "+00:00"))
++        if ts.tzinfo is None:
++            ts = ts.replace(tzinfo=UTC)
++        bucket_key = _round_to_m15(ts)
++
++        if self._m15_bars and self._m15_bars[-1]["timestamp"] == bucket_key:
++            bar = self._m15_bars[-1]
++            bar["high"] = max(bar["high"], candle["high"])
++            bar["low"] = min(bar["low"], candle["low"])
++            bar["close"] = candle["close"]
++            bar["volume"] = bar.get("volume", 0) + candle.get("volume", 0)
++        else:
++            inserted = False
++            for i, bar in enumerate(self._m15_bars):
++                if bar["timestamp"] == bucket_key:
++                    bar["high"] = max(bar["high"], candle["high"])
++                    bar["low"] = min(bar["low"], candle["low"])
++                    bar["close"] = candle["close"]
++                    bar["volume"] = bar.get("volume", 0) + candle.get("volume", 0)
++                    inserted = True
++                    break
++            if not inserted:
++                new_bar = {
++                    "timestamp": bucket_key,
++                    "open": candle["open"],
++                    "high": candle["high"],
++                    "low": candle["low"],
++                    "close": candle["close"],
++                    "volume": candle.get("volume", 0),
++                }
++                self._m15_bars.append(new_bar)
++                self._m15_bars.sort(key=lambda x: x["timestamp"])
++
++    def is_warmed(self) -> bool:
++        return len(self._m15_bars) >= max(self._ema_period, self._adx_period + 1)
++
++    def get_regime(self) -> str | None:
++        if not self.is_warmed():
++            return None
++        closes = [b["close"] for b in self._m15_bars]
++        highs = [b["high"] for b in self._m15_bars]
++        lows = [b["low"] for b in self._m15_bars]
++        prior_ema = _ema(closes[:-1], self._ema_period) if len(closes) > self._ema_period else None
++        adx_val = _dx(highs, lows, closes, self._adx_period)
++        if prior_ema is None or adx_val is None:
++            return None
++        current_close = closes[-1]
++        if current_close > prior_ema and adx_val > 25:
++            return "trending_up"
++        elif current_close < prior_ema and adx_val > 25:
++            return "trending_down"
++        else:
++            return "ranging"
++
++    def confirms(self, direction: str) -> bool:
++        regime = self.get_regime()
++        if regime is None:
++            return False
++        if direction == "buy":
++            return regime == "trending_up"
++        elif direction == "sell":
++            return regime == "trending_down"
++        return False
+diff --git a/tests/connectors/oanda/test_broker.py b/tests/connectors/oanda/test_broker.py
+new file mode 100644
+index 0000000..1b792c3
+--- /dev/null
++++ b/tests/connectors/oanda/test_broker.py
+@@ -0,0 +1,100 @@
++from unittest.mock import MagicMock
++
++import pytest
++
++from src.connectors.oanda.client import OandaClient
++from src.schemas.events import Exchange, OrderSide, OrderType, ProductType
++
++
++class TestOandaBroker:
++    @pytest.mark.asyncio
++    async def test_place_order_returns_order_id(self):
++        from src.connectors.oanda.broker import OandaBroker
++        from src.connectors.oanda.client import OandaClient
++
++        client = MagicMock(spec=OandaClient)
++        client.place_order.return_value = {
++            "orderCreateTransaction": {"id": "12345"},
++            "lastTransactionID": "12345",
++        }
++        broker = OandaBroker(client)
++        order_id = await broker.place_order(
++            tradingsymbol="XAU_USD",
++            exchange=Exchange.FX,
++            side=OrderSide.BUY,
++            order_type=OrderType.MARKET,
++            quantity=10,
++            product=ProductType.NRML,
++            price=None,
++        )
++        assert order_id == "12345"
++
++    @pytest.mark.asyncio
++    async def test_place_limit_order_passes_price(self):
++        from src.connectors.oanda.broker import OandaBroker
++
++        client = MagicMock(spec=OandaClient)
++        client.place_order.return_value = {"orderCreateTransaction": {"id": "LIMIT123"}}
++        broker = OandaBroker(client)
++        order_id = await broker.place_order(
++            tradingsymbol="XAU_USD", exchange=Exchange.FX, side=OrderSide.BUY,
++            order_type=OrderType.LIMIT, quantity=10, product=ProductType.NRML,
++            price=2350.0,
++        )
++        assert order_id == "LIMIT123"
++        client.place_order.assert_called_once()
++        _, kwargs = client.place_order.call_args
++        assert kwargs.get("price") == 2350.0
++
++    @pytest.mark.asyncio
++    async def test_cancel_order(self):
++        from src.connectors.oanda.broker import OandaBroker
++
++        client = MagicMock()
++        broker = OandaBroker(client)
++        await broker.cancel_order("order-1")
++        client.cancel_order.assert_called_once_with("order-1")
++
++    @pytest.mark.asyncio
++    async def test_get_orders(self):
++        from src.connectors.oanda.broker import OandaBroker
++
++        client = MagicMock()
++        client.get_orders.return_value = [{"id": "1", "instrument": "XAU_USD"}]
++        broker = OandaBroker(client)
++        orders = await broker.get_orders()
++        assert len(orders) == 1
++        assert orders[0]["id"] == "1"
++
++    @pytest.mark.asyncio
++    async def test_get_order(self):
++        from src.connectors.oanda.broker import OandaBroker
++
++        client = MagicMock()
++        client.get_order.return_value = {"id": "1", "instrument": "XAU_USD"}
++        broker = OandaBroker(client)
++        order = await broker.get_order("1")
++        assert order["id"] == "1"
++        client.get_order.assert_called_once_with("1")
++
++    @pytest.mark.asyncio
++    async def test_get_positions(self):
++        from src.connectors.oanda.broker import OandaBroker
++
++        client = MagicMock()
++        client.get_positions.return_value = [{"instrument": "XAU_USD", "units": "10"}]
++        broker = OandaBroker(client)
++        positions = await broker.get_positions()
++        assert len(positions) == 1
++        assert positions[0]["instrument"] == "XAU_USD"
++
++    @pytest.mark.asyncio
++    async def test_get_open_trades(self):
++        from src.connectors.oanda.broker import OandaBroker
++
++        client = MagicMock()
++        client.get_open_trades.return_value = [{"id": "1", "instrument": "XAU_USD"}]
++        broker = OandaBroker(client)
++        trades = await broker.get_open_trades()
++        assert len(trades) == 1
++        assert trades[0]["id"] == "1"
+diff --git a/tests/connectors/oanda/test_client.py b/tests/connectors/oanda/test_client.py
+new file mode 100644
+index 0000000..6504a71
+--- /dev/null
++++ b/tests/connectors/oanda/test_client.py
+@@ -0,0 +1,179 @@
++import pytest
++from unittest.mock import MagicMock, patch
++
++
++class TestOandaClient:
++    def test_init_rejects_live_env(self):
++        from src.connectors.oanda.client import OandaClient
++
++        with pytest.raises(ValueError, match="(?i)live"):
++            OandaClient(api_key="test", account_id="test", environment="live")
++
++    def test_init_accepts_practice(self):
++        from src.connectors.oanda.client import OandaClient
++
++        client = OandaClient(api_key="test", account_id="test", environment="practice")
++        assert client.environment == "practice"
++
++    def test_raises_on_invalid_environment(self):
++        from src.connectors.oanda.client import OandaClient
++
++        with pytest.raises(ValueError, match="Invalid OANDA environment"):
++            OandaClient(api_key="test", account_id="test", environment="invalid")
++
++    def test_get_instruments_parses_response(self):
++        from src.connectors.oanda.client import OandaClient
++
++        client = OandaClient(api_key="test_key", account_id="test_id", environment="practice")
++
++        mock_resp = MagicMock()
++        mock_resp.json.return_value = {
++            "instruments": [
++                {
++                    "name": "XAU_USD",
++                    "type": "CFD",
++                    "displayName": "Gold",
++                    "pipLocation": -1,
++                    "tradeUnitsPrecision": 0,
++                    "minimumTradeSize": "1",
++                }
++            ]
++        }
++        mock_resp.raise_for_status.return_value = None
++
++        with patch("httpx.Client") as mock_cls:
++            mock_inst = MagicMock()
++            mock_inst.__enter__.return_value = mock_inst
++            mock_inst.get.return_value = mock_resp
++            mock_cls.return_value = mock_inst
++
++            instruments = client.get_instruments()
++
++        assert len(instruments) == 1
++        assert instruments[0]["name"] == "XAU_USD"
++
++    def test_get_instruments_empty_response(self):
++        from src.connectors.oanda.client import OandaClient
++
++        client = OandaClient(api_key="test_key", account_id="test_id", environment="practice")
++
++        mock_resp = MagicMock()
++        mock_resp.json.return_value = {}
++        mock_resp.raise_for_status.return_value = None
++
++        with patch("httpx.Client") as mock_cls:
++            mock_inst = MagicMock()
++            mock_inst.__enter__.return_value = mock_inst
++            mock_inst.get.return_value = mock_resp
++            mock_cls.return_value = mock_inst
++
++            instruments = client.get_instruments()
++
++        assert instruments == []
++
++    def test_api_error_propagates(self):
++        from src.connectors.oanda.client import OandaClient
++
++        client = OandaClient(api_key="test_key", account_id="test_id", environment="practice")
++
++        with patch("httpx.Client") as mock_cls:
++            mock_inst = MagicMock()
++            mock_inst.__enter__.return_value = mock_inst
++            mock_resp = MagicMock()
++            mock_resp.raise_for_status.side_effect = Exception("API error")
++            mock_inst.get.return_value = mock_resp
++            mock_cls.return_value = mock_inst
++
++            with pytest.raises(Exception):
++                client.get_account_summary()
++
++    def test_get_candles_empty_response(self):
++        from src.connectors.oanda.client import OandaClient
++
++        client = OandaClient(api_key="test_key", account_id="test_id", environment="practice")
++
++        mock_resp = MagicMock()
++        mock_resp.json.return_value = {}
++        mock_resp.raise_for_status.return_value = None
++
++        with patch("httpx.Client") as mock_cls:
++            mock_inst = MagicMock()
++            mock_inst.__enter__.return_value = mock_inst
++            mock_inst.get.return_value = mock_resp
++            mock_cls.return_value = mock_inst
++
++            candles = client.get_candles("XAU_USD")
++
++        assert candles == []
++
++    def test_place_order(self):
++        from src.connectors.oanda.client import OandaClient
++
++        client = OandaClient(api_key="test_key", account_id="test_id", environment="practice")
++
++        mock_resp = MagicMock()
++        mock_resp.json.return_value = {"orderCreateTransaction": {"id": "12345"}, "lastTransactionID": "12345"}
++        mock_resp.raise_for_status.return_value = None
++
++        with patch("httpx.Client") as mock_cls:
++            mock_inst = MagicMock()
++            mock_inst.__enter__.return_value = mock_inst
++            mock_inst.post.return_value = mock_resp
++            mock_cls.return_value = mock_inst
++
++            result = client.place_order(instrument="XAU_USD", units=10, side="buy")
++
++        assert result["orderCreateTransaction"]["id"] == "12345"
++
++    def test_cancel_order(self):
++        from src.connectors.oanda.client import OandaClient
++
++        client = OandaClient(api_key="test_key", account_id="test_id", environment="practice")
++
++        mock_resp = MagicMock()
++        mock_resp.json.return_value = {"orderCancelTransaction": {"id": "67890"}}
++        mock_resp.raise_for_status.return_value = None
++
++        with patch("httpx.Client") as mock_cls:
++            mock_inst = MagicMock()
++            mock_inst.__enter__.return_value = mock_inst
++            mock_inst.delete.return_value = mock_resp
++            mock_cls.return_value = mock_inst
++
++            result = client.cancel_order("order-1")
++
++        assert result["orderCancelTransaction"]["id"] == "67890"
++
++    @pytest.mark.asyncio
++    async def test_stream_pricing(self):
++        from src.connectors.oanda.client import OandaClient
++
++        client = OandaClient(api_key="test_key", account_id="test_id", environment="practice")
++
++        price_line = '{"type":"PRICE","instrument":"XAU_USD","time":"2026-07-03T00:00:00Z","bids":[{"price":"2350.0"}],"asks":[{"price":"2350.5"}]}'
++        heartbeat_line = '{"type":"HEARTBEAT","time":"2026-07-03T00:00:01Z"}'
++
++        mock_stream = MagicMock()
++
++        # We need aiter_lines to be async iterable
++        async def aiter_lines():
++            yield price_line
++            yield heartbeat_line
++
++        mock_stream.aiter_lines = aiter_lines
++        mock_stream.raise_for_status.return_value = None
++
++        mock_async_client = MagicMock()
++        mock_async_client.__aenter__.return_value = mock_async_client
++        mock_async_client.stream.return_value.__aenter__.return_value = mock_stream
++
++        with patch("httpx.AsyncClient") as mock_cls:
++            mock_cls.return_value = mock_async_client
++
++            results = []
++            async for tick in client.stream_pricing(["XAU_USD"]):
++                results.append(tick)
++
++        assert len(results) == 2
++        assert results[0]["type"] == "PRICE"
++        assert results[1]["type"] == "HEARTBEAT"
+diff --git a/tests/connectors/oanda/test_integration.py b/tests/connectors/oanda/test_integration.py
+new file mode 100644
+index 0000000..7c509bb
+--- /dev/null
++++ b/tests/connectors/oanda/test_integration.py
+@@ -0,0 +1,55 @@
++import json
++import pytest
++from pathlib import Path
++from unittest.mock import MagicMock
++
++FIXTURE_DIR = Path(__file__).parent.parent.parent / "fixtures" / "oanda"
++
++
++@pytest.fixture
++def instruments_fixture():
++    return json.loads((FIXTURE_DIR / "instruments.json").read_text())
++
++
++@pytest.fixture
++def candles_fixture():
++    return json.loads((FIXTURE_DIR / "candles_xau_usd.json").read_text())
++
++
++class TestOandaIntegration:
++    def test_instrument_discovery_flow(self, instruments_fixture):
++        from src.connectors.oanda.client import OandaClient
++        from src.connectors.oanda.market_data import OandaMarketDataProvider
++        client = MagicMock(spec=OandaClient)
++        client.get_instruments.return_value = instruments_fixture["instruments"]
++        provider = OandaMarketDataProvider(client=client)
++        provider.add_instrument("XAU_USD", "FX")
++        provider.add_instrument("EUR_USD", "FX")
++        instruments = client.get_instruments()
++        names = [i["name"] for i in instruments]
++        assert "XAU_USD" in names
++        assert "EUR_USD" in names
++
++    def test_candle_parsing_roundtrip(self, candles_fixture):
++        from src.connectors.oanda.market_data import OandaMarketDataProvider
++        provider = OandaMarketDataProvider()
++        parsed = provider._parse_candle("XAU_USD", candles_fixture["candles"][0])
++        assert parsed is not None
++        assert parsed["instrument"] == "XAU_USD"
++        assert isinstance(parsed["open"], float)
++        assert parsed["open"] > 0
++
++    def test_broker_place_order_uses_client(self):
++        from src.connectors.oanda.broker import OandaBroker
++        from src.connectors.oanda.client import OandaClient
++        from src.schemas.events import Exchange, OrderSide, OrderType, ProductType
++        client = MagicMock(spec=OandaClient)
++        client.place_order.return_value = {"orderCreateTransaction": {"id": "TEST123"}}
++        broker = OandaBroker(client)
++        import asyncio
++        order_id = asyncio.run(broker.place_order(
++            tradingsymbol="XAU_USD", exchange=Exchange.FX,
++            side=OrderSide.BUY, order_type=OrderType.MARKET,
++            quantity=1, product=ProductType.NRML,
++        ))
++        assert order_id == "TEST123"
+diff --git a/tests/connectors/oanda/test_market_data.py b/tests/connectors/oanda/test_market_data.py
+new file mode 100644
+index 0000000..3093d24
+--- /dev/null
++++ b/tests/connectors/oanda/test_market_data.py
+@@ -0,0 +1,39 @@
++import pytest
++from unittest.mock import MagicMock
++
++
++class TestOandaMarketDataProvider:
++    @pytest.mark.asyncio
++    async def test_add_instrument_and_start(self):
++        from src.connectors.oanda.market_data import OandaMarketDataProvider
++
++        provider = OandaMarketDataProvider()
++        provider.add_instrument("XAU_USD", "FX")
++        assert "XAU_USD" in provider._instruments
++
++    @pytest.mark.asyncio
++    async def test_callbacks_are_set(self):
++        from src.connectors.oanda.market_data import OandaMarketDataProvider
++
++        provider = OandaMarketDataProvider()
++        tick_cb = MagicMock()
++        ohlcv_cb = MagicMock()
++        provider.set_tick_callback(tick_cb)
++        provider.set_ohlcv_callback(ohlcv_cb)
++        assert provider._on_tick is tick_cb
++        assert provider._on_ohlcv is ohlcv_cb
++
++    @pytest.mark.asyncio
++    async def test_get_historical_returns_candles(self):
++        from src.connectors.oanda.market_data import OandaMarketDataProvider
++        from src.connectors.oanda.client import OandaClient
++
++        client = MagicMock(spec=OandaClient)
++        client.get_candles.return_value = [
++            {"time": "2026-07-01T00:00:00.000000000Z", "mid": {"o": "2350.0", "h": "2351.0", "l": "2349.0", "c": "2350.5"}, "volume": 100}
++        ]
++        provider = OandaMarketDataProvider(client=client)
++        candles = await provider.get_historical("XAU_USD", interval_minutes=1, days=1)
++        assert len(candles) == 1
++        assert candles[0]["open"] == 2350.0
++        assert candles[0]["instrument"] == "XAU_USD"
+diff --git a/tests/fixtures/oanda/candles_xau_usd.json b/tests/fixtures/oanda/candles_xau_usd.json
+new file mode 100644
+index 0000000..1f8cb9c
+--- /dev/null
++++ b/tests/fixtures/oanda/candles_xau_usd.json
+@@ -0,0 +1 @@
++{"candles": [{"time": "2026-07-01T00:00:00.000000000Z", "mid": {"o": "2350.0", "h": "2351.0", "l": "2349.0", "c": "2350.5"}, "volume": 100, "complete": true}]}
+diff --git a/tests/fixtures/oanda/instruments.json b/tests/fixtures/oanda/instruments.json
+new file mode 100644
+index 0000000..7ebe0f6
+--- /dev/null
++++ b/tests/fixtures/oanda/instruments.json
+@@ -0,0 +1 @@
++{"instruments": [{"name": "XAU_USD", "type": "CFD", "displayName": "Gold", "pipLocation": -1, "tradeUnitsPrecision": 0, "minimumTradeSize": "1", "marginRate": "0.05", "status": "tradeable"}, {"name": "EUR_USD", "type": "CURRENCY", "displayName": "Euro vs US Dollar", "pipLocation": -4, "tradeUnitsPrecision": 0, "minimumTradeSize": "1", "marginRate": "0.02", "status": "tradeable"}]}
+diff --git a/tests/risk/test_oanda_sizing.py b/tests/risk/test_oanda_sizing.py
+new file mode 100644
+index 0000000..9f821e2
+--- /dev/null
++++ b/tests/risk/test_oanda_sizing.py
+@@ -0,0 +1,162 @@
++import pytest
++
++from src.risk.oanda_sizing import (
++    RISK_PER_TRADE,
++    MAX_COMBINED_RISK,
++    calculate_oanda_units,
++    validate_oanda_order,
++)
++
++
++class TestOandaSizing:
++    def test_calculate_units_basic(self):
++        meta = {"trade_units_precision": 0, "minimum_trade_size": 1}
++        units = calculate_oanda_units(
++            equity_usd=10000.0,
++            entry_price=2350.0,
++            stop_price=2330.0,
++            instrument_meta=meta,
++        )
++        assert units == 2
++
++    def test_calculate_units_below_minimum(self):
++        meta = {"trade_units_precision": 0, "minimum_trade_size": 1}
++        units = calculate_oanda_units(
++            equity_usd=1000.0,
++            entry_price=2350.0,
++            stop_price=2300.0,
++            instrument_meta=meta,
++        )
++        assert units == 0
++
++    def test_validate_oanda_order_accepts(self):
++        meta = {"trade_units_precision": 0, "minimum_trade_size": 1}
++        ok, reason = validate_oanda_order(
++            equity_usd=10000.0,
++            units=2,
++            entry_price=2350.0,
++            stop_price=2330.0,
++            instrument_meta=meta,
++            combined_risk=0.004,
++        )
++        assert ok is True
++
++    def test_validate_oanda_order_rejects_excessive_combined_risk(self):
++        meta = {"trade_units_precision": 0, "minimum_trade_size": 1}
++        ok, reason = validate_oanda_order(
++            equity_usd=10000.0,
++            units=10,
++            entry_price=2350.0,
++            stop_price=2000.0,
++            instrument_meta=meta,
++            combined_risk=0.015,
++        )
++        assert ok is False
++        assert "combined" in reason.lower()
++
++    def test_zero_stop_distance_returns_zero(self):
++        meta = {"trade_units_precision": 0, "minimum_trade_size": 1}
++        units = calculate_oanda_units(
++            equity_usd=10000.0,
++            entry_price=2350.0,
++            stop_price=2350.0,
++            instrument_meta=meta,
++        )
++        assert units == 0
++
++    def test_negative_prices_validation_rejects(self):
++        meta = {"trade_units_precision": 0, "minimum_trade_size": 1}
++        ok, reason = validate_oanda_order(
++            equity_usd=10000.0,
++            units=2,
++            entry_price=-2350.0,
++            stop_price=-2330.0,
++            instrument_meta=meta,
++            combined_risk=0.004,
++        )
++        assert ok is False
++        assert "invalid" in reason.lower()
++
++    def test_precision_rounding(self):
++        meta = {"trade_units_precision": 1, "minimum_trade_size": 1}
++        units = calculate_oanda_units(
++            equity_usd=10000.0,
++            entry_price=2350.0,
++            stop_price=2340.0,
++            instrument_meta=meta,
++        )
++        # risk_budget=50, risk_per_unit=10, raw=5.0, floor to 1dp = 5.0
++        assert units == 5
++
++    def test_precision_rounding_fractional(self):
++        meta = {"trade_units_precision": 1, "minimum_trade_size": 1}
++        units = calculate_oanda_units(
++            equity_usd=10000.0,
++            entry_price=2350.0,
++            stop_price=2330.0,
++            instrument_meta=meta,
++        )
++        # risk_budget=50, risk_per_unit=20, raw=2.5, floor to 1dp = 2.5 -> int(...) truncates to 2
++        assert units == 2
++
++    def test_validate_rejects_zero_units(self):
++        meta = {"trade_units_precision": 0, "minimum_trade_size": 1}
++        ok, reason = validate_oanda_order(
++            equity_usd=10000.0,
++            units=0,
++            entry_price=2350.0,
++            stop_price=2330.0,
++            instrument_meta=meta,
++            combined_risk=0.004,
++        )
++        assert ok is False
++
++    def test_calculate_units_precision_2dp(self):
++        meta = {"trade_units_precision": 2, "minimum_trade_size": 1}
++        units = calculate_oanda_units(
++            equity_usd=10000.0,
++            entry_price=2350.0,
++            stop_price=2330.0,
++            instrument_meta=meta,
++        )
++        # risk_budget=50, risk_per_unit=20, raw=2.5, floor to 2dp = 2.5 -> int(...) truncates to 2
++        assert units == 2
++
++    def test_validate_rejects_when_combined_plus_new_exceeds_max(self):
++        meta = {"trade_units_precision": 0, "minimum_trade_size": 1}
++        ok, reason = validate_oanda_order(
++            equity_usd=10000.0,
++            units=5,
++            entry_price=2350.0,
++            stop_price=2330.0,
++            instrument_meta=meta,
++            combined_risk=0.008,
++        )
++        # new_risk = (5 * 20) / 10000 = 0.01, combined_risk 0.008 + 0.01 = 0.018 > 0.01
++        assert ok is False
++
++    def test_validate_rejects_zero_stop_distance(self):
++        meta = {"trade_units_precision": 0, "minimum_trade_size": 1}
++        ok, reason = validate_oanda_order(
++            equity_usd=10000.0,
++            units=2,
++            entry_price=2350.0,
++            stop_price=2350.0,
++            instrument_meta=meta,
++            combined_risk=0.004,
++        )
++        assert ok is False
++        assert "differ" in reason.lower()
++
++    def test_validate_rejects_below_min_size(self):
++        meta = {"trade_units_precision": 0, "minimum_trade_size": 5}
++        ok, reason = validate_oanda_order(
++            equity_usd=10000.0,
++            units=2,
++            entry_price=2350.0,
++            stop_price=2330.0,
++            instrument_meta=meta,
++            combined_risk=0.004,
++        )
++        assert ok is False
++        assert "below minimum" in reason.lower()
+diff --git a/tests/strategies/__init__.py b/tests/strategies/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/tests/strategies/test_m15_trend.py b/tests/strategies/test_m15_trend.py
+new file mode 100644
+index 0000000..0869884
+--- /dev/null
++++ b/tests/strategies/test_m15_trend.py
+@@ -0,0 +1,215 @@
++import pytest
++from datetime import UTC, datetime, timedelta
++
++from src.strategies.m15_trend import M15TrendConfirmation, _round_to_m15
++
++
++class TestM15TrendConfirmation:
++    def test_not_warmed_initially(self):
++        c = M15TrendConfirmation()
++        assert not c.is_warmed()
++        assert c.get_regime() is None
++
++    def test_rejects_single_candle(self):
++        c = M15TrendConfirmation()
++        c.update({
++            "open": 2350,
++            "high": 2351,
++            "low": 2349,
++            "close": 2350.5,
++            "volume": 100,
++            "timestamp": datetime(2026, 7, 1, 0, 0, 0, tzinfo=UTC),
++        })
++        assert not c.is_warmed()
++
++    def test_warms_after_sufficient_candles(self):
++        c = M15TrendConfirmation()
++        base = datetime(2026, 7, 1, 0, 0, 0, tzinfo=UTC)
++        for i in range(300):
++            price = 2350 + (i % 20) * 0.5
++            c.update({
++                "open": price,
++                "high": price + 0.5,
++                "low": price - 0.5,
++                "close": price + 0.2,
++                "volume": 100,
++                "timestamp": base + timedelta(minutes=i),
++            })
++        assert c.is_warmed()
++
++    def test_aggregates_correct_m15_boundary(self):
++        c = M15TrendConfirmation()
++        base = datetime(2026, 7, 1, 0, 0, 0, tzinfo=UTC)
++        for i in range(15):
++            c.update({
++                "open": 2350.0 + i * 0.1,
++                "high": 2351.0 + i * 0.1,
++                "low": 2349.0 + i * 0.1,
++                "close": 2350.5 + i * 0.1,
++                "volume": 100,
++                "timestamp": base + timedelta(minutes=i),
++            })
++        assert len(c._m15_bars) == 1
++
++    def test_m15_boundary_split(self):
++        c = M15TrendConfirmation()
++        base = datetime(2026, 7, 1, 0, 0, 0, tzinfo=UTC)
++        for i in range(16):
++            c.update({
++                "open": 2350.0,
++                "high": 2351.0,
++                "low": 2349.0,
++                "close": 2350.5,
++                "volume": 100,
++                "timestamp": base + timedelta(minutes=i),
++            })
++        assert len(c._m15_bars) == 2
++
++    def test_out_of_order_candles(self):
++        c = M15TrendConfirmation()
++        base = datetime(2026, 7, 1, 0, 0, 0, tzinfo=UTC)
++        for i in [5, 3, 1, 4, 2]:
++            price = 2350.0 + i * 0.1
++            c.update({
++                "open": price, "high": price + 0.5, "low": price - 0.5,
++                "close": price + 0.2, "volume": 100,
++                "timestamp": base + timedelta(minutes=i),
++            })
++        # After 5 candles at different minutes, we may have multiple M15 bars
++        # Verify they are in chronological order
++        timestamps = [b["timestamp"] for b in c._m15_bars]
++        assert timestamps == sorted(timestamps), "M15 bars must be in chronological order"
++
++    def test_duplicate_timestamp_updates_same_bar(self):
++        c = M15TrendConfirmation()
++        ts = datetime(2026, 7, 1, 0, 0, 0, tzinfo=UTC)
++        c.update({
++            "open": 2350, "high": 2351, "low": 2349, "close": 2350.5,
++            "volume": 100, "timestamp": ts,
++        })
++        c.update({
++            "open": 2350, "high": 2352, "low": 2348, "close": 2351,
++            "volume": 50, "timestamp": ts,
++        })
++        assert len(c._m15_bars) == 1
++        bar = c._m15_bars[-1]
++        assert bar["high"] == 2352
++        assert bar["low"] == 2348
++        assert bar["close"] == 2351
++        assert bar["volume"] == 150
++
++    def test_trending_up_regime(self):
++        c = M15TrendConfirmation(ema_period=5, adx_period=5)
++        base = datetime(2026, 7, 1, 0, 0, 0, tzinfo=UTC)
++        # Rising prices across many M15 buckets -> close > EMA, ADX > 25
++        for i in range(200):
++            price = 2350 + i * 0.5
++            c.update({
++                "open": price,
++                "high": price + 1,
++                "low": price - 0.5,
++                "close": price + 0.5,
++                "volume": 100,
++                "timestamp": base + timedelta(minutes=i),
++            })
++        regime = c.get_regime()
++        assert regime == "trending_up", f"Expected trending_up, got {regime}"
++
++    def test_trending_down_regime(self):
++        c = M15TrendConfirmation(ema_period=5, adx_period=5)
++        base = datetime(2026, 7, 1, 0, 0, 0, tzinfo=UTC)
++        for i in range(200):
++            price = 2500 - i * 0.5
++            c.update({
++                "open": price,
++                "high": price + 0.5,
++                "low": price - 1,
++                "close": price - 0.5,
++                "volume": 100,
++                "timestamp": base + timedelta(minutes=i),
++            })
++        regime = c.get_regime()
++        assert regime == "trending_down", f"Expected trending_down, got {regime}"
++
++    def test_ranging_regime(self):
++        c = M15TrendConfirmation(ema_period=5, adx_period=5)
++        base = datetime(2026, 7, 1, 0, 0, 0, tzinfo=UTC)
++        for i in range(200):
++            price = 2350 + (i % 3) * 0.1  # sideways chop
++            c.update({
++                "open": price,
++                "high": price + 0.2,
++                "low": price - 0.2,
++                "close": price + 0.05,
++                "volume": 100,
++                "timestamp": base + timedelta(minutes=i),
++            })
++        regime = c.get_regime()
++        assert regime == "ranging", f"Expected ranging, got {regime}"
++
++    def test_confirms_buy_on_trending_up(self):
++        c = M15TrendConfirmation(ema_period=5, adx_period=5)
++        base = datetime(2026, 7, 1, 0, 0, 0, tzinfo=UTC)
++        for i in range(200):
++            price = 2350 + i * 0.5
++            c.update({
++                "open": price,
++                "high": price + 1,
++                "low": price - 0.5,
++                "close": price + 0.5,
++                "volume": 100,
++                "timestamp": base + timedelta(minutes=i),
++            })
++        assert c.confirms("buy")
++        assert not c.confirms("sell")
++
++    def test_confirms_sell_on_trending_down(self):
++        c = M15TrendConfirmation(ema_period=5, adx_period=5)
++        base = datetime(2026, 7, 1, 0, 0, 0, tzinfo=UTC)
++        for i in range(200):
++            price = 2500 - i * 0.5
++            c.update({
++                "open": price,
++                "high": price + 0.5,
++                "low": price - 1,
++                "close": price - 0.5,
++                "volume": 100,
++                "timestamp": base + timedelta(minutes=i),
++            })
++        assert c.confirms("sell")
++        assert not c.confirms("buy")
++
++    def test_confirms_returns_false_when_not_warmed(self):
++        c = M15TrendConfirmation()
++        assert not c.confirms("buy")
++        assert not c.confirms("sell")
++
++    def test_round_to_m15(self):
++        dt = datetime(2026, 7, 1, 12, 7, 0, tzinfo=UTC)
++        assert _round_to_m15(dt).minute == 0
++        dt = datetime(2026, 7, 1, 12, 15, 0, tzinfo=UTC)
++        assert _round_to_m15(dt).minute == 15
++        dt = datetime(2026, 7, 1, 12, 44, 59, tzinfo=UTC)
++        assert _round_to_m15(dt).minute == 30
++        dt = datetime(2026, 7, 1, 12, 45, 0, tzinfo=UTC)
++        assert _round_to_m15(dt).minute == 45
++
++    def test_handles_string_timestamp(self):
++        c = M15TrendConfirmation()
++        c.update({
++            "open": 2350, "high": 2351, "low": 2349, "close": 2350.5,
++            "volume": 100,
++            "timestamp": "2026-07-01T00:00:00Z",
++        })
++        assert len(c._m15_bars) == 1
++
++    def test_get_regime_returns_none_when_not_warmed(self):
++        c = M15TrendConfirmation()
++        base = datetime(2026, 7, 1, 0, 0, 0, tzinfo=UTC)
++        for i in range(10):
++            c.update({
++                "open": 2350, "high": 2351, "low": 2349, "close": 2350.5,
++                "volume": 100,
++                "timestamp": base + timedelta(minutes=i),
++            })
++        assert c.get_regime() is None

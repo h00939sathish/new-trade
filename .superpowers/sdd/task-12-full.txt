@@ -1,0 +1,58 @@
+### Task 12: Integration Tests with Recorded Responses
+
+**Files:**
+- Create: `tests/connectors/oanda/test_integration.py`
+- Create: `tests/fixtures/oanda/` — JSON fixture files for recorded OANDA responses
+
+This task creates recorded-response integration tests that validate the full data flow without network access.
+
+- [ ] **Step 1: Write integration test**
+
+```python
+# tests/connectors/oanda/test_integration.py
+import json
+import pytest
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+FIXTURE_DIR = Path(__file__).parent.parent.parent / "fixtures" / "oanda"
+
+
+def load_fixture(name: str) -> dict:
+    return json.loads((FIXTURE_DIR / name).read_text())
+
+
+class TestOandaIntegration:
+    def test_instrument_discovery_flow(self):
+        from src.connectors.oanda.client import OandaClient
+        from src.connectors.oanda.market_data import OandaMarketDataProvider
+
+        client = MagicMock(spec=OandaClient)
+        client.get_instruments.return_value = load_fixture("instruments.json")["instruments"]
+
+        provider = OandaMarketDataProvider(client=client)
+        provider.add_instrument("XAU_USD", "FX")
+        provider.add_instrument("EUR_USD", "FX")
+
+        instruments = client.get_instruments()
+        names = [i["name"] for i in instruments]
+        assert "XAU_USD" in names
+        assert "EUR_USD" in names
+
+    def test_candle_parsing_roundtrip(self):
+        from src.connectors.oanda.market_data import OandaMarketDataProvider
+
+        fixture = load_fixture("candles_xau_usd.json")
+        provider = OandaMarketDataProvider()
+        parsed = provider._parse_candle("XAU_USD", fixture["candles"][0])
+        assert parsed is not None
+        assert parsed["instrument"] == "XAU_USD"
+        assert isinstance(parsed["open"], float)
+        assert isinstance(parsed["close"], float)
+        assert parsed["open"] > 0
+```
+
+- [ ] **Step 2: Create fixture files**
+
+```json
+# tests/fixtures/oanda/instruments.json

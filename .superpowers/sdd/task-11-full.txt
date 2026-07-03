@@ -1,0 +1,47 @@
+### Task 11: Unit Tests — Complete Coverage
+
+**Files:**
+- Existing test files from Tasks 1-10
+- Additional: `tests/connectors/oanda/test_client_integration.py`
+- Additional: `tests/strategies/test_m15_trend_edge_cases.py`
+- Additional: `tests/risk/test_oanda_sizing_edge_cases.py`
+
+This task adds edge case coverage missing from previous tasks.
+
+- [ ] **Step 1: Write OANDA client edge case tests**
+
+```python
+# tests/connectors/oanda/test_client.py (append to existing)
+
+class TestOandaClientEdgeCases:
+    def test_get_candles_empty_response(self, requests_mock):
+        from src.connectors.oanda.client import OandaClient
+        client = OandaClient(api_key="test", account_id="test", environment="practice")
+        requests_mock.get(
+            f"{client._rest_url}/accounts/test/instruments/XAU_USD/candles",
+            json={"candles": []}
+        )
+        candles = client.get_candles("XAU_USD")
+        assert candles == []
+
+    def test_invalid_environment_raises(self):
+        from src.connectors.oanda.client import OandaClient
+        with pytest.raises(ValueError, match="Invalid OANDA environment"):
+            OandaClient(api_key="test", account_id="test", environment="invalid")
+
+    def test_api_error_propagates(self, requests_mock):
+        from src.connectors.oanda.client import OandaClient
+        client = OandaClient(api_key="test", account_id="test", environment="practice")
+        requests_mock.get(
+            f"{client._rest_url}/accounts/test/instruments",
+            status_code=401,
+            json={"errorMessage": "Invalid token"},
+        )
+        with pytest.raises(Exception):
+            client.get_instruments()
+```
+
+- [ ] **Step 2: Write M15 trend edge case tests**
+
+```python
+# tests/strategies/test_m15_trend.py (append)

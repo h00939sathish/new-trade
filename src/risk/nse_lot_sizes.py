@@ -105,7 +105,12 @@ def validate_lot_size(
 
     Returns a dict with ``valid``, ``lot_size``, and ``message`` keys.
     Instruments not in the lot size table (cash market or unknown) always pass.
+
+    Lot size validation only applies to derivative exchanges (NFO, MCX).
+    Cash equity trades on NSE/BSE are not subject to lot size restrictions.
     """
+    if exchange.upper() not in ("NFO", "MCX"):
+        return {"valid": True, "lot_size": None, "message": ""}
     lot_sizes = get_lot_sizes_for_exchange(exchange)
     lot_size = lot_sizes.get(symbol.upper())
     if lot_size is None:

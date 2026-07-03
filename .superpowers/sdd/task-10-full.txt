@@ -1,0 +1,240 @@
+### Task 10: End-to-End Backtest Validation with FX Symbols
+
+**Files:**
+- Create: `scripts/run_system_backtest_oanda.py`
+
+This script adapts the existing `scripts/run_system_backtest_single.py` for FX. It:
+1. Uses `BacktestDataProvider` with exchange="FX"
+2. Fetches XAU/USD and EUR/USD historical data from Yahoo
+3. Runs the full pipeline (MarketIntel → StrategyGen → RiskMgmt → Execution)
+4. Reports fills, PnL, and signal counts
+
+- [ ] **Step 1: Write the script**
+
+Copy the existing backtest script pattern from `scripts/run_system_backtest_single.py` and adapt for FX:
+
+```python
+# scripts/run_system_backtest_oanda.py
+"""
+Backtest OANDA FX instruments (XAU/USD, EUR/USD) using Yahoo Finance data.
+"""
+import asyncio
+import logging
+import sys
+from datetime import UTC, datetime
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+logger = logging.getLogger("backtest_oanda")
+
+SYMBOLS = ["XAUUSD=X", "EURUSD=X"]
+DAYS = 30
+
+
+async def main():
+    from src.config.settings import settings
+    from src.schemas.events import Exchange
+
+    # Use FX-specific strategy config
+    from src.config.oanda_profiles import load_oanda_profile
+    xau_config = load_oanda_profile("XAU_USD")
+    eur_config = load_oanda_profile("EUR_USD")
+
+    logger.info("Starting FX backtest for %s (%d days)", SYMBOLS, DAYS)
+
+    # Build system
+    from src.system import TradingSystem
+    system = TradingSystem()
+
+    # Set exchange and instruments
+    system.market_intel.set_exchange(Exchange.FX)
+    for sym in SYMBOLS:
+        system.market_intel.add_instrument(sym)
+
+    # Set FX-specific strategy config on strategy_gen
+    from src.config.strategy_config import build_strategies_from_config
+    system.strategy_gen._load_default_strategies = lambda: None
+    for sym, config in [("XAUUSD=X", xau_config), ("EURUSD=X", eur_config)]:
+        strategies = build_strategies_from_config(config)
+        for s in strategies:
+            system.strategy_gen.register_strategy(s)
+
+    # Start
+    await system.start()
+
+    # Fetch and inject FX candles
+    from src.connectors.backtest_provider import fetch_historical_1m_candles
+    for sym in SYMBOLS:
+        candles = await fetch_historical_1m_candles(sym, exchange="FX", days=DAYS)
+        logger.info("Fetched %d candles for %s", len(candles), sym)
+        for c in candles:
+            await system.inject_ohlcv(
+                instrument=sym,
+                interval="minute",
+                open=c["open"],
+                high=c["high"],
+                low=c["low"],
+                close=c["close"],
+                volume=c.get("volume", 0),
+                exchange="FX",
+                timestamp=c.get("timestamp"),
+            )
+
+    # Print results
+    print("\n=== BACKTEST RESULTS ===")
+    for sym in SYMBOLS:
+        pos = position_registry.get_position(sym)
+        print(f"{sym}: qty={pos['quantity']}, pnl={pos.get('unrealized_pnl', 0):.2f}")
+
+    await system.stop()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+- [ ] **Step 2: Test the script runs**
+
+```bash
+cd D:\projects\new\trade && python scripts/run_system_backtest_oanda.py 2>&1 | tail -30
+```
+
+Expected: Script runs, fetches FX data, reports signal/fill counts and PnL.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add scripts/run_system_backtest_oanda.py
+git commit -m "feat(backtest): add FX backtest script for XAU/USD and EUR/USD"
+```
+
+---
+
+### Task 11: Unit Tests — Complete Coverage
+
+**Files:**
+- Existing test files from Tasks 1-10
+- Additional: `tests/connectors/oanda/test_client_integration.py`
+- Additional: `tests/strategies/test_m15_trend_edge_cases.py`
+- Additional: `tests/risk/test_oanda_sizing_edge_cases.py`
+
+This task adds edge case coverage missing from previous tasks.
+
+- [ ] **Step 1: Write OANDA client edge case tests**
+
+```python
+# tests/connectors/oanda/test_client.py (append to existing)
+
+class TestOandaClientEdgeCases:
+    def test_get_candles_empty_response(self, requests_mock):
+        from src.connectors.oanda.client import OandaClient
+        client = OandaClient(api_key="test", account_id="test", environment="practice")
+        requests_mock.get(
+            f"{client._rest_url}/accounts/test/instruments/XAU_USD/candles",
+            json={"candles": []}
+        )
+        candles = client.get_candles("XAU_USD")
+        assert candles == []
+
+    def test_invalid_environment_raises(self):
+        from src.connectors.oanda.client import OandaClient
+        with pytest.raises(ValueError, match="Invalid OANDA environment"):
+            OandaClient(api_key="test", account_id="test", environment="invalid")
+
+    def test_api_error_propagates(self, requests_mock):
+        from src.connectors.oanda.client import OandaClient
+        client = OandaClient(api_key="test", account_id="test", environment="practice")
+        requests_mock.get(
+            f"{client._rest_url}/accounts/test/instruments",
+            status_code=401,
+            json={"errorMessage": "Invalid token"},
+        )
+        with pytest.raises(Exception):
+            client.get_instruments()
+```
+
+- [ ] **Step 2: Write M15 trend edge case tests**
+
+```python
+# tests/strategies/test_m15_trend.py (append)
+
+class TestM15TrendEdgeCases:
+    def test_out_of_order_candles(self):
+        from src.strategies.m15_trend import M15TrendConfirmation
+        c = M15TrendConfirmation()
+        base = datetime(2026, 7, 1, 0, 0, 0, tzinfo=UTC)
+        # Feed out-of-order M1 candles
+        for i in [5, 3, 1, 4, 2]:
+            price = 2350.0 + i * 0.1
+            c.update({
+                "open": price, "high": price + 0.5, "low": price - 0.5,
+                "close": price + 0.2, "volume": 100,
+                "timestamp": base + __import__("datetime").timedelta(minutes=i),
+            })
+        # Should not crash; state may be inconsistent but that's acceptable
+        assert c.is_warmed() is False  # not enough bars
+
+    def test_duplicate_timestamp_candles(self):
+        from src.strategies.m15_trend import M15TrendConfirmation
+        c = M15TrendConfirmation()
+        base = datetime(2026, 7, 1, 0, 0, 0, tzinfo=UTC)
+        # Feed duplicate candles (same timestamp)
+        for _ in range(300):
+            c.update({
+                "open": 2350, "high": 2351, "low": 2349, "close": 2350.5,
+                "volume": 100, "timestamp": base,
+            })
+        # Only 1 M15 bar should exist
+        assert len(c._m15_bars) == 1
+```
+
+- [ ] **Step 3: Write risk sizing edge case tests**
+
+```python
+# tests/risk/test_oanda_sizing.py (append)
+
+class TestOandaSizingEdgeCases:
+    def test_zero_stop_distance_returns_zero(self):
+        from src.risk.oanda_sizing import calculate_oanda_units
+        units = calculate_oanda_units(
+            equity_usd=10000.0,
+            entry_price=2350.0,
+            stop_price=2350.0,
+            instrument_meta={"trade_units_precision": 0, "minimum_trade_size": 1},
+        )
+        assert units == 0
+
+    def test_negative_prices_rejected(self):
+        from src.risk.oanda_sizing import validate_oanda_order
+        ok, reason = validate_oanda_order(
+            equity_usd=10000.0, units=1, entry_price=-1, stop_price=10,
+            instrument_meta={"minimum_trade_size": 1}, combined_risk=0,
+        )
+        assert ok is False
+
+    def test_trade_units_precision_rounds_down(self):
+        from src.risk.oanda_sizing import calculate_oanda_units
+        meta = {"trade_units_precision": 1, "minimum_trade_size": 0.1}
+        units = calculate_oanda_units(
+            equity_usd=10000.0, entry_price=2350.0, stop_price=2340.0,
+            instrument_meta=meta,
+        )
+        # risk_budget = 50, risk_per_unit = 10, raw = 5, precision=1 -> 5.0
+        assert units == 5.0
+```
+
+- [ ] **Step 4: Run all tests**
+
+```bash
+cd D:\projects\new\trade && python -m pytest tests/ -x -q --no-header 2>&1 | tail -10
+```
+
+Expected: all tests pass.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add tests/
+git commit -m "test(oanda): add edge case coverage for OANDA modules"
+```
+
+---

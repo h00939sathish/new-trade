@@ -272,6 +272,7 @@ class RiskManagementAgent(BaseAgent):
         # Sell orders that reduce existing positions should not be blocked
         # by exposure limits (fix 1.2)
         instrument = order_data.get("instrument", "")
+        exchange = order_data.get("exchange", Exchange.NSE)
         is_reducing = side in ("sell", "SELL") and self._positions.get(instrument, 0) > 0
 
         checks: list[dict[str, Any]] = [
@@ -292,7 +293,7 @@ class RiskManagementAgent(BaseAgent):
                 },
             ),
             await self._check_margin(instrument, order_value, side),
-            self._check_nse_lot_size(instrument, quantity),
+            self._check_instrument_rules(instrument, quantity, exchange),
         ]
         # Only check exposure for orders that INCREASE position
         if not is_reducing:
@@ -319,7 +320,7 @@ class RiskManagementAgent(BaseAgent):
             check_name="order_validation",
             passed=all_passed,
             instrument=instrument,
-            details={"order": order_data, "checks": checks},
+            details={"order": {**order_data, "event_id": event.event_id}, "checks": checks},
             producer=self.name,
         )
         await self.emit(risk_event)
@@ -550,11 +551,15 @@ class RiskManagementAgent(BaseAgent):
             {"avg_volume": avg_vol, "threshold": min_volume, "samples": len(vols)},
         )
 
-    def _check_nse_lot_size(self, instrument: str, quantity: int) -> dict[str, Any]:
-        from src.risk.nse_lot_sizes import validate_lot_size
+    def _check_instrument_rules(self, instrument: str, quantity: int, exchange: str) -> dict[str, Any]:
+        from src.risk.validation import validate_order
 
-        passed, msg = validate_lot_size(instrument, quantity)
-        return self._check("nse_lot_size", passed, {"message": msg})
+        result = validate_order(instrument, quantity, exchange)
+        return self._check(
+            "instrument_rules",
+            result.valid,
+            {"reason": result.reason, **result.details},
+        )
 
     def _check_market_impact(self, instrument: str, quantity: int) -> tuple[bool, float]:
         from src.risk.market_impact import MarketImpactModel

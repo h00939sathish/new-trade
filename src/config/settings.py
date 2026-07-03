@@ -110,6 +110,14 @@ class Settings(BaseSettings):
     oanda_enabled_instruments: str = "XAU_USD,EUR_USD"
     oanda_execution_mode: str = "internal_simulation"
 
+    @field_validator("oanda_execution_mode")
+    @classmethod
+    def validate_oanda_execution_mode(cls, v: str) -> str:
+        allowed = ("internal_simulation", "oanda_practice")
+        if v not in allowed:
+            raise ValueError(f"OANDA execution mode must be one of {allowed}")
+        return v
+
     @field_validator("oanda_environment")
     @classmethod
     def validate_oanda_environment(cls, v: str) -> str:
@@ -163,6 +171,8 @@ class Settings(BaseSettings):
                 ("telegram_bot_token", "TRA_TELEGRAM_BOT_TOKEN"),
                 ("telegram_chat_id", "TRA_TELEGRAM_CHAT_ID"),
                 ("pagerduty_routing_key", "TRA_PAGERDUTY_ROUTING_KEY"),
+                ("oanda_api_key", "TRA_OANDA_API_KEY"),
+                ("oanda_account_id", "TRA_OANDA_ACCOUNT_ID"),
             ]
 
             for attr, env_name in sensitive_keys:

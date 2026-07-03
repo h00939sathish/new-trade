@@ -22,7 +22,6 @@ class OandaMarketDataProvider:
         self._running = False
         self._tasks: list[asyncio.Task] = []
         self._last_candle_time: dict[str, str] = {}
-        self._candle_buffer: dict[str, list[dict[str, Any]]] = defaultdict(list)
 
     def set_tick_callback(self, callback: Callable) -> None:
         self._on_tick = callback

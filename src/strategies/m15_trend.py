@@ -1,4 +1,3 @@
-import math
 from datetime import UTC, datetime
 from typing import Any
 
@@ -101,7 +100,7 @@ class M15TrendConfirmation:
         highs = [b["high"] for b in self._m15_bars]
         lows = [b["low"] for b in self._m15_bars]
         prior_ema = _ema(closes[:-1], self._ema_period) if len(closes) > self._ema_period else None
-        adx_val = _dx(highs, lows, closes, self._adx_period)
+        adx_val = _dx(highs[:-1], lows[:-1], closes[:-1], self._adx_period)
         if prior_ema is None or adx_val is None:
             return None
         current_close = closes[-1]

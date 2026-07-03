@@ -106,6 +106,17 @@ DEFAULT_CONFIG = {
                 "exit_z": 0.5,
             },
         },
+        "drl_ensemble": {
+            "enabled": False,
+            "weight": 0.0,
+            "params": {
+                "model_path": "models/drl_agent.zip",
+                "lookback": 60,
+                "action_repeats": 1,
+                "hold_action": 1,
+                "confidence_scale": 0.8,
+            },
+        },
         "ml_regime": {
             "enabled": False,
             "weight": 0.0,

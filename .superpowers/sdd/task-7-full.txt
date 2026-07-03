@@ -1,0 +1,261 @@
+### Task 7: USD Risk Sizing
+
+**Files:**
+- Create: `src/risk/oanda_sizing.py`
+- Test: `tests/risk/test_oanda_sizing.py`
+
+**Interfaces:**
+- Produces: `calculate_oanda_units(equity_usd, entry_price, stop_price, instrument_meta) -> int`
+- Produces: `validate_oanda_order(equity_usd, units, entry_price, stop_price, instrument_meta, combined_risk) -> tuple[bool, str]`
+
+Formula:
+```
+risk_budget_usd = equity_usd * 0.005
+risk_per_unit_usd = abs(entry_price - stop_price) * 1.0  # quote=USD for XAU/EUR
+raw_units = risk_budget_usd / risk_per_unit_usd
+units = floor(raw_units) rounded down to trade_units_precision
+```
+
+- [ ] **Step 1: Write failing tests**
+
+```python
+# tests/risk/test_oanda_sizing.py
+import pytest
+
+class TestOandaSizing:
+    def test_calculate_units_basic(self):
+        from src.risk.oanda_sizing import calculate_oanda_units
+        meta = {"trade_units_precision": 0, "minimum_trade_size": 1}
+        units = calculate_oanda_units(
+            equity_usd=10000.0,
+            entry_price=2350.0,
+            stop_price=2330.0,
+            instrument_meta=meta,
+        )
+        # risk_budget = 10000 * 0.005 = 50
+        # risk_per_unit = abs(2350 - 2330) * 1 = 20
+        # raw = 50 / 20 = 2.5
+        # units = 2 (floor to precision 0)
+        assert units == 2
+
+    def test_calculate_units_below_minimum(self):
+        from src.risk.oanda_sizing import calculate_oanda_units
+        meta = {"trade_units_precision": 0, "minimum_trade_size": 1}
+        units = calculate_oanda_units(
+            equity_usd=1000.0,
+            entry_price=2350.0,
+            stop_price=2300.0,
+            instrument_meta=meta,
+        )
+        # risk_budget = 1000 * 0.005 = 5
+        # risk_per_unit = abs(2350 - 2300) * 1 = 50
+        # raw = 5 / 50 = 0.1 -> 0
+        # 0 < minimum_trade_size -> returns 0
+        assert units == 0
+
+    def test_validate_oanda_order_accepts(self):
+        from src.risk.oanda_sizing import validate_oanda_order
+        meta = {"trade_units_precision": 0, "minimum_trade_size": 1}
+        ok, reason = validate_oanda_order(
+            equity_usd=10000.0,
+            units=2,
+            entry_price=2350.0,
+            stop_price=2330.0,
+            instrument_meta=meta,
+            combined_risk=0.004,
+        )
+        assert ok is True
+
+    def test_validate_oanda_order_rejects_excessive_combined_risk(self):
+        from src.risk.oanda_sizing import validate_oanda_order
+        meta = {"trade_units_precision": 0, "minimum_trade_size": 1}
+        ok, reason = validate_oanda_order(
+            equity_usd=10000.0,
+            units=10,
+            entry_price=2350.0,
+            stop_price=2000.0,
+            instrument_meta=meta,
+            combined_risk=0.015,  # already at 1.5% before new trade
+        )
+        assert ok is False
+        assert "combined" in reason.lower()
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+```bash
+cd D:\projects\new\trade && python -m pytest tests/risk/test_oanda_sizing.py -v 2>&1 | tail -10
+```
+
+- [ ] **Step 3: Write OANDA risk sizing module**
+
+```python
+# src/risk/oanda_sizing.py
+import math
+from typing import Any
+
+RISK_PER_TRADE = 0.005       # 0.5% per trade
+MAX_COMBINED_RISK = 0.01     # 1% max combined open risk
+DAILY_LOSS_LIMIT = 0.02      # 2% daily loss triggers kill switch
+
+
+def calculate_oanda_units(
+    equity_usd: float,
+    entry_price: float,
+    stop_price: float,
+    instrument_meta: dict[str, Any],
+) -> int:
+    risk_budget = equity_usd * RISK_PER_TRADE
+    risk_per_unit = abs(entry_price - stop_price)
+    if risk_per_unit <= 0:
+        return 0
+    raw_units = risk_budget / risk_per_unit
+    precision = instrument_meta.get("trade_units_precision", 0)
+    factor = 10 ** precision
+    units = int(math.floor(raw_units * factor) / factor)
+    min_size = instrument_meta.get("minimum_trade_size", 1)
+    if units < min_size:
+        return 0
+    return units
+
+
+def validate_oanda_order(
+    equity_usd: float,
+    units: int,
+    entry_price: float,
+    stop_price: float,
+    instrument_meta: dict[str, Any],
+    combined_risk: float,
+) -> tuple[bool, str]:
+    if units <= 0:
+        return False, "Units must be positive"
+    if entry_price <= 0 or stop_price <= 0:
+        return False, "Invalid price or stop"
+    if abs(entry_price - stop_price) <= 0:
+        return False, "Entry and stop must differ"
+    if combined_risk >= MAX_COMBINED_RISK:
+        return False, f"Combined open risk {combined_risk:.4f} exceeds {MAX_COMBINED_RISK}"
+    risk_budget = equity_usd * RISK_PER_TRADE
+    risk_per_unit = abs(entry_price - stop_price)
+    new_risk = (units * risk_per_unit) / equity_usd
+    if combined_risk + new_risk > MAX_COMBINED_RISK:
+        return False, f"New trade would exceed max combined risk"
+    min_size = instrument_meta.get("minimum_trade_size", 1)
+    if units < min_size:
+        return False, f"Units {units} below minimum {min_size}"
+    return True, "OK"
+```
+
+- [ ] **Step 4: Run tests**
+
+```bash
+cd D:\projects\new\trade && python -m pytest tests/risk/test_oanda_sizing.py -v 2>&1 | tail -10
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/risk/oanda_sizing.py tests/risk/test_oanda_sizing.py
+git commit -m "feat(oanda): add USD risk sizing for FX instruments"
+```
+
+---
+
+### Task 8: System Wiring — Integrate OANDA into TradingSystem
+
+**Files:**
+- Modify: `src/system.py` — add OANDA provider/broker wiring
+- Modify: `src/agents/market_intel.py` — exchange awareness for OANDA
+- Test: `tests/test_system_oanda.py`
+
+- [ ] **Step 1: Write failing test**
+
+```python
+# tests/test_system_oanda.py
+import pytest
+from unittest.mock import patch, MagicMock
+
+class TestSystemOandaWiring:
+    def test_system_detects_oanda_settings(self):
+        with patch("src.config.settings.settings") as mock_settings:
+            mock_settings.oanda_api_key = "test_key"
+            mock_settings.oanda_account_id = "test_id"
+            mock_settings.angel_api_key = ""
+            mock_settings.groww_api_key = ""
+            mock_settings.live_trading_enabled = False
+            from src.system import TradingSystem
+            system = TradingSystem()
+            assert system._oanda_provider is not None
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+```bash
+cd D:\projects\new\trade && python -m pytest tests/test_system_oanda.py -v 2>&1 | tail -10
+```
+
+- [ ] **Step 3: Modify system.py to wire OANDA**
+
+In `src/system.py`, after the existing provider wiring (around line 64-66), add:
+
+```python
+# In __init__, after existing provider wiring:
+
+# OANDA provider (if configured)
+self._oanda_provider: Any | None = None
+self._oanda_broker: Any | None = None
+
+if settings.oanda_api_key and settings.oanda_account_id and settings.oanda_environment == "practice":
+    from src.connectors.oanda import OandaClient, OandaMarketDataProvider, OandaBroker
+    oanda_client = OandaClient(
+        api_key=settings.oanda_api_key,
+        account_id=settings.oanda_account_id,
+        environment=settings.oanda_environment,
+    )
+    self._oanda_provider = OandaMarketDataProvider(client=oanda_client)
+    if settings.oanda_execution_mode == "oanda_practice":
+        self._oanda_broker = OandaBroker(client=oanda_client)
+
+# Provider selection: OANDA > Angel > Groww > Jugaad
+market_data_provider = self._oanda_provider or self._angel_provider or self._groww_provider or self._jugaad_provider
+
+# Broker: prefer OANDA broker, then Kite broker
+broker = self._oanda_broker or self._kite_broker
+```
+
+Then update the ExecutionAgent instantiation to use the new broker variable:
+
+```python
+self.execution = ExecutionAgent(
+    event_store=self._event_store,
+    broker=broker,
+)
+```
+
+Also add OANDA instruments to the watchlist:
+
+```python
+# After existing set_watchlist logic, add:
+if settings.oanda_api_key and settings.oanda_enabled_instruments:
+    for inst in settings.oanda_enabled_instruments.split(","):
+        inst = inst.strip()
+        if inst:
+            self.market_intel.add_instrument(inst)
+    self.market_intel.set_exchange(Exchange.FX)
+```
+
+- [ ] **Step 4: Run tests**
+
+```bash
+cd D:\projects\new\trade && python -m pytest tests/test_system_oanda.py -v 2>&1 | tail -10
+cd D:\projects\new\trade && python -m pytest tests/ -x -q --no-header 2>&1 | tail -5
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/system.py tests/test_system_oanda.py
+git commit -m "feat(oanda): wire OANDA provider and broker into TradingSystem"
+```
+
+---

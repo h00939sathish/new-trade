@@ -1,0 +1,251 @@
+### Task 3: OANDA Market Data Provider
+
+**Files:**
+- Create: `src/connectors/oanda/market_data.py`
+- Test: `tests/connectors/oanda/test_market_data.py`
+
+**Interfaces:**
+- Consumes: `OandaClient` (Task 2)
+- Produces: `OandaMarketDataProvider(client=None, on_tick=None, on_ohlcv=None)`
+- Produces: `provider.set_tick_callback(callback)`, `provider.set_ohlcv_callback(callback)`
+- Produces: `provider.add_instrument(tradingsymbol, exchange="FX")`
+- Produces: `provider.remove_instrument(tradingsymbol)`
+- Produces: `async provider.start()`
+- Produces: `async provider.stop()`
+- Produces: `async provider.get_historical(tradingsymbol, interval_minutes=1, days=7, exchange="FX") -> list[dict]`
+
+The provider must:
+1. On `start()`: begin backfilling historical M1 candles, then subscribe to the OANDA pricing stream bid/ask.
+2. On each pricing tick: emit a tick event (bid, ask, spread) to the `on_tick` callback.
+3. On each completed M1 candle boundary: emit an OHLCV event to the `on_ohlcv` callback.
+4. The OHLCV dict format matches the existing provider pattern: `{"instrument", "exchange", "open", "high", "low", "close", "volume", "timestamp"}`.
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# tests/connectors/oanda/test_market_data.py
+import pytest
+from unittest.mock import AsyncMock, MagicMock
+
+class TestOandaMarketDataProvider:
+    @pytest.mark.asyncio
+    async def test_add_instrument_and_start(self):
+        from src.connectors.oanda.market_data import OandaMarketDataProvider
+        provider = OandaMarketDataProvider()
+        provider.add_instrument("XAU_USD", "FX")
+        assert "XAU_USD" in provider._instruments
+
+    @pytest.mark.asyncio
+    async def test_callbacks_are_set(self):
+        from src.connectors.oanda.market_data import OandaMarketDataProvider
+        provider = OandaMarketDataProvider()
+        tick_cb = MagicMock()
+        ohlcv_cb = MagicMock()
+        provider.set_tick_callback(tick_cb)
+        provider.set_ohlcv_callback(ohlcv_cb)
+        assert provider._on_tick is tick_cb
+        assert provider._on_ohlcv is ohlcv_cb
+
+    @pytest.mark.asyncio
+    async def test_get_historical_returns_candles(self):
+        from src.connectors.oanda.market_data import OandaMarketDataProvider
+        from src.connectors.oanda.client import OandaClient
+        client = MagicMock(spec=OandaClient)
+        client.get_candles.return_value = [
+            {"time": "2026-07-01T00:00:00.000000000Z", "mid": {"o": "2350.0", "h": "2351.0", "l": "2349.0", "c": "2350.5", "v": 100}}
+        ]
+        provider = OandaMarketDataProvider(client=client)
+        candles = await provider.get_historical("XAU_USD", interval_minutes=1, days=1)
+        assert len(candles) == 1
+        assert candles[0]["open"] == 2350.0
+        assert candles[0]["instrument"] == "XAU_USD"
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+```bash
+cd D:\projects\new\trade && python -m pytest tests/connectors/oanda/test_market_data.py -v 2>&1 | tail -10
+```
+
+Expected: ImportError.
+
+- [ ] **Step 3: Write OandaMarketDataProvider**
+
+```python
+# src/connectors/oanda/market_data.py
+import asyncio
+import logging
+from collections import defaultdict
+from datetime import UTC, datetime, timedelta
+from typing import Any, Callable
+
+logger = logging.getLogger(__name__)
+
+
+class OandaMarketDataProvider:
+    def __init__(
+        self,
+        client: Any | None = None,
+        on_tick: Callable | None = None,
+        on_ohlcv: Callable | None = None,
+    ):
+        self._client = client
+        self._on_tick = on_tick
+        self._on_ohlcv = on_ohlcv
+        self._instruments: list[str] = []
+        self._exchange_map: dict[str, str] = {}
+        self._running = False
+        self._tasks: list[asyncio.Task] = []
+        self._last_candle_time: dict[str, str] = {}
+        self._candle_buffer: dict[str, list[dict[str, Any]]] = defaultdict(list)
+
+    def set_tick_callback(self, callback: Callable) -> None:
+        self._on_tick = callback
+
+    def set_ohlcv_callback(self, callback: Callable) -> None:
+        self._on_ohlcv = callback
+
+    def add_instrument(self, tradingsymbol: str, exchange: str = "FX") -> None:
+        if tradingsymbol not in self._instruments:
+            self._instruments.append(tradingsymbol)
+            self._exchange_map[tradingsymbol] = exchange
+
+    def remove_instrument(self, tradingsymbol: str) -> None:
+        if tradingsymbol in self._instruments:
+            self._instruments.remove(tradingsymbol)
+            self._exchange_map.pop(tradingsymbol, None)
+
+    async def start(self, poll_interval: float = 1.0) -> None:
+        if self._running:
+            return
+        if not self._client:
+            logger.warning("OANDA market data provider: no client configured")
+            return
+        self._running = True
+        self._tasks = [
+            asyncio.create_task(self._backfill_and_stream()),
+        ]
+
+    async def stop(self) -> None:
+        self._running = False
+        for task in self._tasks:
+            task.cancel()
+        await asyncio.gather(*self._tasks, return_exceptions=True)
+        self._tasks.clear()
+
+    async def _backfill_and_stream(self) -> None:
+        try:
+            await self._backfill_historical()
+        except Exception as e:
+            logger.warning("OANDA historical backfill failed: %s", e)
+        await self._stream_pricing()
+
+    async def _backfill_historical(self) -> None:
+        for instrument in self._instruments:
+            try:
+                candles = self._client.get_candles(instrument, granularity="M1", count=500)
+                for c in candles:
+                    ohlcv = self._parse_candle(instrument, c)
+                    if ohlcv and self._on_ohlcv:
+                        self._on_ohlcv(ohlcv)
+                    ts = c.get("time", "")
+                    if ts:
+                        self._last_candle_time[instrument] = ts
+                logger.info("Backfilled %d M1 candles for %s", len(candles), instrument)
+            except Exception as e:
+                logger.error("Failed to backfill %s: %s", instrument, e)
+
+    async def _stream_pricing(self) -> None:
+        if not self._instruments:
+            return
+        try:
+            async for tick in self._client.stream_pricing(self._instruments):
+                if not self._running:
+                    break
+                await self._process_pricing_tick(tick)
+        except Exception as e:
+            logger.error("Pricing stream error: %s", e)
+
+    async def _process_pricing_tick(self, tick: dict[str, Any]) -> None:
+        tick_type = tick.get("type")
+        if tick_type == "PRICE":
+            instrument = tick.get("instrument", "")
+            if instrument not in self._instruments:
+                return
+            bid = float(tick.get("bids", [{}])[0].get("price", 0)) if tick.get("bids") else None
+            ask = float(tick.get("asks", [{}])[0].get("price", 0)) if tick.get("asks") else None
+            midpoint = (bid + ask) / 2 if bid and ask else None
+            ts_str = tick.get("time", "")
+            if self._on_tick:
+                payload = {
+                    "instrument": instrument,
+                    "exchange": self._exchange_map.get(instrument, "FX"),
+                    "last_price": midpoint or 0,
+                    "bid": bid,
+                    "ask": ask,
+                    "spread": round(ask - bid, 5) if bid and ask else None,
+                    "timestamp": ts_str,
+                }
+                self._on_tick(payload)
+        elif tick_type == "HEARTBEAT":
+            logger.debug("OANDA pricing heartbeat: %s", tick.get("time", ""))
+
+    def _parse_candle(self, instrument: str, candle: dict[str, Any]) -> dict[str, Any] | None:
+        mid = candle.get("mid", {})
+        o = mid.get("o")
+        h = mid.get("h")
+        l = mid.get("l")
+        c = mid.get("c")
+        v = candle.get("volume", 0)
+        ts = candle.get("time", "")
+        if not all([o, h, l, c]):
+            return None
+        return {
+            "instrument": instrument,
+            "exchange": self._exchange_map.get(instrument, "FX"),
+            "open": float(o),
+            "high": float(h),
+            "low": float(l),
+            "close": float(c),
+            "volume": float(v),
+            "timestamp": ts,
+        }
+
+    async def get_historical(
+        self,
+        tradingsymbol: str,
+        interval_minutes: int = 1,
+        days: int = 7,
+        exchange: str = "FX",
+    ) -> list[dict[str, Any]]:
+        if not self._client:
+            return []
+        granularity = self._minutes_to_granularity(interval_minutes)
+        candles = self._client.get_candles(tradingsymbol, granularity=granularity, count=5000)
+        result = []
+        for c in candles:
+            parsed = self._parse_candle(tradingsymbol, c)
+            if parsed:
+                result.append(parsed)
+        return result
+
+    @staticmethod
+    def _minutes_to_granularity(minutes: int) -> str:
+        mapping = {1: "M1", 5: "M5", 15: "M15", 30: "M30", 60: "H1", 120: "H2", 240: "H4", 1440: "D"}
+        return mapping.get(minutes, "M1")
+```
+
+- [ ] **Step 4: Run tests**
+
+```bash
+cd D:\projects\new\trade && python -m pytest tests/connectors/oanda/test_market_data.py -v 2>&1 | tail -10
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/connectors/oanda/market_data.py tests/connectors/oanda/test_market_data.py
+git commit -m "feat(oanda): add OANDA market data provider"
+```
+
+---

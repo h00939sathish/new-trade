@@ -540,6 +540,8 @@ class ExecutionAgent(BaseAgent):
         if quantity <= 0:
             return
 
+        exchange = Exchange(signal.get("exchange", "NSE"))
+
         # TWAP Smart Order Routing for large orders
         if quantity >= 500:
             is_iceberg = quantity >= 1000
@@ -561,7 +563,7 @@ class ExecutionAgent(BaseAgent):
 
         order_event = OrderEvent.create(
             instrument=instrument,
-            exchange=Exchange(signal.get("exchange", "NSE")),
+            exchange=exchange,
             side=side,
             order_type=OrderType.MARKET,
             quantity=quantity,
@@ -1120,18 +1122,17 @@ class ExecutionAgent(BaseAgent):
             }
         )
 
-        from src.risk.nse_lot_sizes import validate_lot_size
+        from src.risk.validation import validate_order
 
-        lot_exchange = order.instrument.split(":")[0].upper() if ":" in order.instrument else "NSE"
-        lot_check = validate_lot_size(order.instrument, order.quantity, exchange=lot_exchange)
+        vresult = validate_order(order.instrument, order.quantity, order.exchange.value)
         checks.append(
             {
-                "name": "lot_size",
-                "passed": lot_check["valid"],
+                "name": "instrument_rules",
+                "passed": vresult.valid,
                 "details": {
                     "quantity": order.quantity,
-                    "lot_size": lot_check.get("lot_size"),
-                    "message": lot_check.get("message", ""),
+                    "reason": vresult.reason,
+                    **vresult.details,
                 },
             }
         )

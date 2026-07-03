@@ -6,20 +6,34 @@ from src.risk.position_registry import PositionRegistry
 
 
 class TestNseLotSizes:
-    def test_known_symbol_rejects_invalid_qty(self):
-        result = validate_lot_size("RELIANCE", 100)
+    def test_cash_equity_always_passes(self):
+        """NSE cash equity trades have no lot size constraint."""
+        result = validate_lot_size("RELIANCE", 17, exchange="NSE")
+        assert result["valid"]
+
+    def test_nfo_derivative_rejects_invalid_qty(self):
+        result = validate_lot_size("RELIANCE", 100, exchange="NFO")
         assert not result["valid"]
         assert "lot size" in result["message"]
 
-    def test_known_symbol_accepts_multiple(self):
-        result = validate_lot_size("RELIANCE", 250)
+    def test_nfo_derivative_accepts_multiple(self):
+        result = validate_lot_size("RELIANCE", 250, exchange="NFO")
         assert result["valid"]
         assert "1 lot(s) of 250" in result["message"]
 
-    def test_known_symbol_accepts_multiple_lots(self):
-        result = validate_lot_size("RELIANCE", 500)
+    def test_nfo_derivative_accepts_multiple_lots(self):
+        result = validate_lot_size("RELIANCE", 500, exchange="NFO")
         assert result["valid"]
         assert "2 lot(s) of 250" in result["message"]
+
+    def test_mcx_commodity_rejects_invalid_qty(self):
+        result = validate_lot_size("CRUDEOIL", 50, exchange="MCX")
+        assert not result["valid"]
+        assert "lot size" in result["message"]
+
+    def test_mcx_commodity_accepts_multiple(self):
+        result = validate_lot_size("CRUDEOIL", 100, exchange="MCX")
+        assert result["valid"]
 
     def test_unknown_symbol_passes(self):
         result = validate_lot_size("UNKNOWN", 100)
@@ -27,7 +41,7 @@ class TestNseLotSizes:
         assert result["message"] == ""
 
     def test_case_insensitive(self):
-        result = validate_lot_size("reliance", 250)
+        result = validate_lot_size("reliance", 250, exchange="NFO")
         assert result["valid"]
 
     def test_lot_sizes_are_positive(self):

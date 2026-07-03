@@ -8,13 +8,6 @@ from src.agents.regime import RegimeDetectionAgent
 from src.agents.risk_mgmt import RiskManagementAgent
 from src.agents.strategy_gen import StrategyGenAgent
 
-# ExpertPersonasAgent is intentionally NOT exported. The class file
-# (src/agents/personas.py) is kept for tests and historical reference,
-# but the class is not instantiated anywhere in the system. Including
-# it in __all__ would imply it is part of the public runtime API.
-# Per three_stage_roadmap.md P1.5: dead code is removed from the
-# runtime surface, source files preserved.
-
 __all__ = [
     "Agent",
     "AgentStatus",

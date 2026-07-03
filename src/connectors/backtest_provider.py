@@ -63,7 +63,7 @@ class BacktestDataProvider:
                         logger.warning("Failed to load cache for %s: %s", inst, e)
 
                 if not candles:
-                    if hasattr(self._provider, "get_historical"):
+                    if self._exchange != "FX" and hasattr(self._provider, "get_historical"):
                         try:
                             candles = await self._provider.get_historical(
                                 tradingsymbol=inst,
@@ -104,6 +104,10 @@ class BacktestDataProvider:
                             "instrument": inst,
                             "exchange": self._exchange,
                             "price": round(c["close"], 2),
+                            "open": round(c["open"], 2),
+                            "high": round(c["high"], 2),
+                            "low": round(c["low"], 2),
+                            "close": round(c["close"], 2),
                             "volume": int(c["volume"]),
                             "timestamp": c["timestamp"],
                         }
@@ -254,6 +258,10 @@ class BacktestDataProvider:
                         "instrument": instrument,
                         "exchange": self._exchange,
                         "price": round(tick_price, 2),
+                        "open": round(tick_price, 2),
+                        "high": round(tick_price, 2),
+                        "low": round(tick_price, 2),
+                        "close": round(tick_price, 2),
                         "volume": volume_chunk + random.randint(-5, 5),
                         "timestamp": tick_ts.isoformat(),
                     }
@@ -288,7 +296,7 @@ async def fetch_historical_1m_candles(
     Yahoo only allows up to ~30 days of 1m data per request,
     so we split into 30-day chunks and merge.
     """
-    exchange_map = {"NSE": ".NS", "BSE": ".BO"}
+    exchange_map = {"NSE": ".NS", "BSE": ".BO", "FX": ""}
     suffix = exchange_map.get(exchange, "")
     max_chunk_days = 8
     candles: list[dict[str, Any]] = []

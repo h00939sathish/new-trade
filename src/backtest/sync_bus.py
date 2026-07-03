@@ -24,7 +24,7 @@ class SyncEventBus:
     """
 
     def __init__(self):
-        self._subscribers: dict[str, list] = {}
+        self._agents: list = []
         self._event_store = None
         self._dropped_events = 0
         self._defer_depth = 0
@@ -35,9 +35,8 @@ class SyncEventBus:
 
     def register_agent(self, agent):
         """Register an agent instance so we can call its on_event directly."""
-        for et in agent._subscribed_event_types:
-            etype_str = et.value if hasattr(et, "value") else str(et)
-            self._subscribers.setdefault(etype_str, []).append(agent)
+        if agent not in self._agents:
+            self._agents.append(agent)
 
     def subscribe(self, agent_name: str, event_types: set[EventType]) -> asyncio.Queue:
         """
@@ -47,47 +46,27 @@ class SyncEventBus:
         return asyncio.Queue(maxsize=1)
 
     async def publish(self, event: Event) -> None:
-        """
-        If we are already inside a publish (nested call), defer delivery until
-        the outer publish completes. This guarantees that all subscribers of
-        the parent event are called before any nested event is delivered.
-        """
         if self._defer_depth > 0:
-            # Nested publish — queue for later
             self._deferred.append(event)
             return
 
-        # Top-level publish — process synchronously, draining nested events
-        # one at a time so depth accounting is correct for N-deep nesting.
         self._defer_depth = 1
         try:
-            # First, deliver the top-level event
             await self._deliver(event)
-            # Then drain any nested events that were queued. Each nested event
-            # is itself processed via _deliver, and any tertiary-nested events
-            # it emits are appended to the same queue. We re-enter depth=1
-            # for each so that any new events emitted during its handling
-            # are also deferred.
             while self._deferred:
                 self._defer_depth = 1
                 nested = self._deferred.popleft()
                 await self._deliver(nested)
         finally:
             self._defer_depth = 0
-            # Any stragglers (shouldn't happen but defensive)
             self._deferred.clear()
 
     async def _deliver(self, event: Event) -> None:
-        etype_str = (
-            event.event_type.value if hasattr(event.event_type, "value") else str(event.event_type)
-        )
-        agents = self._subscribers.get(etype_str, [])
-
-        for agent in agents:
-            # Skip self-emitted events
+        for agent in self._agents:
             if event.metadata and event.metadata.producer == agent.name:
                 continue
-
+            if getattr(agent, "_running", True) is False:
+                continue
             try:
                 await agent.on_event(event)
             except Exception as e:
@@ -95,7 +74,6 @@ class SyncEventBus:
                     "SyncEventBus: Error calling %s.on_event: %s", agent.name, e, exc_info=True
                 )
 
-        # Optional: Append to memory store
         if self._event_store:
             from src.event_store.memory import InMemoryEventStore
 

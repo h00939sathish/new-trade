@@ -16,6 +16,7 @@ from src.agents import (
 from src.agents.reconciliation import ReconciliationAgent
 from src.config.settings import settings
 from src.event_store import create_event_store
+from src.schemas.events import Exchange
 
 
 class TradingSystem:
@@ -25,6 +26,8 @@ class TradingSystem:
         self._angel_provider: Any | None = None
         self._kite_client: Any | None = None
         self._kite_broker: Any | None = None
+        self._oanda_provider: Any | None = None
+        self._oanda_broker: Any | None = None
 
         if providers is not None:
             self._angel_provider = providers.get("angel")
@@ -56,6 +59,25 @@ class TradingSystem:
                     "Kite credentials are configured but TRA_LIVE_TRADING_ENABLED is false; starting in paper mode."
                 )
 
+            if settings.oanda_api_key and settings.oanda_account_id and settings.oanda_environment == "practice":
+                from src.connectors.oanda import OandaBroker, OandaClient, OandaMarketDataProvider
+
+                oanda_client = OandaClient(
+                    api_key=settings.oanda_api_key,
+                    account_id=settings.oanda_account_id,
+                    environment=settings.oanda_environment,
+                )
+                self._oanda_provider = OandaMarketDataProvider(client=oanda_client)
+                if settings.oanda_execution_mode == "oanda_practice":
+                    self._oanda_broker = OandaBroker(client=oanda_client)
+
+        if settings.oanda_api_key and settings.oanda_account_id and settings.oanda_environment != "practice":
+            logging.getLogger("system").warning(
+                "OANDA credentials found but environment is '%s'; OANDA provider disabled. "
+                "Set TRA_OANDA_ENVIRONMENT=practice to enable.",
+                settings.oanda_environment,
+            )
+
         if not self._angel_provider and not self._groww_provider:
             from src.connectors.jugaad import JugaadMarketDataProvider
 
@@ -63,17 +85,24 @@ class TradingSystem:
         else:
             self._jugaad_provider = None
 
-        market_data_provider = self._angel_provider or self._groww_provider or self._jugaad_provider
+        market_data_provider = self._oanda_provider or self._angel_provider or self._groww_provider or self._jugaad_provider
 
         self.market_intel = MarketIntelAgent(
             event_store=self._event_store,
             market_data_provider=market_data_provider,
         )
+        if settings.oanda_api_key and settings.oanda_enabled_instruments:
+            for inst in settings.oanda_enabled_instruments.split(","):
+                inst = inst.strip()
+                if inst:
+                    self.market_intel.add_instrument(inst)
+            self.market_intel.set_exchange(Exchange.FX)
         self.strategy_gen = StrategyGenAgent(event_store=self._event_store)
         self.risk_mgmt = RiskManagementAgent(event_store=self._event_store)
+        broker = self._oanda_broker or self._kite_broker
         self.execution = ExecutionAgent(
             event_store=self._event_store,
-            broker=self._kite_broker,
+            broker=broker,
         )
         self.portfolio_opt = PortfolioOptimizationAgent(
             event_store=self._event_store,
@@ -225,6 +254,7 @@ class TradingSystem:
         price: float,
         volume: int = 0,
         exchange: str = "NSE",
+        timestamp: Any = None,
     ) -> None:
         from src.schemas.events import Exchange as Ex
 
@@ -233,6 +263,7 @@ class TradingSystem:
             exchange=Ex(exchange),
             last_price=price,
             volume=volume,
+            timestamp=timestamp,
         )
 
     async def inject_ohlcv(

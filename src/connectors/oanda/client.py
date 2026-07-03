@@ -141,7 +141,7 @@ class OandaClient:
         order_spec = {
             "type": order_type,
             "instrument": instrument,
-            "units": abs(units) if side == "buy" else -abs(units),
+            "units": str(abs(units)) if side == "buy" else str(-abs(units)),
         }
         if price is not None:
             order_spec["price"] = str(price)
@@ -188,7 +188,7 @@ class OandaClient:
     # --- Transactions ---
 
     def get_transactions_since(self, since_id: str) -> list[dict[str, Any]]:
-        data = self._get(f"/accounts/{self.account_id}/transactions/sinceid?id={since_id}")
+        data = self._get(f"/accounts/{self.account_id}/transactions/sinceid", params={"id": since_id})
         return data.get("transactions", [])
 
     def get_transaction(self, txn_id: str) -> dict[str, Any]:

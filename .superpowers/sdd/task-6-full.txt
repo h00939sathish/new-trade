@@ -1,0 +1,333 @@
+### Task 6: FX Instrument Profiles
+
+**Files:**
+- Create: `src/config/oanda_profiles.py`
+- Test: `tests/config/test_oanda_profiles.py`
+
+**Interfaces:**
+- Produces: `OANDA_INSTRUMENT_PROFILES` dict mapping instrument -> strategy config
+- Produces: `load_oanda_profile(instrument) -> dict` — merges profile with DEFAULT_CONFIG
+
+Each profile overrides specific strategy parameters. Non-specified strategies use defaults from DEFAULT_CONFIG (with appropriate disabled flags).
+
+- [ ] **Step 1: Write failing tests**
+
+```python
+# tests/config/test_oanda_profiles.py
+import pytest
+
+class TestOandaProfiles:
+    def test_xau_usd_profile_exists(self):
+        from src.config.oanda_profiles import OANDA_INSTRUMENT_PROFILES
+        assert "XAU_USD" in OANDA_INSTRUMENT_PROFILES
+
+    def test_profile_disables_vwap(self):
+        from src.config.oanda_profiles import OANDA_INSTRUMENT_PROFILES
+        profile = OANDA_INSTRUMENT_PROFILES["XAU_USD"]
+        strategies = profile.get("strategies", {})
+        assert strategies.get("vwap_reversion", {}).get("enabled") is False
+
+    def test_eurusd_enables_sideways_reversion(self):
+        from src.config.oanda_profiles import OANDA_INSTRUMENT_PROFILES
+        profile = OANDA_INSTRUMENT_PROFILES["EUR_USD"]
+        strategies = profile.get("strategies", {})
+        assert strategies.get("sideways_reversion", {}).get("enabled") is True
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+```bash
+cd D:\projects\new\trade && python -m pytest tests/config/test_oanda_profiles.py -v 2>&1 | tail -10
+```
+
+- [ ] **Step 3: Write OANDA instrument profiles**
+
+```python
+# src/config/oanda_profiles.py
+OANDA_INSTRUMENT_PROFILES = {
+    "XAU_USD": {
+        "strategies": {
+            "momentum": {
+                "enabled": True,
+                "weight": 0.6,
+                "params": {"short_window": 5, "long_window": 20, "threshold": 0.0005},
+            },
+            "vol_breakout": {
+                "enabled": True,
+                "weight": 0.4,
+                "params": {"window": 20},
+            },
+            "sideways_reversion": {
+                "enabled": False,
+                "weight": 0.0,
+                "params": {},
+            },
+            "vwap_reversion": {
+                "enabled": False,
+                "weight": 0.0,
+                "params": {},
+            },
+            "stat_arb": {
+                "enabled": False,
+                "weight": 0.0,
+                "params": {},
+            },
+            "ema200_regime_gate": {
+                "enabled": True,
+                "weight": 0.0,
+                "params": {"lookback": 100},
+            },
+            "adx_regime_filter": {
+                "enabled": True,
+                "weight": 0.0,
+                "params": {"period": 14},
+            },
+        },
+        "instrument_meta": {
+            "asset_class": "COMMODITY",
+            "currency": "USD",
+            "pip_location": -1,
+            "trade_units_precision": 0,
+            "minimum_trade_size": 1,
+            "max_spread": 0.50,  # 50 pips max spread for entry
+        },
+    },
+    "EUR_USD": {
+        "strategies": {
+            "momentum": {
+                "enabled": True,
+                "weight": 0.5,
+                "params": {"short_window": 5, "long_window": 20, "threshold": 0.0003},
+            },
+            "sideways_reversion": {
+                "enabled": True,
+                "weight": 0.3,
+                "params": {"rsi_window": 14, "bb_window": 20, "bb_std": 2.0, "atr_window": 14},
+            },
+            "vol_breakout": {
+                "enabled": True,
+                "weight": 0.2,
+                "params": {"window": 20},
+            },
+            "vwap_reversion": {
+                "enabled": False,
+                "weight": 0.0,
+                "params": {},
+            },
+            "stat_arb": {
+                "enabled": False,
+                "weight": 0.0,
+                "params": {},
+            },
+            "ema200_regime_gate": {
+                "enabled": True,
+                "weight": 0.0,
+                "params": {"lookback": 100},
+            },
+            "adx_regime_filter": {
+                "enabled": True,
+                "weight": 0.0,
+                "params": {"period": 14},
+            },
+        },
+        "instrument_meta": {
+            "asset_class": "CURRENCY",
+            "currency": "USD",
+            "pip_location": -4,
+            "trade_units_precision": 0,
+            "minimum_trade_size": 1,
+            "max_spread": 0.0003,  # 3 pips max spread for entry
+        },
+    },
+}
+
+
+def load_oanda_profile(instrument: str) -> dict:
+    """Return the full strategy config merged with DEFAULT_CONFIG for an OANDA instrument."""
+    from src.config.strategy_config import DEFAULT_CONFIG
+    profile = OANDA_INSTRUMENT_PROFILES.get(instrument, {})
+    strategies = profile.get("strategies", {})
+    config = __import__("copy").deepcopy(DEFAULT_CONFIG)
+    for name, overrides in strategies.items():
+        if name in config["strategies"]:
+            config["strategies"][name].update(overrides)
+    return config
+```
+
+- [ ] **Step 4: Run tests**
+
+```bash
+cd D:\projects\new\trade && python -m pytest tests/config/test_oanda_profiles.py -v 2>&1 | tail -10
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/config/oanda_profiles.py tests/config/test_oanda_profiles.py
+git commit -m "feat(oanda): add FX instrument strategy profiles for XAU_USD and EUR_USD"
+```
+
+---
+
+### Task 7: USD Risk Sizing
+
+**Files:**
+- Create: `src/risk/oanda_sizing.py`
+- Test: `tests/risk/test_oanda_sizing.py`
+
+**Interfaces:**
+- Produces: `calculate_oanda_units(equity_usd, entry_price, stop_price, instrument_meta) -> int`
+- Produces: `validate_oanda_order(equity_usd, units, entry_price, stop_price, instrument_meta, combined_risk) -> tuple[bool, str]`
+
+Formula:
+```
+risk_budget_usd = equity_usd * 0.005
+risk_per_unit_usd = abs(entry_price - stop_price) * 1.0  # quote=USD for XAU/EUR
+raw_units = risk_budget_usd / risk_per_unit_usd
+units = floor(raw_units) rounded down to trade_units_precision
+```
+
+- [ ] **Step 1: Write failing tests**
+
+```python
+# tests/risk/test_oanda_sizing.py
+import pytest
+
+class TestOandaSizing:
+    def test_calculate_units_basic(self):
+        from src.risk.oanda_sizing import calculate_oanda_units
+        meta = {"trade_units_precision": 0, "minimum_trade_size": 1}
+        units = calculate_oanda_units(
+            equity_usd=10000.0,
+            entry_price=2350.0,
+            stop_price=2330.0,
+            instrument_meta=meta,
+        )
+        # risk_budget = 10000 * 0.005 = 50
+        # risk_per_unit = abs(2350 - 2330) * 1 = 20
+        # raw = 50 / 20 = 2.5
+        # units = 2 (floor to precision 0)
+        assert units == 2
+
+    def test_calculate_units_below_minimum(self):
+        from src.risk.oanda_sizing import calculate_oanda_units
+        meta = {"trade_units_precision": 0, "minimum_trade_size": 1}
+        units = calculate_oanda_units(
+            equity_usd=1000.0,
+            entry_price=2350.0,
+            stop_price=2300.0,
+            instrument_meta=meta,
+        )
+        # risk_budget = 1000 * 0.005 = 5
+        # risk_per_unit = abs(2350 - 2300) * 1 = 50
+        # raw = 5 / 50 = 0.1 -> 0
+        # 0 < minimum_trade_size -> returns 0
+        assert units == 0
+
+    def test_validate_oanda_order_accepts(self):
+        from src.risk.oanda_sizing import validate_oanda_order
+        meta = {"trade_units_precision": 0, "minimum_trade_size": 1}
+        ok, reason = validate_oanda_order(
+            equity_usd=10000.0,
+            units=2,
+            entry_price=2350.0,
+            stop_price=2330.0,
+            instrument_meta=meta,
+            combined_risk=0.004,
+        )
+        assert ok is True
+
+    def test_validate_oanda_order_rejects_excessive_combined_risk(self):
+        from src.risk.oanda_sizing import validate_oanda_order
+        meta = {"trade_units_precision": 0, "minimum_trade_size": 1}
+        ok, reason = validate_oanda_order(
+            equity_usd=10000.0,
+            units=10,
+            entry_price=2350.0,
+            stop_price=2000.0,
+            instrument_meta=meta,
+            combined_risk=0.015,  # already at 1.5% before new trade
+        )
+        assert ok is False
+        assert "combined" in reason.lower()
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+```bash
+cd D:\projects\new\trade && python -m pytest tests/risk/test_oanda_sizing.py -v 2>&1 | tail -10
+```
+
+- [ ] **Step 3: Write OANDA risk sizing module**
+
+```python
+# src/risk/oanda_sizing.py
+import math
+from typing import Any
+
+RISK_PER_TRADE = 0.005       # 0.5% per trade
+MAX_COMBINED_RISK = 0.01     # 1% max combined open risk
+DAILY_LOSS_LIMIT = 0.02      # 2% daily loss triggers kill switch
+
+
+def calculate_oanda_units(
+    equity_usd: float,
+    entry_price: float,
+    stop_price: float,
+    instrument_meta: dict[str, Any],
+) -> int:
+    risk_budget = equity_usd * RISK_PER_TRADE
+    risk_per_unit = abs(entry_price - stop_price)
+    if risk_per_unit <= 0:
+        return 0
+    raw_units = risk_budget / risk_per_unit
+    precision = instrument_meta.get("trade_units_precision", 0)
+    factor = 10 ** precision
+    units = int(math.floor(raw_units * factor) / factor)
+    min_size = instrument_meta.get("minimum_trade_size", 1)
+    if units < min_size:
+        return 0
+    return units
+
+
+def validate_oanda_order(
+    equity_usd: float,
+    units: int,
+    entry_price: float,
+    stop_price: float,
+    instrument_meta: dict[str, Any],
+    combined_risk: float,
+) -> tuple[bool, str]:
+    if units <= 0:
+        return False, "Units must be positive"
+    if entry_price <= 0 or stop_price <= 0:
+        return False, "Invalid price or stop"
+    if abs(entry_price - stop_price) <= 0:
+        return False, "Entry and stop must differ"
+    if combined_risk >= MAX_COMBINED_RISK:
+        return False, f"Combined open risk {combined_risk:.4f} exceeds {MAX_COMBINED_RISK}"
+    risk_budget = equity_usd * RISK_PER_TRADE
+    risk_per_unit = abs(entry_price - stop_price)
+    new_risk = (units * risk_per_unit) / equity_usd
+    if combined_risk + new_risk > MAX_COMBINED_RISK:
+        return False, f"New trade would exceed max combined risk"
+    min_size = instrument_meta.get("minimum_trade_size", 1)
+    if units < min_size:
+        return False, f"Units {units} below minimum {min_size}"
+    return True, "OK"
+```
+
+- [ ] **Step 4: Run tests**
+
+```bash
+cd D:\projects\new\trade && python -m pytest tests/risk/test_oanda_sizing.py -v 2>&1 | tail -10
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/risk/oanda_sizing.py tests/risk/test_oanda_sizing.py
+git commit -m "feat(oanda): add USD risk sizing for FX instruments"
+```
+
+---
