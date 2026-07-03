@@ -104,6 +104,12 @@ class Settings(BaseSettings):
     gold_futures_mcx_symbol: str = "GOLD"
     mcx_lot_size_gold: int = 1
 
+    oanda_api_key: str = ""
+    oanda_account_id: str = ""
+    oanda_environment: str = "practice"
+    oanda_enabled_instruments: str = "XAU_USD,EUR_USD"
+    oanda_execution_mode: str = "internal_simulation"
+
     @model_validator(mode="after")
     def check_credential_age(self) -> "Settings":
         env_path = self.model_config.get("env_file", ".env")

@@ -78,6 +78,7 @@ class Exchange(StrEnum):
     MCX = "MCX"
     CDS = "CDS"
     INDICES = "INDICES"
+    FX = "FX"
 
 
 class EventMetadata(BaseModel):
