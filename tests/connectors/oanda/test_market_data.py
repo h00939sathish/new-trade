@@ -30,7 +30,7 @@ class TestOandaMarketDataProvider:
 
         client = MagicMock(spec=OandaClient)
         client.get_candles.return_value = [
-            {"time": "2026-07-01T00:00:00.000000000Z", "mid": {"o": "2350.0", "h": "2351.0", "l": "2349.0", "c": "2350.5", "v": 100}}
+            {"time": "2026-07-01T00:00:00.000000000Z", "mid": {"o": "2350.0", "h": "2351.0", "l": "2349.0", "c": "2350.5"}, "volume": 100}
         ]
         provider = OandaMarketDataProvider(client=client)
         candles = await provider.get_historical("XAU_USD", interval_minutes=1, days=1)

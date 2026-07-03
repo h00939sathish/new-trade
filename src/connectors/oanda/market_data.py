@@ -72,7 +72,10 @@ class OandaMarketDataProvider:
                 for c in candles:
                     ohlcv = self._parse_candle(instrument, c)
                     if ohlcv and self._on_ohlcv:
-                        self._on_ohlcv(ohlcv)
+                        if asyncio.iscoroutinefunction(self._on_ohlcv):
+                            await self._on_ohlcv(ohlcv)
+                        else:
+                            self._on_ohlcv(ohlcv)
                     ts = c.get("time", "")
                     if ts:
                         self._last_candle_time[instrument] = ts
@@ -111,7 +114,10 @@ class OandaMarketDataProvider:
                     "spread": round(ask - bid, 5) if bid and ask else None,
                     "timestamp": ts_str,
                 }
-                self._on_tick(payload)
+                if asyncio.iscoroutinefunction(self._on_tick):
+                    await self._on_tick(payload)
+                else:
+                    self._on_tick(payload)
         elif tick_type == "HEARTBEAT":
             logger.debug("OANDA pricing heartbeat: %s", tick.get("time", ""))
 
@@ -119,18 +125,18 @@ class OandaMarketDataProvider:
         mid = candle.get("mid", {})
         o = mid.get("o")
         h = mid.get("h")
-        l = mid.get("l")
+        lo = mid.get("l")
         c = mid.get("c")
         v = candle.get("volume", 0)
         ts = candle.get("time", "")
-        if not all([o, h, l, c]):
+        if not all([o, h, lo, c]):
             return None
         return {
             "instrument": instrument,
             "exchange": self._exchange_map.get(instrument, "FX"),
             "open": float(o),
             "high": float(h),
-            "low": float(l),
+            "low": float(lo),
             "close": float(c),
             "volume": float(v),
             "timestamp": ts,
@@ -146,7 +152,13 @@ class OandaMarketDataProvider:
         if not self._client:
             return []
         granularity = self._minutes_to_granularity(interval_minutes)
-        candles = self._client.get_candles(tradingsymbol, granularity=granularity, count=5000)
+        to_time = datetime.now(UTC)
+        from_time = to_time - timedelta(days=days)
+        candles = self._client.get_candles(
+            tradingsymbol, granularity=granularity, count=5000,
+            from_time=from_time.isoformat().replace("+00:00", "Z"),
+            to_time=to_time.isoformat().replace("+00:00", "Z"),
+        )
         result = []
         for c in candles:
             parsed = self._parse_candle(tradingsymbol, c)
