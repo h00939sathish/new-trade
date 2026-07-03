@@ -18,7 +18,7 @@ def _ema(values: list[float], period: int) -> float | None:
     return ema
 
 
-def _adx(
+def _dx(
     highs: list[float], lows: list[float], closes: list[float], period: int = 14
 ) -> float | None:
     if len(closes) < period + 1:
@@ -63,28 +63,36 @@ class M15TrendConfirmation:
             ts = ts.replace(tzinfo=UTC)
         bucket_key = _round_to_m15(ts)
 
-        if (
-            self._m15_bars
-            and self._m15_bars[-1]["timestamp"] == bucket_key
-        ):
+        if self._m15_bars and self._m15_bars[-1]["timestamp"] == bucket_key:
             bar = self._m15_bars[-1]
             bar["high"] = max(bar["high"], candle["high"])
             bar["low"] = min(bar["low"], candle["low"])
             bar["close"] = candle["close"]
             bar["volume"] = bar.get("volume", 0) + candle.get("volume", 0)
         else:
-            new_bar = {
-                "timestamp": bucket_key,
-                "open": candle["open"],
-                "high": candle["high"],
-                "low": candle["low"],
-                "close": candle["close"],
-                "volume": candle.get("volume", 0),
-            }
-            self._m15_bars.append(new_bar)
+            inserted = False
+            for i, bar in enumerate(self._m15_bars):
+                if bar["timestamp"] == bucket_key:
+                    bar["high"] = max(bar["high"], candle["high"])
+                    bar["low"] = min(bar["low"], candle["low"])
+                    bar["close"] = candle["close"]
+                    bar["volume"] = bar.get("volume", 0) + candle.get("volume", 0)
+                    inserted = True
+                    break
+            if not inserted:
+                new_bar = {
+                    "timestamp": bucket_key,
+                    "open": candle["open"],
+                    "high": candle["high"],
+                    "low": candle["low"],
+                    "close": candle["close"],
+                    "volume": candle.get("volume", 0),
+                }
+                self._m15_bars.append(new_bar)
+                self._m15_bars.sort(key=lambda x: x["timestamp"])
 
     def is_warmed(self) -> bool:
-        return len(self._m15_bars) >= self._ema_period
+        return len(self._m15_bars) >= max(self._ema_period, self._adx_period + 1)
 
     def get_regime(self) -> str | None:
         if not self.is_warmed():
@@ -92,14 +100,14 @@ class M15TrendConfirmation:
         closes = [b["close"] for b in self._m15_bars]
         highs = [b["high"] for b in self._m15_bars]
         lows = [b["low"] for b in self._m15_bars]
-        ema = _ema(closes, self._ema_period)
-        adx_val = _adx(highs, lows, closes, self._adx_period)
-        if ema is None or adx_val is None:
+        prior_ema = _ema(closes[:-1], self._ema_period) if len(closes) > self._ema_period else None
+        adx_val = _dx(highs, lows, closes, self._adx_period)
+        if prior_ema is None or adx_val is None:
             return None
         current_close = closes[-1]
-        if current_close > ema and adx_val > 25:
+        if current_close > prior_ema and adx_val > 25:
             return "trending_up"
-        elif current_close < ema and adx_val > 25:
+        elif current_close < prior_ema and adx_val > 25:
             return "trending_down"
         else:
             return "ranging"

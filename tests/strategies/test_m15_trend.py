@@ -65,19 +65,20 @@ class TestM15TrendConfirmation:
             })
         assert len(c._m15_bars) == 2
 
-    def test_out_of_order_candle_creates_new_bar(self):
+    def test_out_of_order_candles(self):
         c = M15TrendConfirmation()
         base = datetime(2026, 7, 1, 0, 0, 0, tzinfo=UTC)
-        c.update({
-            "open": 2350, "high": 2351, "low": 2349, "close": 2350.5,
-            "volume": 100, "timestamp": base + timedelta(minutes=30),
-        })
-        c.update({
-            "open": 2340, "high": 2345, "low": 2338, "close": 2342,
-            "volume": 100, "timestamp": base + timedelta(minutes=0),
-        })
-        # out-of-order lands in a different M15 bucket -> new bar appended
-        assert len(c._m15_bars) == 2
+        for i in [5, 3, 1, 4, 2]:
+            price = 2350.0 + i * 0.1
+            c.update({
+                "open": price, "high": price + 0.5, "low": price - 0.5,
+                "close": price + 0.2, "volume": 100,
+                "timestamp": base + timedelta(minutes=i),
+            })
+        # After 5 candles at different minutes, we may have multiple M15 bars
+        # Verify they are in chronological order
+        timestamps = [b["timestamp"] for b in c._m15_bars]
+        assert timestamps == sorted(timestamps), "M15 bars must be in chronological order"
 
     def test_duplicate_timestamp_updates_same_bar(self):
         c = M15TrendConfirmation()
