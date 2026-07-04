@@ -10,10 +10,29 @@ Phase 1 supports Zerodha paper and Zerodha live trading. It exposes trading-crit
 
 ## 2. Preconditions
 
-- Maintain a source fork of FinceptTerminal and compile it locally.
+- Maintain a source fork of FinceptTerminal in `D:\projects\new trade\newFinceptAgentTerminal` and compile it locally.
 - Resolve FinceptTerminal's commercial licensing requirements in writing before any business or live organizational use.
 - Upgrade the fork's Python runtime from its pinned Python 3.11 environment to CPython 3.12, matching this project's `requires-python` constraint.
 - Keep the Fincept fork and this agent repository independently versioned. During development, Fincept may load an editable install of this package. Release builds install a pinned wheel with a recorded version and SHA-256 hash into Fincept's managed Python environment.
+
+### 2.1 Repository and workspace layout
+
+`newFinceptAgentTerminal` is an independent nested Git repository, not vendored source in the parent trading-system repository:
+
+```text
+D:\projects\new trade\
+├── .git\                         # Existing trading-system repository
+├── src\                          # Existing Python agents
+├── pyproject.toml                # Agent package and Python 3.12 dependencies
+└── newFinceptAgentTerminal\
+    ├── .git\                     # Independent Fincept fork history
+    ├── fincept-qt\               # Native host and integration implementation
+    └── ...
+```
+
+The nested repository uses the user's Fincept fork as `origin` and the official FinceptTerminal repository as `upstream`. If the fork URL is not yet available, setup clones the official repository, renames that remote to `upstream`, and leaves `origin` unset until the fork is provided. All Fincept modifications, native integration tests, host UI code, and host build artifacts live in the nested repository.
+
+The parent repository remains the authoritative source for agent logic. It does not track files from the nested repository. Development builds install the parent package into Fincept's managed Python environment in editable mode; release builds consume a pinned wheel. Cross-repository compatibility is recorded as a Fincept commit, agent package version, wheel hash, schema versions, and application build ID.
 
 ## 3. Design Principles
 
